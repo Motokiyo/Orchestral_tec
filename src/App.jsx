@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from "react";
-import { BARNIER, CATEGORIES, DEMO_PIECES } from "./data.js";
-import { uid, generateTxt, downloadTxt, applyWatermark, copyToClipboard } from "./utils.js";
+import { useState, useRef } from "react";
+import { BARNIER, DEMO_PIECES } from "./data.js";
+import { uid, generateTxt, downloadTxt, applyWatermark, copyToClipboard, triggerDownload } from "./utils.js";
 import { S } from "./styles.js";
 
 export default function App() {
@@ -87,7 +87,7 @@ export default function App() {
             PlateauMap
           </div>
           <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 2 }}>
-            Programme Francesconi — EIC
+            Programme
           </div>
         </div>
         <div style={S.body}>
@@ -459,9 +459,21 @@ function EditableItem({ nom, color, onRename, onDelete }) {
 }
 
 function Lightbox({ photo, onClose }) {
+  function downloadPhoto(e) {
+    e.stopPropagation();
+    triggerDownload(photo.dataUrl, `${photo.zone}_P${photo.num}.jpg`);
+  }
   return (
     <div style={S.overlay} onClick={onClose}>
-      <img src={photo.dataUrl} style={{ maxWidth: "95%", maxHeight: "90vh", objectFit: "contain", borderRadius: 8 }} />
+      <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+        <img src={photo.dataUrl} style={{ maxWidth: "95vw", maxHeight: "80vh", objectFit: "contain", borderRadius: 8 }} />
+        <button onClick={downloadPhoto} style={{ background: "#fff", color: "#1C1917", border: "none", borderRadius: 10, padding: "10px 24px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+          Telecharger
+        </button>
+        <button onClick={onClose} style={{ background: "none", border: "1px solid #666", color: "#ccc", borderRadius: 10, padding: "8px 20px", fontSize: 13, cursor: "pointer" }}>
+          Fermer
+        </button>
+      </div>
     </div>
   );
 }
@@ -503,87 +515,77 @@ function PhotoSetupView({ piece, percu, col, onStart, onBack }) {
 }
 
 function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
-  const videoRef = useRef(null);
+  const fileInputRef = useRef(null);
   const canvasRef = useRef(null);
-  const streamRef = useRef(null);
 
   const piece = pieces.find((p) => p.id === capture.pieceId);
   const percu = piece?.percus.find((r) => r.id === capture.percuId);
   const col = BARNIER[capture.couleur];
   const zone = capture.zones[capture.currentZone];
 
-  useEffect(() => {
-    let mounted = true;
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
-        });
-        if (mounted && videoRef.current) {
-          streamRef.current = stream;
-          videoRef.current.srcObject = stream;
-          videoRef.current.play();
-        } else {
-          stream.getTracks().forEach((t) => t.stop());
-        }
-      } catch (e) {
-        alert("Impossible d'accéder à la caméra. Vérifiez les permissions. (" + e.message + ")");
-      }
-    }
-    startCamera();
-    return () => {
-      mounted = false;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
+  function triggerCamera() {
+    fileInputRef.current?.click();
+  }
+
+  function handlePhotoCapture(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const currentZone = capture.currentZone;
+    const currentCapture = capture;
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+
+      applyWatermark(canvas, ctx, {
+        titre: piece?.titre || "",
+        percuNom: percu?.nom || "",
+        zone,
+        num: currentZone + 1,
+        total: currentCapture.zones.length,
+        couleur: col,
+      });
+
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      onPhoto({
+        id: uid(),
+        dataUrl,
+        pieceId: currentCapture.pieceId,
+        percuId: currentCapture.percuId,
+        zone,
+        num: currentZone + 1,
+        total: currentCapture.zones.length,
+        couleur: currentCapture.couleur,
+      });
+
+      if (currentZone < currentCapture.zones.length - 1) {
+        onNext({ ...currentCapture, currentZone: currentZone + 1 });
+      } else {
+        onDone();
       }
     };
-  }, []);
-
-  function takePhoto() {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
-
-    const ctx = canvas.getContext("2d");
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
-    ctx.drawImage(video, 0, 0);
-
-    applyWatermark(canvas, ctx, {
-      titre: piece?.titre || "",
-      percuNom: percu?.nom || "",
-      zone,
-      num: capture.currentZone + 1,
-      total: capture.zones.length,
-      couleur: col,
-    });
-
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-    onPhoto({
-      id: uid(),
-      dataUrl,
-      pieceId: capture.pieceId,
-      percuId: capture.percuId,
-      zone,
-      num: capture.currentZone + 1,
-      total: capture.zones.length,
-      couleur: capture.couleur,
-    });
-
-    if (capture.currentZone < capture.zones.length - 1) {
-      onNext({ ...capture, currentZone: capture.currentZone + 1 });
-    } else {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-      onDone();
-    }
+    img.src = objectUrl;
+    event.target.value = "";
   }
 
   return (
     <div style={{ background: "#000", minHeight: "100vh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto" }}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handlePhotoCapture}
+        style={{ display: "none" }}
+      />
+      <canvas ref={canvasRef} style={{ display: "none" }} />
       <div style={{ background: col.hex, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#fff" }}>
         <div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{piece?.titre} — {percu?.nom}</div>
@@ -591,18 +593,22 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
         </div>
         <div style={{ fontSize: 28, fontWeight: 800 }}>{capture.currentZone + 1}/{capture.zones.length}</div>
       </div>
-      <div style={{ flex: 1, position: "relative" }}>
-        <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: col.hex + "55", padding: "8px", textAlign: "center" }}>
-          <span style={{ color: "#fff", fontSize: 14, fontWeight: 600 }}>📸 Photo {capture.currentZone + 1}/{capture.zones.length} — {zone}</span>
-        </div>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <button
+          onClick={triggerCamera}
+          style={{
+            background: col.hex, color: "#fff", border: "none", borderRadius: 16,
+            padding: "24px 32px", fontSize: 18, fontWeight: 700, cursor: "pointer",
+            width: "100%", maxWidth: 340, textAlign: "center", lineHeight: 1.4,
+          }}
+        >
+          <span style={{ fontSize: 40, display: "block", marginBottom: 8 }}>📸</span>
+          Prendre la photo — {zone}
+        </button>
       </div>
-      <div style={{ padding: 16, display: "flex", justifyContent: "center", alignItems: "center", gap: 24 }}>
+      <div style={{ padding: 16, display: "flex", justifyContent: "center" }}>
         <button onClick={onCancel} style={{ background: "none", border: "1px solid #555", color: "#888", borderRadius: 10, padding: "10px 20px", fontSize: 14, cursor: "pointer" }}>Annuler</button>
-        <button onClick={takePhoto} style={{ width: 68, height: 68, borderRadius: "50%", background: "#fff", border: `4px solid ${col.hex}`, cursor: "pointer" }} />
-        <div style={{ width: 70 }} />
       </div>
-      <canvas ref={canvasRef} style={{ display: "none" }} />
     </div>
   );
 }

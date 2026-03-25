@@ -39,16 +39,20 @@ export function generateTxt(piece) {
   return lines.join("\n");
 }
 
+export function triggerDownload(href, filename) {
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 export function downloadTxt(piece) {
   const txt = generateTxt(piece);
   const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = piece.titre.replace(/\s+/g, "_") + "_matos.txt";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  triggerDownload(url, piece.titre.replace(/\s+/g, "_") + "_matos.txt");
   URL.revokeObjectURL(url);
 }
 
