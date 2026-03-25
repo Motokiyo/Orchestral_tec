@@ -9,7 +9,7 @@ export const BARNIER = {
   rose:      { hex: "#D81B60", bg: "#F8BBD0", name: "Rose" },
   blanc:     { hex: "#E0E0E0", bg: "#FAFAFA", name: "Blanc" },
   noir:      { hex: "#212121", bg: "#E0E0E0", name: "Noir" },
-  gris:      { hex: "#757575", bg: "#EEEEEE", name: "Gris" },
+  gris:      { hex: "#78909C", bg: "#CFD8DC", name: "Gris" },
   marron:    { hex: "#6D4C41", bg: "#D7CCC8", name: "Marron" },
   vertjaune: { hex: "#C0CA33", bg: "#F0F4C3", name: "Vert-jaune" },
 };
