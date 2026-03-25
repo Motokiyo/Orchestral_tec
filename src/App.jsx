@@ -489,8 +489,8 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button onClick={goHome} style={S.backBtn}>←</button>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>{piece.compositeur}</div>
-              <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 1 }}>{piece.titre}</div>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>{piece.compositeur || "Compositeur"}</div>
+              <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 1 }}>{piece.titre || "Sans titre"}</div>
             </div>
             <button onClick={goHome} style={{ background: "none", border: "none", fontSize: 18, color: "#A8A29E", cursor: "pointer", padding: "4px 6px" }} title="Fermer">✕</button>
           </div>
@@ -516,20 +516,31 @@ export default function App() {
               </button>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-            {piece.duree && <span style={S.tag}>{piece.duree}</span>}
-            {piece.salle && <span style={S.tag}>{piece.salle}</span>}
-            {piece.chef && <span style={S.tag}>{piece.chef}</span>}
-            {piece.date && <span style={S.tag}>{piece.date}</span>}
+          {/* Editable metadata fields */}
+          <div style={{ background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
+            {[
+              { key: "compositeur", label: "Compositeur" },
+              { key: "duree", label: "Durée" },
+              { key: "salle", label: "Lieu" },
+              { key: "chef", label: "Chef" },
+              { key: "date", label: "Date" },
+              { key: "effectif", label: "Effectif" },
+            ].map(f => (
+              <div key={f.key} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase", width: 70, flexShrink: 0 }}>{f.label}</span>
+                <input
+                  value={piece[f.key] || ""}
+                  onChange={(e) => updatePiece(piece.id, (p) => ({ ...p, [f.key]: e.target.value }))}
+                  placeholder={f.label}
+                  style={{
+                    flex: 1, fontSize: 12, color: "#1C1917", background: "transparent",
+                    border: "none", borderBottom: "1px solid #E7E5E4", padding: "3px 0",
+                    fontFamily: f.key === "effectif" ? "monospace" : "inherit", outline: "none",
+                  }}
+                />
+              </div>
+            ))}
           </div>
-
-          {/* Effectif — just the nomenclature string */}
-          {piece.effectif && (
-            <div style={{ background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8, padding: "8px 12px", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "#78716C", textTransform: "uppercase", whiteSpace: "nowrap" }}>Effectif</span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#1C1917", fontFamily: "monospace" }}>{piece.effectif}</span>
-            </div>
-          )}
 
           {/* Plans (PDF rendered images) */}
           {(piece.plans || []).length > 0 && (

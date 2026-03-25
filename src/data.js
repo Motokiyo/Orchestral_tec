@@ -1,12 +1,17 @@
+// Couleurs barnier standard (ruban adhesif gaffer plateau)
 export const BARNIER = {
-  rouge:  { hex: "#E53935", bg: "#FFCDD2", name: "Rouge" },
-  bleu:   { hex: "#1E88E5", bg: "#BBDEFB", name: "Bleu" },
-  vert:   { hex: "#43A047", bg: "#C8E6C9", name: "Vert" },
-  jaune:  { hex: "#FDD835", bg: "#FFF9C4", name: "Jaune" },
-  orange: { hex: "#FB8C00", bg: "#FFE0B2", name: "Orange" },
-  violet: { hex: "#8E24AA", bg: "#E1BEE7", name: "Violet" },
-  rose:   { hex: "#D81B60", bg: "#F8BBD0", name: "Rose" },
-  blanc:  { hex: "#9E9E9E", bg: "#F5F5F5", name: "Blanc" },
+  rouge:     { hex: "#E53935", bg: "#FFCDD2", name: "Rouge" },
+  bleu:      { hex: "#1E88E5", bg: "#BBDEFB", name: "Bleu" },
+  vert:      { hex: "#43A047", bg: "#C8E6C9", name: "Vert" },
+  jaune:     { hex: "#FDD835", bg: "#FFF9C4", name: "Jaune" },
+  orange:    { hex: "#FB8C00", bg: "#FFE0B2", name: "Orange" },
+  violet:    { hex: "#8E24AA", bg: "#E1BEE7", name: "Violet" },
+  rose:      { hex: "#D81B60", bg: "#F8BBD0", name: "Rose" },
+  blanc:     { hex: "#E0E0E0", bg: "#FAFAFA", name: "Blanc" },
+  noir:      { hex: "#212121", bg: "#E0E0E0", name: "Noir" },
+  gris:      { hex: "#757575", bg: "#EEEEEE", name: "Gris" },
+  marron:    { hex: "#6D4C41", bg: "#D7CCC8", name: "Marron" },
+  vertjaune: { hex: "#C0CA33", bg: "#F0F4C3", name: "Vert-jaune" },
 };
 
 export const CATEGORIES = [
