@@ -4,12 +4,28 @@ export function uid() {
   return Math.random().toString(36).slice(2, 8);
 }
 
+function groupItemsByCategory(items) {
+  const byCat = {};
+  for (const item of items) {
+    if (!byCat[item.cat]) byCat[item.cat] = [];
+    byCat[item.cat].push(item);
+  }
+  return byCat;
+}
+
+function formatItemLines(items) {
+  return items.map((it) => {
+    let line = "    - " + it.nom;
+    if (it.notes) line += "  [" + it.notes + "]";
+    return line;
+  });
+}
+
 export function generateTxt(piece) {
   if (!piece) return "";
   const col = BARNIER[piece.couleur];
   const lines = [];
 
-  // ── En-tête pièce ──
   lines.push("=".repeat(50));
   lines.push("  " + piece.titre);
   if (piece.compositeur) lines.push("  " + piece.compositeur + (piece.duree ? " — " + piece.duree : ""));
@@ -20,7 +36,6 @@ export function generateTxt(piece) {
   lines.push("=".repeat(50));
   lines.push("");
 
-  // ── Orchestre ──
   if (piece.orchestre) {
     const sections = [
       { key: "bois", label: "BOIS" },
@@ -28,7 +43,7 @@ export function generateTxt(piece) {
       { key: "cordes", label: "CORDES" },
       { key: "autres", label: "AUTRES" },
     ];
-    const hasItems = sections.some(s => (piece.orchestre[s.key] || []).length > 0);
+    const hasItems = sections.some((s) => (piece.orchestre[s.key] || []).length > 0);
     if (hasItems) {
       lines.push("-".repeat(40));
       lines.push("  ORCHESTRE");
@@ -38,34 +53,22 @@ export function generateTxt(piece) {
         if (items.length > 0) {
           lines.push("");
           lines.push("  " + s.label);
-          for (const it of items) {
-            lines.push("    - " + it);
-          }
+          for (const it of items) lines.push("    - " + it);
         }
       }
       lines.push("");
     }
   }
 
-  // ── Percussions ──
   for (const percu of piece.percus) {
     lines.push("-".repeat(40));
     lines.push("  " + percu.nom.toUpperCase());
     lines.push("-".repeat(40));
-
-    const byCat = {};
-    for (const item of percu.items) {
-      if (!byCat[item.cat]) byCat[item.cat] = [];
-      byCat[item.cat].push(item);
-    }
+    const byCat = groupItemsByCategory(percu.items);
     for (const [cat, items] of Object.entries(byCat)) {
       lines.push("");
       lines.push("  " + cat.toUpperCase());
-      for (const it of items) {
-        let line = "    - " + it.nom;
-        if (it.notes) line += "  [" + it.notes + "]";
-        lines.push(line);
-      }
+      lines.push(...formatItemLines(items));
     }
     lines.push("");
   }
@@ -115,7 +118,6 @@ export function applyWatermark(canvas, ctx, opts) {
   ctx.fillText(couleur.name.toUpperCase(), 18, 28);
 }
 
-// Generate TXT for a single percu pole
 export function generatePercuTxt(piece, percuId) {
   if (!piece) return "";
   const percu = piece.percus.find((r) => r.id === percuId);
@@ -127,18 +129,10 @@ export function generatePercuTxt(piece, percuId) {
   lines.push("=".repeat(50));
   lines.push("");
 
-  const byCat = {};
-  for (const item of percu.items) {
-    if (!byCat[item.cat]) byCat[item.cat] = [];
-    byCat[item.cat].push(item);
-  }
+  const byCat = groupItemsByCategory(percu.items);
   for (const [cat, items] of Object.entries(byCat)) {
     lines.push("  " + cat.toUpperCase());
-    for (const it of items) {
-      let line = "    - " + it.nom;
-      if (it.notes) line += "  [" + it.notes + "]";
-      lines.push(line);
-    }
+    lines.push(...formatItemLines(items));
     lines.push("");
   }
   return lines.join("\n");

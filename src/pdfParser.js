@@ -83,8 +83,7 @@ export async function extractFromPdf(file) {
     planDataUrl,
   };
 
-  // Detect format
-  const format = detectFormat(fullText, lines);
+  const format = detectFormat(lines);
   console.log("[PlateauMap] Detected format:", format);
 
   if (format === "radiofrance") {
@@ -97,10 +96,8 @@ export async function extractFromPdf(file) {
     parseGeneric(lines, result);
   }
 
-  // Decode effectif if found
   if (result.effectif) {
     result.effectifDetail = decodeEffectif(result.effectif);
-  } else {
   }
 
   // Build orchestre from effectifDetail — always overrides label-based detection
@@ -145,7 +142,6 @@ export async function extractFromPdf(file) {
     }
   }
 
-
   // Fallback title from filename
   if (!result.titre) {
     result.titre = file.name.replace(/\.pdf$/i, "").replace(/[-_]/g, " ");
@@ -169,7 +165,7 @@ async function renderPageToImage(pdf) {
 // FORMAT DETECTION
 // ══════════════════════════════════════════
 
-function detectFormat(text, lines) {
+function detectFormat(lines) {
   const joined = lines.join(" ");
 
   // Radio France: has labeled cartouche fields "Objet :", "Lieu :", "Nomenclature :"
@@ -325,7 +321,9 @@ function parseEic(lines, result) {
   }
 
   // Extract orchestra sections from plan labels
-  result.orchestre = extractOrchestreFromLabels(lines);
+  if (!result.orchestre) {
+    result.orchestre = extractOrchestreFromLabels(lines);
+  }
 }
 
 // ══════════════════════════════════════════

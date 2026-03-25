@@ -234,7 +234,6 @@ export default function App() {
     });
   }
 
-  // Merge existing percus with newly extracted ones
   function deletePlan(pId, planIdx) {
     updatePiece(pId, (p) => {
       const plans = (p.plans || []).filter((_, i) => i !== planIdx);
@@ -480,6 +479,10 @@ export default function App() {
   // ════════════════════════════════
   if (screen === "piece" && piece) {
     const col = BARNIER[piece.couleur];
+    const orchestre = piece.orchestre;
+    const orchCount = orchestre
+      ? [orchestre.bois, orchestre.cuivres, orchestre.cordes, orchestre.autres].flat().length
+      : 0;
     return (
       <div style={S.shell}>
         <div style={{ ...S.header, borderBottom: `3px solid ${col.hex}` }}>
@@ -684,10 +687,10 @@ export default function App() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>Orchestre</div>
-                  {piece.effectif && <div style={{ fontSize: 12, color: "#78716C", fontFamily: "monospace" }}>{piece.effectif}</div>}
-                  {!piece.effectif && <div style={{ fontSize: 12, color: "#A8A29E" }}>
-                    {(() => { const o = piece.orchestre; const n = o ? [o.bois,o.cuivres,o.cordes,o.autres].flat().length : 0; return n > 0 ? `${n} pupitres` : "Aucun pupitre"; })()}
-                  </div>}
+                  {piece.effectif
+                    ? <div style={{ fontSize: 12, color: "#78716C", fontFamily: "monospace" }}>{piece.effectif}</div>
+                    : <div style={{ fontSize: 12, color: "#A8A29E" }}>{orchCount > 0 ? `${orchCount} pupitres` : "Aucun pupitre"}</div>
+                  }
                 </div>
                 <span style={{ color: "#A8A29E" }}>{percuId === "orchestre" ? "▾" : "▸"}</span>
               </div>
