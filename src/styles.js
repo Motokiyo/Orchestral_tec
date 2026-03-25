@@ -100,6 +100,7 @@ export const S = {
     fontSize: 13,
     color: "#292524",
     cursor: "text",
+    WebkitTapHighlightColor: "transparent",
   }),
   itemInput: (color) => ({
     flex: 1,

@@ -569,13 +569,13 @@ function EditableItem({ nom, color, onRename, onDelete }) {
             if (e.key === "Escape") { setValue(nom); setEditing(false); }
           }}
           style={S.itemInput(color)} />
+        <button onClick={onDelete} style={S.deleteBtn}>×</button>
       </div>
     );
   }
   return (
     <div style={S.itemRow}>
-      <div style={S.itemText(color)}>{nom}</div>
-      <button onClick={() => setEditing(true)} style={S.editBtn} title="Éditer">✎</button>
+      <div style={S.itemText(color)} onClick={() => setEditing(true)}>{nom}</div>
       <button onClick={onDelete} style={S.deleteBtn}>×</button>
     </div>
   );
@@ -696,14 +696,14 @@ function StandaloneCamera({ onCapture, onCancel, couleur }) {
   // Preview mode — show captured photo with options
   if (preview) {
     return (
-      <div style={{ background: "#000", minHeight: "100vh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto" }}>
-        <div style={{ background: col.hex, padding: "12px 16px", color: "#fff", textAlign: "center" }}>
+      <div style={{ background: "#000", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
+        <div style={{ background: col.hex, padding: "12px 16px", color: "#fff", textAlign: "center", flexShrink: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 700 }}>Aperçu photo</div>
         </div>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 8 }}>
-          <img src={preview} style={{ maxWidth: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 8 }} />
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 8, minHeight: 0, overflow: "hidden" }}>
+          <img src={preview} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />
         </div>
-        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
           <button onClick={handleValidate} style={{ background: col.hex, color: "#fff", border: "none", borderRadius: 10, padding: "14px 20px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
             ✓ Valider la photo
           </button>
@@ -725,14 +725,14 @@ function StandaloneCamera({ onCapture, onCancel, couleur }) {
 
   // Camera live view
   return (
-    <div style={{ background: "#000", minHeight: "100vh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto" }}>
-      <div style={{ background: col.hex, padding: "12px 16px", color: "#fff", textAlign: "center" }}>
+    <div style={{ background: "#000", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
+      <div style={{ background: col.hex, padding: "12px 16px", color: "#fff", textAlign: "center", flexShrink: 0 }}>
         <div style={{ fontSize: 16, fontWeight: 700 }}>📸 Prendre une photo</div>
       </div>
-      <div style={{ flex: 1, position: "relative" }}>
+      <div style={{ flex: 1, position: "relative", minHeight: 0, overflow: "hidden" }}>
         <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       </div>
-      <div style={{ padding: 16, display: "flex", justifyContent: "center", alignItems: "center", gap: 24 }}>
+      <div style={{ padding: 16, display: "flex", justifyContent: "center", alignItems: "center", gap: 24, flexShrink: 0 }}>
         <button onClick={handleCancel} style={{ background: "none", border: "1px solid #555", color: "#888", borderRadius: 10, padding: "10px 20px", fontSize: 14, cursor: "pointer" }}>
           Annuler
         </button>
@@ -749,7 +749,7 @@ function PhotoSetupView({ piece, percu, col, onStart, onBack }) {
   const [custom, setCustom] = useState("");
 
   return (
-    <div style={{ ...S.shell, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.6)" }}>
+    <div style={{ ...S.shell, height: "100dvh", minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.6)", overflow: "hidden" }}>
       <div style={{ background: "#fff", borderRadius: 16, padding: 20, width: "90%", maxWidth: 380 }}>
         <h3 style={{ margin: "0 0 4px", fontSize: 16, color: "#1C1917" }}>Protocole photo</h3>
         <p style={{ color: "#78716C", fontSize: 13, margin: "0 0 16px" }}>
@@ -861,21 +861,21 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
   }
 
   return (
-    <div style={{ background: "#000", minHeight: "100vh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto" }}>
-      <div style={{ background: col.hex, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#fff" }}>
+    <div style={{ background: "#000", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
+      <div style={{ background: col.hex, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#fff", flexShrink: 0 }}>
         <div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{piece?.titre} — {percu?.nom}</div>
           <div style={{ fontSize: 18, fontWeight: 700 }}>{zone}</div>
         </div>
         <div style={{ fontSize: 28, fontWeight: 800 }}>{capture.currentZone + 1}/{capture.zones.length}</div>
       </div>
-      <div style={{ flex: 1, position: "relative" }}>
+      <div style={{ flex: 1, position: "relative", minHeight: 0, overflow: "hidden" }}>
         <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: col.hex + "55", padding: "8px", textAlign: "center" }}>
           <span style={{ color: "#fff", fontSize: 14, fontWeight: 600 }}>📸 Photo {capture.currentZone + 1}/{capture.zones.length} — {zone}</span>
         </div>
       </div>
-      <div style={{ padding: 16, display: "flex", justifyContent: "center", alignItems: "center", gap: 24 }}>
+      <div style={{ padding: 16, display: "flex", justifyContent: "center", alignItems: "center", gap: 24, flexShrink: 0 }}>
         <button onClick={onCancel} style={{ background: "none", border: "1px solid #555", color: "#888", borderRadius: 10, padding: "10px 20px", fontSize: 14, cursor: "pointer" }}>Annuler</button>
         <button onClick={takePhoto} style={{ width: 68, height: 68, borderRadius: "50%", background: "#fff", border: `4px solid ${col.hex}`, cursor: "pointer" }} />
         <div style={{ width: 70 }} />
