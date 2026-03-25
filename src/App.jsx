@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES } from "./data.js";
 import { uid, generateTxt, downloadTxt, applyWatermark, copyToClipboard } from "./utils.js";
+import { extractFromPdf } from "./pdfParser.js";
 import { S } from "./styles.js";
 
 export default function App() {
@@ -12,6 +13,8 @@ export default function App() {
   const [capture, setCapture] = useState(null);
   const [fullPhoto, setFullPhoto] = useState(null);
   const [galleryFilter, setGalleryFilter] = useState("all");
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [cameraMode, setCameraMode] = useState(null); // standalone camera
 
   const piece = pieces.find((p) => p.id === pieceId);
   const percu = piece ? piece.percus.find((r) => r.id === percuId) : null;
@@ -59,8 +62,86 @@ export default function App() {
     }));
   }
 
+  // ── PDF Import ──
+  async function handlePdfImport() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".pdf";
+    input.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      setPdfLoading(true);
+      try {
+        const data = await extractFromPdf(file);
+        // Create a new piece from extracted data
+        const newPiece = {
+          id: uid(),
+          titre: data.titre || file.name.replace(".pdf", ""),
+          compositeur: data.compositeur || "Inconnu",
+          duree: data.duree || "",
+          salle: data.salle || "",
+          chef: data.chef || "",
+          date: data.date || "",
+          couleur: pickNextColor(pieces),
+          percus: data.percus.length > 0
+            ? data.percus.map((p, i) => ({
+                id: `p${i + 1}`,
+                nom: p.nom,
+                items: p.items,
+              }))
+            : [{ id: "p1", nom: "Percu 1", items: [] }],
+        };
+        setPieces((prev) => [...prev, newPiece]);
+        setPieceId(newPiece.id);
+        setScreen("piece");
+      } catch (err) {
+        alert("Erreur lors de l'import PDF : " + err.message);
+      } finally {
+        setPdfLoading(false);
+      }
+    };
+    input.click();
+  }
+
+  // Pick next unused barnier color
+  function pickNextColor(existingPieces) {
+    const usedColors = existingPieces.map((p) => p.couleur);
+    const allColors = Object.keys(BARNIER);
+    const available = allColors.filter((c) => !usedColors.includes(c));
+    return available.length > 0 ? available[0] : allColors[existingPieces.length % allColors.length];
+  }
+
   // ════════════════════════════════
-  // CAPTURE SCREEN
+  // STANDALONE CAMERA
+  // ════════════════════════════════
+  if (cameraMode) {
+    return (
+      <StandaloneCamera
+        onCapture={(dataUrl) => {
+          // Store standalone photo
+          const photoData = {
+            id: uid(),
+            dataUrl,
+            pieceId: cameraMode.pieceId || "standalone",
+            percuId: null,
+            zone: "Photo libre",
+            num: 1,
+            total: 1,
+            couleur: cameraMode.couleur || "blanc",
+          };
+          if (cameraMode.pieceId) {
+            addPhoto(cameraMode.pieceId, photoData);
+          }
+          setCameraMode(null);
+        }}
+        onCancel={() => setCameraMode(null)}
+        couleur={cameraMode.couleur || "blanc"}
+      />
+    );
+  }
+
+  // ════════════════════════════════
+  // CAPTURE SCREEN (protocol photo)
   // ════════════════════════════════
   if (capture) {
     return (
@@ -93,6 +174,23 @@ export default function App() {
         <div style={S.body}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 14, color: "#78716C", fontWeight: 600 }}>{pieces.length} pièces</span>
+          </div>
+
+          {/* Action buttons: Import PDF + Camera */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <button
+              onClick={handlePdfImport}
+              disabled={pdfLoading}
+              style={{ ...S.btnSecondary, flex: 1, fontSize: 13, padding: "10px 12px", opacity: pdfLoading ? 0.6 : 1 }}
+            >
+              {pdfLoading ? "⏳ Import..." : "📄 Importer PDF"}
+            </button>
+            <button
+              onClick={() => setCameraMode({ pieceId: null, couleur: "blanc" })}
+              style={{ ...S.btnSecondary, flex: 1, fontSize: 13, padding: "10px 12px" }}
+            >
+              📸 Prendre une photo
+            </button>
           </div>
 
           {pieces.map((p) => {
@@ -154,6 +252,23 @@ export default function App() {
             <span style={S.tag}>{piece.date}</span>
           </div>
 
+          {/* Action buttons */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <button
+              onClick={handlePdfImport}
+              disabled={pdfLoading}
+              style={{ ...S.btnSecondary, flex: 1, fontSize: 12, padding: "8px 10px" }}
+            >
+              📄 Importer PDF
+            </button>
+            <button
+              onClick={() => setCameraMode({ pieceId: piece.id, couleur: piece.couleur })}
+              style={{ ...S.btnSecondary, flex: 1, fontSize: 12, padding: "8px 10px" }}
+            >
+              📸 Photo libre
+            </button>
+          </div>
+
           {piece.percus.map((r) => {
             const isOpen = percuId === r.id;
             const rPhotos = (photos[piece.id] || []).filter((ph) => ph.percuId === r.id);
@@ -190,10 +305,13 @@ export default function App() {
                       <div key={cat}>
                         <div style={S.catLabel(col.hex)}>{cat}</div>
                         {items.map((it) => (
-                          <div key={it._i} style={S.itemRow}>
-                            <div style={S.itemText(col.hex)}>{it.nom}</div>
-                            <button onClick={() => deleteItem(piece.id, r.id, it._i)} style={S.deleteBtn}>×</button>
-                          </div>
+                          <EditableItem
+                            key={it._i}
+                            nom={it.nom}
+                            color={col.hex}
+                            onRename={(v) => renameItem(piece.id, r.id, it._i, v)}
+                            onDelete={() => deleteItem(piece.id, r.id, it._i)}
+                          />
                         ))}
                       </div>
                     ))}
@@ -437,13 +555,17 @@ function EditableItem({ nom, color, onRename, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(nom);
 
+  useEffect(() => {
+    setValue(nom);
+  }, [nom]);
+
   if (editing) {
     return (
       <div style={S.itemRow}>
         <input autoFocus value={value} onChange={(e) => setValue(e.target.value)}
-          onBlur={() => { onRename(value); setEditing(false); }}
+          onBlur={() => { if (value.trim()) onRename(value.trim()); setEditing(false); }}
           onKeyDown={(e) => {
-            if (e.key === "Enter") { onRename(value); setEditing(false); }
+            if (e.key === "Enter") { if (value.trim()) onRename(value.trim()); setEditing(false); }
             if (e.key === "Escape") { setValue(nom); setEditing(false); }
           }}
           style={S.itemInput(color)} />
@@ -452,16 +574,172 @@ function EditableItem({ nom, color, onRename, onDelete }) {
   }
   return (
     <div style={S.itemRow}>
-      <div onClick={() => setEditing(true)} style={S.itemText(color)}>{nom}</div>
+      <div style={S.itemText(color)}>{nom}</div>
+      <button onClick={() => setEditing(true)} style={S.editBtn} title="Éditer">✎</button>
       <button onClick={onDelete} style={S.deleteBtn}>×</button>
     </div>
   );
 }
 
 function Lightbox({ photo, onClose }) {
+  // Allow download
+  function handleDownload(e) {
+    e.stopPropagation();
+    const a = document.createElement("a");
+    a.href = photo.dataUrl;
+    a.download = `photo_${photo.zone || "libre"}_${photo.id}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
   return (
     <div style={S.overlay} onClick={onClose}>
-      <img src={photo.dataUrl} style={{ maxWidth: "95%", maxHeight: "90vh", objectFit: "contain", borderRadius: 8 }} />
+      <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+        <img src={photo.dataUrl} style={{ maxWidth: "95vw", maxHeight: "85vh", objectFit: "contain", borderRadius: 8 }} />
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 12 }}>
+          <button onClick={handleDownload} style={{ background: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+            ↓ Télécharger
+          </button>
+          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "10px 20px", fontSize: 14, color: "#fff", cursor: "pointer" }}>
+            Fermer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════
+// STANDALONE CAMERA
+// ════════════════════════════════
+function StandaloneCamera({ onCapture, onCancel, couleur }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const [preview, setPreview] = useState(null);
+  const col = BARNIER[couleur] || BARNIER.blanc;
+
+  useEffect(() => {
+    let mounted = true;
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+        });
+        if (mounted && videoRef.current) {
+          streamRef.current = stream;
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+        } else {
+          stream.getTracks().forEach((t) => t.stop());
+        }
+      } catch (e) {
+        alert("Impossible d'accéder à la caméra. Vérifiez les permissions. (" + e.message + ")");
+      }
+    }
+    startCamera();
+    return () => {
+      mounted = false;
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  function stopCamera() {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+  }
+
+  function takePhoto() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    ctx.drawImage(video, 0, 0);
+
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    setPreview(dataUrl);
+  }
+
+  function handleValidate() {
+    stopCamera();
+    onCapture(preview);
+  }
+
+  function handleDownload() {
+    if (!preview) return;
+    const a = document.createElement("a");
+    a.href = preview;
+    a.download = `photo_${Date.now()}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function handleRetake() {
+    setPreview(null);
+  }
+
+  function handleCancel() {
+    stopCamera();
+    onCancel();
+  }
+
+  // Preview mode — show captured photo with options
+  if (preview) {
+    return (
+      <div style={{ background: "#000", minHeight: "100vh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto" }}>
+        <div style={{ background: col.hex, padding: "12px 16px", color: "#fff", textAlign: "center" }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>Aperçu photo</div>
+        </div>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 8 }}>
+          <img src={preview} style={{ maxWidth: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 8 }} />
+        </div>
+        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+          <button onClick={handleValidate} style={{ background: col.hex, color: "#fff", border: "none", borderRadius: 10, padding: "14px 20px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+            ✓ Valider la photo
+          </button>
+          <button onClick={handleDownload} style={{ background: "#fff", color: "#1C1917", border: "none", borderRadius: 10, padding: "12px 20px", fontSize: 14, fontWeight: 500, cursor: "pointer" }}>
+            ↓ Télécharger la photo
+          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={handleRetake} style={{ flex: 1, background: "none", border: "1px solid #555", color: "#aaa", borderRadius: 10, padding: "10px 16px", fontSize: 13, cursor: "pointer" }}>
+              ↻ Reprendre
+            </button>
+            <button onClick={handleCancel} style={{ flex: 1, background: "none", border: "1px solid #555", color: "#aaa", borderRadius: 10, padding: "10px 16px", fontSize: 13, cursor: "pointer" }}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Camera live view
+  return (
+    <div style={{ background: "#000", minHeight: "100vh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto" }}>
+      <div style={{ background: col.hex, padding: "12px 16px", color: "#fff", textAlign: "center" }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>📸 Prendre une photo</div>
+      </div>
+      <div style={{ flex: 1, position: "relative" }}>
+        <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      </div>
+      <div style={{ padding: 16, display: "flex", justifyContent: "center", alignItems: "center", gap: 24 }}>
+        <button onClick={handleCancel} style={{ background: "none", border: "1px solid #555", color: "#888", borderRadius: 10, padding: "10px 20px", fontSize: 14, cursor: "pointer" }}>
+          Annuler
+        </button>
+        <button onClick={takePhoto} style={{ width: 68, height: 68, borderRadius: "50%", background: "#fff", border: `4px solid ${col.hex}`, cursor: "pointer" }} />
+        <div style={{ width: 70 }} />
+      </div>
+      <canvas ref={canvasRef} style={{ display: "none" }} />
     </div>
   );
 }

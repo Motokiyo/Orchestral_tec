@@ -112,6 +112,15 @@ export const S = {
     outline: "none",
     boxSizing: "border-box",
   }),
+  editBtn: {
+    background: "none",
+    border: "none",
+    color: "#78716C",
+    cursor: "pointer",
+    fontSize: 14,
+    padding: 4,
+    lineHeight: 1,
+  },
   deleteBtn: {
     background: "none",
     border: "none",
