@@ -18,6 +18,15 @@ export const CATEGORIES = [
   "Baguettes & spécial",
 ];
 
+export const DEMO_CONCERT = {
+  id: "demo",
+  titre: "Programme Francesconi",
+  date: "26 mars 2026",
+  lieu: "CMPP",
+  orchestre: "Ensemble Intercontemporain",
+  chef: "Pascal ROPHÉ",
+};
+
 export const DEMO_PIECES = [
   {
     id: "etymo",

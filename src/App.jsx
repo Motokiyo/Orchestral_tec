@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from "react";
-import { BARNIER, CATEGORIES, DEMO_PIECES } from "./data.js";
-import { uid, generateTxt, downloadTxt, applyWatermark, copyToClipboard } from "./utils.js";
+import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
+import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard } from "./utils.js";
 import { extractFromPdf } from "./pdfParser.js";
 import { S } from "./styles.js";
 
 export default function App() {
-  const [pieces, setPieces] = useState(DEMO_PIECES);
-  const [screen, setScreen] = useState("home");
+  const [concerts, setConcerts] = useState([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }]);
+  const [screen, setScreen] = useState("concerts");
+  const [concertId, setConcertId] = useState(null);
   const [pieceId, setPieceId] = useState(null);
   const [percuId, setPercuId] = useState(null);
   const [photos, setPhotos] = useState({});
@@ -14,26 +15,45 @@ export default function App() {
   const [fullPhoto, setFullPhoto] = useState(null);
   const [galleryFilter, setGalleryFilter] = useState("all");
   const [pdfLoading, setPdfLoading] = useState(false);
-  const [cameraMode, setCameraMode] = useState(null); // standalone camera
+  const [cameraMode, setCameraMode] = useState(null);
+  const [dragIdx, setDragIdx] = useState(null);
 
+  const concert = concerts.find((c) => c.id === concertId);
+  const pieces = concert ? concert.pieces : [];
   const piece = pieces.find((p) => p.id === pieceId);
   const percu = piece ? piece.percus.find((r) => r.id === percuId) : null;
 
   // ── Navigation ──
+  function goConcerts() { setScreen("concerts"); setConcertId(null); setPieceId(null); setPercuId(null); }
+  function goConcert(id) { setConcertId(id); setPieceId(null); setPercuId(null); setScreen("home"); }
   function goHome() { setScreen("home"); setPieceId(null); setPercuId(null); }
   function goPiece(id) { setPieceId(id); setPercuId(null); setScreen("piece"); }
   function goTxt(id) { if (id) setPieceId(id); setScreen("txt"); }
   function goGallery(id) { if (id !== undefined) setPieceId(id); setScreen("gallery"); }
 
-  // ── Mutations ──
+  // ── Concert mutations ──
+  function updateConcert(id, fn) {
+    setConcerts((prev) => prev.map((c) => (c.id === id ? fn(c) : c)));
+  }
+  function setPieces(fn) {
+    if (!concertId) return;
+    updateConcert(concertId, (c) => ({ ...c, pieces: typeof fn === "function" ? fn(c.pieces) : fn }));
+  }
+
+  // ── Piece mutations ──
   function updatePiece(id, fn) {
     setPieces((prev) => prev.map((p) => (p.id === id ? fn(p) : p)));
+  }
+  function deletePiece(id) {
+    if (!confirm("Supprimer cette pièce ?")) return;
+    setPieces((prev) => prev.filter((p) => p.id !== id));
+    if (pieceId === id) goHome();
   }
   function addItem(pId, rId, cat, nom) {
     updatePiece(pId, (p) => ({
       ...p,
       percus: p.percus.map((r) =>
-        r.id === rId ? { ...r, items: [...r.items, { cat, nom }] } : r
+        r.id === rId ? { ...r, items: [...r.items, { cat, nom, notes: "" }] } : r
       ),
     }));
   }
@@ -44,6 +64,71 @@ export default function App() {
         r.id === rId ? { ...r, items: r.items.filter((_, i) => i !== idx) } : r
       ),
     }));
+  }
+  function updateItemNotes(pId, rId, idx, notes) {
+    updatePiece(pId, (p) => ({
+      ...p,
+      percus: p.percus.map((r) =>
+        r.id === rId ? { ...r, items: r.items.map((it, i) => i === idx ? { ...it, notes } : it) } : r
+      ),
+    }));
+  }
+  // ── Reorder pieces ──
+  function movePiece(fromIdx, toIdx) {
+    setPieces((prev) => {
+      const arr = [...prev];
+      const [moved] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, moved);
+      return arr;
+    });
+  }
+  // ── Percu reorder / rename / add / delete ──
+  function movePercu(pId, fromIdx, toIdx) {
+    updatePiece(pId, (p) => {
+      const arr = [...p.percus];
+      const [moved] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, moved);
+      return { ...p, percus: arr };
+    });
+  }
+  function renamePercu(pId, rId, newName) {
+    updatePiece(pId, (p) => ({
+      ...p,
+      percus: p.percus.map((r) => r.id === rId ? { ...r, nom: newName } : r),
+    }));
+  }
+  function addPercu(pId) {
+    const nom = prompt("Nom du pôle (ex: Percu 3, Timbalier) :");
+    if (!nom || !nom.trim()) return;
+    updatePiece(pId, (p) => ({
+      ...p,
+      percus: [...p.percus, { id: `p${Date.now()}`, nom: nom.trim(), items: [] }],
+    }));
+  }
+  function deletePercu(pId, rId) {
+    if (!confirm("Supprimer ce pôle ?")) return;
+    updatePiece(pId, (p) => ({ ...p, percus: p.percus.filter((r) => r.id !== rId) }));
+  }
+  // ── Orchestre mutations ──
+  function addOrchestreItem(pId, section, nom) {
+    updatePiece(pId, (p) => {
+      const orch = p.orchestre || { bois: [], cuivres: [], cordes: [], autres: [] };
+      return { ...p, orchestre: { ...orch, [section]: [...(orch[section] || []), nom] } };
+    });
+  }
+  function deleteOrchestreItem(pId, section, idx) {
+    updatePiece(pId, (p) => {
+      const orch = { ...p.orchestre };
+      orch[section] = orch[section].filter((_, i) => i !== idx);
+      return { ...p, orchestre: orch };
+    });
+  }
+  function renameOrchestreItem(pId, section, idx, newName) {
+    updatePiece(pId, (p) => {
+      const orch = { ...p.orchestre };
+      orch[section] = orch[section].map((it, i) => i === idx ? newName : it);
+      return { ...p, orchestre: orch };
+    });
   }
   function renameItem(pId, rId, idx, newName) {
     updatePiece(pId, (p) => ({
@@ -62,8 +147,8 @@ export default function App() {
     }));
   }
 
-  // ── PDF Import ──
-  async function handlePdfImport() {
+  // ── PDF Import: new piece (from home screen) ──
+  async function handlePdfImportNew() {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".pdf";
@@ -73,16 +158,20 @@ export default function App() {
       setPdfLoading(true);
       try {
         const data = await extractFromPdf(file);
-        // Create a new piece from extracted data
         const newPiece = {
           id: uid(),
           titre: data.titre || file.name.replace(".pdf", ""),
-          compositeur: data.compositeur || "Inconnu",
+          compositeur: data.compositeur || "",
           duree: data.duree || "",
           salle: data.salle || "",
           chef: data.chef || "",
           date: data.date || "",
-          couleur: pickNextColor(pieces),
+          effectif: data.effectif || "",
+          effectifDetail: data.effectifDetail || null,
+          orchestre: data.orchestre || null,
+          planDataUrl: data.planDataUrl || null,
+          plans: data.planDataUrl ? [data.planDataUrl] : [],
+          couleur: "blanc",
           percus: data.percus.length > 0
             ? data.percus.map((p, i) => ({
                 id: `p${i + 1}`,
@@ -101,6 +190,56 @@ export default function App() {
       }
     };
     input.click();
+  }
+
+  // ── Add plan to piece (PDF or image) ──
+  async function handleAddPlan(targetPieceId) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".pdf,.jpg,.jpeg,.png,.webp,.heic";
+    input.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      setPdfLoading(true);
+      try {
+        let planDataUrl;
+        if (file.type === "application/pdf") {
+          const data = await extractFromPdf(file);
+          planDataUrl = data.planDataUrl;
+        } else {
+          // Image file — convert to dataUrl
+          planDataUrl = await fileToDataUrl(file);
+        }
+        if (planDataUrl) {
+          updatePiece(targetPieceId, (p) => {
+            const plans = [...(p.plans || []), planDataUrl];
+            return { ...p, plans, planDataUrl };
+          });
+        }
+      } catch (err) {
+        alert("Erreur : " + err.message);
+      } finally {
+        setPdfLoading(false);
+      }
+    };
+    input.click();
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Merge existing percus with newly extracted ones
+  function deletePlan(pId, planIdx) {
+    updatePiece(pId, (p) => {
+      const plans = (p.plans || []).filter((_, i) => i !== planIdx);
+      return { ...p, plans, planDataUrl: plans[plans.length - 1] || null };
+    });
   }
 
   // Pick next unused barnier color
@@ -157,18 +296,91 @@ export default function App() {
   }
 
   // ════════════════════════════════
-  // HOME
+  // CONCERTS LIST
   // ════════════════════════════════
-  if (screen === "home") {
+  if (screen === "concerts") {
+    return (
+      <div style={S.shell}>
+        <div style={S.header}>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>PlateauMap</div>
+          <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 2 }}>Mes concerts</div>
+        </div>
+        <div style={S.body}>
+          <button
+            onClick={() => {
+              const titre = prompt("Nom du concert :");
+              if (!titre || !titre.trim()) return;
+              const newConcert = {
+                id: uid(),
+                titre: titre.trim(),
+                date: prompt("Date :") || "",
+                lieu: prompt("Lieu :") || "",
+                orchestre: prompt("Orchestre :") || "",
+                chef: prompt("Chef :") || "",
+                pieces: [],
+              };
+              setConcerts((prev) => [...prev, newConcert]);
+              goConcert(newConcert.id);
+            }}
+            style={{ ...S.btnPrimary("#1C1917"), marginBottom: 14 }}
+          >
+            + Nouveau concert
+          </button>
+
+          {concerts.map((c, ci) => (
+            <div key={c.id} onClick={() => goConcert(c.id)} style={{ ...S.card("#57534E"), marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#1C1917" }}>{c.titre}</div>
+                  <div style={{ fontSize: 12, color: "#78716C", marginTop: 2 }}>
+                    {[c.orchestre, c.lieu, c.date].filter(Boolean).join(" — ")}
+                  </div>
+                  {c.chef && <div style={{ fontSize: 12, color: "#A8A29E" }}>Chef : {c.chef}</div>}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }} onClick={(e) => e.stopPropagation()}>
+                  <span style={{ fontSize: 12, color: "#78716C", fontWeight: 600 }}>{c.pieces.length} pièce{c.pieces.length !== 1 ? "s" : ""}</span>
+                  <DragHandle onMove={(dir) => {
+                    if (dir === -1 && ci > 0) setConcerts(prev => { const a = [...prev]; const [m] = a.splice(ci, 1); a.splice(ci - 1, 0, m); return a; });
+                    if (dir === 1 && ci < concerts.length - 1) setConcerts(prev => { const a = [...prev]; const [m] = a.splice(ci, 1); a.splice(ci + 1, 0, m); return a; });
+                  }} />
+                  <button onClick={() => { if (confirm("Supprimer ce concert ?")) setConcerts(prev => prev.filter(x => x.id !== c.id)); }}
+                    style={{ background: "none", border: "none", fontSize: 16, color: "#A8A29E", cursor: "pointer", padding: "2px 4px" }}>✕</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ════════════════════════════════
+  // HOME (pieces d'un concert)
+  // ════════════════════════════════
+  if (screen === "home" && concert) {
     const totalPhotos = Object.values(photos).flat().length;
     return (
       <div style={S.shell}>
         <div style={S.header}>
-          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>
-            PlateauMap
-          </div>
-          <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 2 }}>
-            Programme Francesconi — EIC
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button onClick={goConcerts} style={S.backBtn}>←</button>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>
+                {[concert.orchestre, concert.lieu].filter(Boolean).join(" — ")}
+              </div>
+              <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 1 }}>{concert.titre}</div>
+              {concert.chef && <div style={{ fontSize: 12, color: "#A8A29E" }}>Chef : {concert.chef} — {concert.date}</div>}
+            </div>
+            <button onClick={() => {
+              const t = prompt("Titre :", concert.titre); if (!t) return;
+              updateConcert(concert.id, c => ({ ...c,
+                titre: t,
+                date: prompt("Date :", c.date) || c.date,
+                lieu: prompt("Lieu :", c.lieu) || c.lieu,
+                orchestre: prompt("Orchestre :", c.orchestre) || c.orchestre,
+                chef: prompt("Chef :", c.chef) || c.chef,
+              }));
+            }} style={{ background: "none", border: "none", fontSize: 14, color: "#A8A29E", cursor: "pointer" }}>✎</button>
           </div>
         </div>
         <div style={S.body}>
@@ -176,38 +388,61 @@ export default function App() {
             <span style={{ fontSize: 14, color: "#78716C", fontWeight: 600 }}>{pieces.length} pièces</span>
           </div>
 
-          {/* Action buttons: Import PDF + Camera */}
+          {/* Action buttons: Import PDF (new piece) + Camera */}
           <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
             <button
-              onClick={handlePdfImport}
+              onClick={handlePdfImportNew}
               disabled={pdfLoading}
               style={{ ...S.btnSecondary, flex: 1, fontSize: 13, padding: "10px 12px", opacity: pdfLoading ? 0.6 : 1 }}
             >
               {pdfLoading ? "⏳ Import..." : "📄 Importer PDF"}
             </button>
             <button
-              onClick={() => setCameraMode({ pieceId: null, couleur: "blanc" })}
+              onClick={() => {
+                const titre = prompt("Titre de la pièce :");
+                if (!titre || !titre.trim()) return;
+                const newPiece = {
+                  id: uid(),
+                  titre: titre.trim(),
+                  compositeur: prompt("Compositeur :") || "",
+                  duree: "",
+                  salle: "",
+                  chef: "",
+                  date: "",
+                  effectif: "",
+                  effectifDetail: null,
+                  orchestre: null,
+                  planDataUrl: null,
+                  couleur: "blanc",
+                  percus: [{ id: "p1", nom: "Percu 1", items: [] }],
+                };
+                setPieces((prev) => [...prev, newPiece]);
+                goPiece(newPiece.id);
+              }}
               style={{ ...S.btnSecondary, flex: 1, fontSize: 13, padding: "10px 12px" }}
             >
-              📸 Prendre une photo
+              + Nouvelle pièce
             </button>
           </div>
 
-          {pieces.map((p) => {
+          {pieces.map((p, pi) => {
             const col = BARNIER[p.couleur];
             const itemCount = p.percus.reduce((s, r) => s + r.items.length, 0);
             const photoCount = (photos[p.id] || []).length;
             return (
               <div key={p.id} onClick={() => goPiece(p.id)} style={S.card(col.hex)}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 15, fontWeight: 700, color: "#1C1917" }}>{p.titre}</div>
                     <div style={{ fontSize: 12, color: "#78716C", marginTop: 1 }}>{p.compositeur}</div>
                   </div>
-                  <span style={{ ...S.badge, background: col.bg, color: col.hex }}>{col.name}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }} onClick={(e) => e.stopPropagation()}>
+                    <DragHandle onMove={(dir) => { if (dir === -1 && pi > 0) movePiece(pi, pi - 1); if (dir === 1 && pi < pieces.length - 1) movePiece(pi, pi + 1); }} />
+                    <button onClick={() => deletePiece(p.id)} style={{ background: "none", border: "none", fontSize: 16, color: "#A8A29E", cursor: "pointer", padding: "2px 4px" }} title="Supprimer">✕</button>
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                  <span style={S.tag}>{p.duree}</span>
+                  {p.duree && <span style={S.tag}>{p.duree}</span>}
                   <span style={S.tag}>{p.percus.length} percu{p.percus.length > 1 ? "s" : ""}</span>
                   <span style={S.tag}>{itemCount} instr.</span>
                   {photoCount > 0 && <span style={S.tag}>{photoCount} photo{photoCount > 1 ? "s" : ""}</span>}
@@ -221,8 +456,21 @@ export default function App() {
               📷 Toutes les photos ({totalPhotos})
             </button>
           )}
+
+          {/* Concert notes */}
+          <textarea
+            value={concert.notes || ""}
+            onChange={(e) => updateConcert(concert.id, (c) => ({ ...c, notes: e.target.value }))}
+            placeholder="Notes du concert..."
+            style={{
+              width: "100%", minHeight: 80, marginTop: 14, padding: 10, fontSize: 13,
+              border: "1px solid #E7E5E4", borderRadius: 8, background: "#FAFAF9",
+              color: "#1C1917", fontFamily: "'DM Sans', sans-serif", resize: "vertical",
+              outline: "none",
+            }}
+          />
         </div>
-        <NavBar active="pieces" onPieces={goHome} onPhotos={() => goGallery(null)} onTxt={() => goTxt(pieces[0]?.id)} />
+        <NavBar active="pieces" onPieces={goHome} onPhotos={() => goGallery(null)} onTxt={() => { setPieceId(null); setScreen("txt"); }} />
       </div>
     );
   }
@@ -241,25 +489,81 @@ export default function App() {
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>{piece.compositeur}</div>
               <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 1 }}>{piece.titre}</div>
             </div>
-            <span style={{ ...S.badge, background: col.bg, color: col.hex }}>{col.name}</span>
+            <button onClick={goHome} style={{ background: "none", border: "none", fontSize: 18, color: "#A8A29E", cursor: "pointer", padding: "4px 6px" }} title="Fermer">✕</button>
           </div>
         </div>
         <div style={S.body}>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-            <span style={S.tag}>{piece.duree}</span>
-            <span style={S.tag}>{piece.salle}</span>
-            <span style={S.tag}>{piece.chef}</span>
-            <span style={S.tag}>{piece.date}</span>
+          {/* Barnier color picker */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+            {Object.entries(BARNIER).map(([key, b]) => (
+              <button
+                key={key}
+                onClick={() => updatePiece(piece.id, (p) => ({ ...p, couleur: key }))}
+                style={{
+                  width: 32, height: 32, borderRadius: 8,
+                  background: b.hex,
+                  border: piece.couleur === key ? "3px solid #1C1917" : "2px solid #E7E5E4",
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 11, color: "#fff", fontWeight: 700,
+                }}
+                title={b.name}
+              >
+                {piece.couleur === key ? "✓" : ""}
+              </button>
+            ))}
           </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {piece.duree && <span style={S.tag}>{piece.duree}</span>}
+            {piece.salle && <span style={S.tag}>{piece.salle}</span>}
+            {piece.chef && <span style={S.tag}>{piece.chef}</span>}
+            {piece.date && <span style={S.tag}>{piece.date}</span>}
+          </div>
+
+          {/* Effectif — just the nomenclature string */}
+          {piece.effectif && (
+            <div style={{ background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8, padding: "8px 12px", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#78716C", textTransform: "uppercase", whiteSpace: "nowrap" }}>Effectif</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#1C1917", fontFamily: "monospace" }}>{piece.effectif}</span>
+            </div>
+          )}
+
+          {/* Plans (PDF rendered images) */}
+          {(piece.plans || []).length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              {(piece.plans || []).map((planUrl, idx) => (
+                <div key={idx} style={{ marginBottom: 6, borderRadius: 8, overflow: "hidden", border: `2px solid ${col.hex}33`, position: "relative" }}>
+                  <img
+                    src={planUrl}
+                    onClick={() => setFullPhoto({ id: `plan-${idx}`, dataUrl: planUrl })}
+                    style={{ width: "100%", display: "block", cursor: "pointer" }}
+                    alt={`Plan ${idx + 1}`}
+                  />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: col.bg, padding: "4px 10px" }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: col.hex }}>
+                      Plan {(piece.plans || []).length > 1 ? `${idx + 1}/${(piece.plans || []).length}` : ""}
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deletePlan(piece.id, idx); }}
+                      style={{ background: "none", border: "none", fontSize: 14, color: "#A8A29E", cursor: "pointer" }}
+                      title="Supprimer ce plan"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Action buttons */}
           <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
             <button
-              onClick={handlePdfImport}
+              onClick={() => handleAddPlan(piece.id)}
               disabled={pdfLoading}
               style={{ ...S.btnSecondary, flex: 1, fontSize: 12, padding: "8px 10px" }}
             >
-              📄 Importer PDF
+              {pdfLoading ? "⏳..." : "📄 Ajouter plan"}
             </button>
             <button
               onClick={() => setCameraMode({ pieceId: piece.id, couleur: piece.couleur })}
@@ -269,7 +573,8 @@ export default function App() {
             </button>
           </div>
 
-          {piece.percus.map((r) => {
+          {/* Percus with reorder */}
+          {piece.percus.map((r, ri) => {
             const isOpen = percuId === r.id;
             const rPhotos = (photos[piece.id] || []).filter((ph) => ph.percuId === r.id);
             const byCat = {};
@@ -289,13 +594,17 @@ export default function App() {
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
+                    <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>{r.nom}</div>
                       <div style={{ fontSize: 12, color: "#78716C" }}>
                         {r.items.length} instruments{rPhotos.length > 0 ? ` · ${rPhotos.length} photos` : ""}
                       </div>
                     </div>
-                    <span style={{ color: "#A8A29E" }}>{isOpen ? "▾" : "▸"}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }} onClick={(e) => e.stopPropagation()}>
+                      <DragHandle onMove={(dir) => { if (dir === -1 && ri > 0) movePercu(piece.id, ri, ri - 1); if (dir === 1 && ri < piece.percus.length - 1) movePercu(piece.id, ri, ri + 1); }} />
+                      <button onClick={() => { const n = prompt("Renommer :", r.nom); if (n && n.trim()) renamePercu(piece.id, r.id, n.trim()); }} style={{ background: "none", border: "none", fontSize: 12, color: "#A8A29E", cursor: "pointer", padding: "4px" }}>✎</button>
+                      <button onClick={() => deletePercu(piece.id, r.id)} style={{ background: "none", border: "none", fontSize: 14, color: "#A8A29E", cursor: "pointer", padding: "4px" }}>✕</button>
+                    </div>
                   </div>
                 </div>
 
@@ -337,6 +646,12 @@ export default function App() {
                         + Ajouter
                       </button>
                     </div>
+                    <button
+                      onClick={() => copyToClipboard(generatePercuTxt(piece, r.id))}
+                      style={{ ...S.btnSecondary, marginTop: 6, fontSize: 11, padding: "6px 10px" }}
+                    >
+                      Copier TXT {r.nom}
+                    </button>
 
                     {rPhotos.length > 0 && (
                       <div style={{ display: "flex", gap: 6, marginTop: 10, overflowX: "auto", paddingBottom: 4 }}>
@@ -353,10 +668,84 @@ export default function App() {
             );
           })}
 
+          {/* Add pole button */}
+          <button onClick={() => addPercu(piece.id)} style={{ ...S.btnSecondary, marginTop: 4, fontSize: 12 }}>+ Ajouter un pôle</button>
+
+          {/* Orchestre section — below percus */}
+          <div style={{ marginTop: 14, marginBottom: 10 }}>
+            <div
+              onClick={() => setPercuId(percuId === "orchestre" ? null : "orchestre")}
+              style={{
+                background: percuId === "orchestre" ? col.bg : "#FAFAF9",
+                border: `1px solid ${percuId === "orchestre" ? col.hex + "44" : "#E7E5E4"}`,
+                borderRadius: 10, padding: "12px 14px", cursor: "pointer",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>Orchestre</div>
+                  {piece.effectif && <div style={{ fontSize: 12, color: "#78716C", fontFamily: "monospace" }}>{piece.effectif}</div>}
+                  {!piece.effectif && <div style={{ fontSize: 12, color: "#A8A29E" }}>
+                    {(() => { const o = piece.orchestre; const n = o ? [o.bois,o.cuivres,o.cordes,o.autres].flat().length : 0; return n > 0 ? `${n} pupitres` : "Aucun pupitre"; })()}
+                  </div>}
+                </div>
+                <span style={{ color: "#A8A29E" }}>{percuId === "orchestre" ? "▾" : "▸"}</span>
+              </div>
+            </div>
+            {percuId === "orchestre" && (
+              <div style={{ padding: "10px 4px 4px" }}>
+                {[
+                  { key: "bois", label: "Bois" },
+                  { key: "cuivres", label: "Cuivres" },
+                  { key: "cordes", label: "Cordes" },
+                  { key: "autres", label: "Autres" },
+                ].map(g => {
+                  const items = piece.orchestre?.[g.key] || [];
+                  return (
+                    <div key={g.key} style={{ marginBottom: 8 }}>
+                      <div style={S.catLabel(col.hex)}>{g.label}</div>
+                      {items.map((item, i) => (
+                        <EditableItem
+                          key={i}
+                          nom={item}
+                          color={col.hex}
+                          onRename={(v) => renameOrchestreItem(piece.id, g.key, i, v)}
+                          onDelete={() => deleteOrchestreItem(piece.id, g.key, i)}
+                        />
+                      ))}
+                      <button
+                        onClick={() => {
+                          const nom = prompt(`Ajouter (${g.label}) — ex: "16 Violons I" :`);
+                          if (nom && nom.trim()) addOrchestreItem(piece.id, g.key, nom.trim());
+                        }}
+                        style={{ fontSize: 11, color: col.hex, background: "none", border: "none", cursor: "pointer", padding: "4px 0", fontWeight: 600 }}
+                      >
+                        + Ajouter
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Notes */}
+          <textarea
+            value={piece.notes || ""}
+            onChange={(e) => updatePiece(piece.id, (p) => ({ ...p, notes: e.target.value }))}
+            placeholder="Notes..."
+            style={{
+              width: "100%", minHeight: 80, marginTop: 14, padding: 10, fontSize: 13,
+              border: "1px solid #E7E5E4", borderRadius: 8, background: "#FAFAF9",
+              color: "#1C1917", fontFamily: "'DM Sans', sans-serif", resize: "vertical",
+              outline: "none",
+            }}
+          />
+
           <button onClick={() => goTxt(piece.id)} style={{ ...S.btnSecondary, marginTop: 10 }}>☰ Liste TXT</button>
           <button onClick={() => downloadTxt(piece)} style={{ ...S.btnSecondary, marginTop: 6 }}>↓ Télécharger TXT</button>
         </div>
-        <NavBar active="pieces" onPieces={goHome} onPhotos={() => goGallery(pieceId)} onTxt={() => goTxt(pieceId)} />
+        <NavBar active="pieces" onPieces={goHome} onPhotos={() => goGallery(pieceId)} onTxt={() => { setPieceId(pieceId); setScreen("txt"); }} />
         {fullPhoto && <Lightbox photo={fullPhoto} onClose={() => setFullPhoto(null)} />}
       </div>
     );
@@ -437,17 +826,48 @@ export default function App() {
   }
 
   // ════════════════════════════════
-  // TXT (ÉDITABLE)
+  // TXT — full concert or single piece
   // ════════════════════════════════
   if (screen === "txt") {
+    // No pieceId → full concert TXT (all pieces)
+    if (!pieceId && concert) {
+      const allTxt = pieces.map(p => generateTxt(p)).join("\n\n");
+      const fullTxt = allTxt + (concert.notes ? "\n\n" + "=".repeat(50) + "\n  NOTES\n" + "=".repeat(50) + "\n" + concert.notes : "");
+      return (
+        <div style={S.shell}>
+          <div style={S.header}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button onClick={goHome} style={S.backBtn}>←</button>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>Liste matériel complète</div>
+                <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 1 }}>{concert.titre}</div>
+              </div>
+            </div>
+          </div>
+          <div style={S.body}>
+            <pre style={{ fontSize: 12, color: "#1C1917", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8, padding: 12, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'DM Sans', monospace", lineHeight: 1.6, maxHeight: "60vh", overflowY: "auto" }}>
+              {fullTxt}
+            </pre>
+            <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+              <button onClick={() => { const blob = new Blob([fullTxt], { type: "text/plain" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = concert.titre.replace(/\s+/g, "_") + "_complet.txt"; a.click(); }} style={{ ...S.btnPrimary("#1C1917"), flex: 1 }}>↓ Télécharger</button>
+              <button onClick={() => copyToClipboard(fullTxt)} style={{ ...S.btnSecondary, flex: 1 }}>Copier</button>
+            </div>
+          </div>
+          <NavBar active="txt" onPieces={goHome} onPhotos={() => goGallery(null)} onTxt={() => { setPieceId(null); setScreen("txt"); }} />
+        </div>
+      );
+    }
+
+    // Single piece TXT
     const tp = piece || pieces[0];
     if (!tp) return null;
     const col = BARNIER[tp.couleur];
+    const pieceTxt = generateTxt(tp) + (tp.notes ? "\n\nNotes : " + tp.notes : "");
     return (
       <div style={S.shell}>
         <div style={{ ...S.header, borderBottom: `3px solid ${col.hex}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <button onClick={() => (pieceId ? goPiece(pieceId) : goHome())} style={S.backBtn}>←</button>
+            <button onClick={() => goPiece(tp.id)} style={S.backBtn}>←</button>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>Liste matériel</div>
               <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 1 }}>{tp.titre}</div>
@@ -456,7 +876,7 @@ export default function App() {
           </div>
         </div>
         <div style={S.body}>
-          {/* Piece selector */}
+          {/* Piece selector tabs */}
           <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
             {pieces.map((p) => {
               const c = BARNIER[p.couleur];
@@ -464,59 +884,16 @@ export default function App() {
             })}
           </div>
 
-          {/* Info block */}
-          <div style={{ background: "#FAFAF9", border: "1px solid #E7E5E4", borderLeft: `4px solid ${col.hex}`, borderRadius: 8, padding: 10, marginBottom: 14, fontSize: 12, color: "#57534E", lineHeight: 1.6 }}>
-            <strong style={{ color: "#1C1917" }}>{tp.compositeur}</strong> — {tp.duree}<br />
-            {tp.salle} — {tp.date} — Chef : {tp.chef}
-          </div>
+          <pre style={{ fontSize: 12, color: "#1C1917", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8, padding: 12, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'DM Sans', monospace", lineHeight: 1.6, maxHeight: "60vh", overflowY: "auto" }}>
+            {pieceTxt}
+          </pre>
 
-          {/* Editable items per percu */}
-          {tp.percus.map((r, ri) => {
-            const byCat = {};
-            r.items.forEach((it, idx) => {
-              if (!byCat[it.cat]) byCat[it.cat] = [];
-              byCat[it.cat].push({ ...it, _i: idx });
-            });
-            return (
-              <div key={r.id} style={{ marginBottom: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>{r.nom}</div>
-                  <span style={{ fontSize: 11, color: "#A8A29E" }}>{r.items.length} items</span>
-                </div>
-                {Object.entries(byCat).map(([cat, items]) => (
-                  <div key={cat}>
-                    <div style={S.catLabel(col.hex)}>{cat}</div>
-                    {items.map((it) => (
-                      <EditableItem
-                        key={it._i}
-                        nom={it.nom}
-                        color={col.hex}
-                        onRename={(v) => renameItem(tp.id, r.id, it._i, v)}
-                        onDelete={() => deleteItem(tp.id, r.id, it._i)}
-                      />
-                    ))}
-                  </div>
-                ))}
-                <button
-                  onClick={() => {
-                    const nom = prompt("Nom de l'instrument :");
-                    if (nom && nom.trim()) addItem(tp.id, r.id, "Accessoires", nom.trim());
-                  }}
-                  style={{ ...S.btnSecondary, marginTop: 4, fontSize: 12, padding: "8px 12px" }}
-                >
-                  + Ajouter un instrument
-                </button>
-                {ri < tp.percus.length - 1 && <hr style={{ border: "none", borderTop: "1px solid #E7E5E4", margin: "12px 0" }} />}
-              </div>
-            );
-          })}
-
-          <div style={{ borderTop: "1px solid #E7E5E4", paddingTop: 14, marginTop: 10 }}>
-            <button onClick={() => downloadTxt(tp)} style={{ ...S.btnPrimary(col.hex), marginBottom: 6 }}>↓ Télécharger TXT</button>
-            <button onClick={() => copyToClipboard(generateTxt(tp))} style={S.btnSecondary}>Copier dans le presse-papier</button>
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <button onClick={() => downloadTxt(tp)} style={{ ...S.btnPrimary(col.hex), flex: 1 }}>↓ Télécharger</button>
+            <button onClick={() => copyToClipboard(pieceTxt)} style={{ ...S.btnSecondary, flex: 1 }}>Copier</button>
           </div>
         </div>
-        <NavBar active="txt" onPieces={goHome} onPhotos={() => goGallery(null)} onTxt={() => goTxt(tp.id)} />
+        <NavBar active="txt" onPieces={goHome} onPhotos={() => goGallery(null)} onTxt={() => { setPieceId(null); setScreen("txt"); }} />
       </div>
     );
   }
@@ -527,6 +904,60 @@ export default function App() {
 // ════════════════════════════════
 // SUB-COMPONENTS
 // ════════════════════════════════
+
+/** Long-press drag handle: tap shows ▲▼, long press + vertical drag reorders */
+function DragHandle({ onMove }) {
+  const [expanded, setExpanded] = useState(false);
+  const timerRef = useRef(null);
+  const startY = useRef(0);
+  const moved = useRef(false);
+
+  function handleTouchStart(e) {
+    startY.current = e.touches[0].clientY;
+    moved.current = false;
+    timerRef.current = setTimeout(() => {
+      setExpanded(true);
+    }, 300);
+  }
+
+  function handleTouchMove(e) {
+    const dy = e.touches[0].clientY - startY.current;
+    if (Math.abs(dy) > 30) {
+      clearTimeout(timerRef.current);
+      onMove(dy < 0 ? -1 : 1);
+      startY.current = e.touches[0].clientY;
+      moved.current = true;
+    }
+  }
+
+  function handleTouchEnd() {
+    clearTimeout(timerRef.current);
+    if (!moved.current && !expanded) {
+      setExpanded((v) => !v);
+    }
+    if (expanded) {
+      setTimeout(() => setExpanded(false), 2000);
+    }
+  }
+
+  return (
+    <div
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      style={{ display: "flex", flexDirection: "column", alignItems: "center", touchAction: "none", userSelect: "none", cursor: "grab", padding: "2px 4px" }}
+    >
+      {expanded ? (
+        <>
+          <button onClick={() => { onMove(-1); }} style={{ background: "none", border: "none", fontSize: 12, color: "#A8A29E", cursor: "pointer", padding: "2px" }}>▲</button>
+          <button onClick={() => { onMove(1); }} style={{ background: "none", border: "none", fontSize: 12, color: "#A8A29E", cursor: "pointer", padding: "2px" }}>▼</button>
+        </>
+      ) : (
+        <span style={{ fontSize: 16, color: "#A8A29E", lineHeight: 1 }}>≡</span>
+      )}
+    </div>
+  );
+}
 
 function NavBar({ active, onPieces, onPhotos, onTxt }) {
   return (
