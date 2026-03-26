@@ -73,6 +73,14 @@ export default function App() {
       ),
     }));
   }
+  function toggleItemCheck(pId, rId, idx) {
+    updatePiece(pId, (p) => ({
+      ...p,
+      percus: p.percus.map((r) =>
+        r.id === rId ? { ...r, items: r.items.map((it, i) => i === idx ? { ...it, checked: !it.checked } : it) } : r
+      ),
+    }));
+  }
   // ── Reorder pieces ──
   function movePiece(fromIdx, toIdx) {
     setPieces((prev) => {
@@ -611,7 +619,13 @@ export default function App() {
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>{r.nom}</div>
                       <div style={{ fontSize: 12, color: "#78716C" }}>
-                        {r.items.length} instruments{rPhotos.length > 0 ? ` · ${rPhotos.length} photos` : ""}
+                        {(() => {
+                          const checkedCount = r.items.filter(it => it.checked).length;
+                          const total = r.items.length;
+                          if (checkedCount === 0) return `${total} instruments`;
+                          if (checkedCount === total) return `${total}/${total} installé${total > 1 ? "s" : ""} ✓`;
+                          return `${checkedCount}/${total} installés`;
+                        })()}{rPhotos.length > 0 ? ` · ${rPhotos.length} photos` : ""}
                       </div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 4 }} onClick={(e) => e.stopPropagation()}>
@@ -624,20 +638,26 @@ export default function App() {
 
                 {isOpen && (
                   <div style={{ padding: "8px 4px 0" }}>
-                    {Object.entries(byCat).map(([cat, items]) => (
-                      <div key={cat}>
-                        <div style={S.catLabel(col.hex)}>{cat}</div>
-                        {items.map((it) => (
-                          <EditableItem
-                            key={it._i}
-                            nom={it.nom}
-                            color={col.hex}
-                            onRename={(v) => renameItem(piece.id, r.id, it._i, v)}
-                            onDelete={() => deleteItem(piece.id, r.id, it._i)}
-                          />
-                        ))}
-                      </div>
-                    ))}
+                    {Object.entries(byCat).map(([cat, items]) => {
+                      // Sort: unchecked first, checked last
+                      const sorted = [...items].sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0));
+                      return (
+                        <div key={cat}>
+                          <div style={S.catLabel(col.hex)}>{cat}</div>
+                          {sorted.map((it) => (
+                            <EditableItem
+                              key={it._i}
+                              nom={it.nom}
+                              color={col.hex}
+                              checked={!!it.checked}
+                              onToggle={() => toggleItemCheck(piece.id, r.id, it._i)}
+                              onRename={(v) => renameItem(piece.id, r.id, it._i, v)}
+                              onDelete={() => deleteItem(piece.id, r.id, it._i)}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })}
 
                     <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
                       <button
@@ -996,7 +1016,7 @@ function FilterBtn({ label, color, active, onClick }) {
   );
 }
 
-function EditableItem({ nom, color, onRename, onDelete }) {
+function EditableItem({ nom, color, onRename, onDelete, checked, onToggle }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(nom);
 
@@ -1007,21 +1027,40 @@ function EditableItem({ nom, color, onRename, onDelete }) {
   if (editing) {
     return (
       <div style={S.itemRow}>
+        {onToggle && <CheckBox checked={checked} color={color} onToggle={onToggle} />}
         <input autoFocus value={value} onChange={(e) => setValue(e.target.value)}
           onBlur={() => { if (value.trim()) onRename(value.trim()); setEditing(false); }}
           onKeyDown={(e) => {
             if (e.key === "Enter") { if (value.trim()) onRename(value.trim()); setEditing(false); }
             if (e.key === "Escape") { setValue(nom); setEditing(false); }
           }}
-          style={S.itemInput(color)} />
+          style={{ ...S.itemInput(color), flex: 1 }} />
         <button onClick={onDelete} style={S.deleteBtn}>×</button>
       </div>
     );
   }
   return (
     <div style={S.itemRow}>
-      <div style={S.itemText(color)} onClick={() => setEditing(true)}>{nom}</div>
+      {onToggle && <CheckBox checked={checked} color={color} onToggle={onToggle} />}
+      <div style={{ ...S.itemText(color), flex: 1, textDecoration: checked ? "line-through" : "none", opacity: checked ? 0.5 : 1 }} onClick={() => setEditing(true)}>{nom}</div>
       <button onClick={onDelete} style={S.deleteBtn}>×</button>
+    </div>
+  );
+}
+
+function CheckBox({ checked, color, onToggle }) {
+  return (
+    <div
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      style={{
+        width: 22, height: 22, borderRadius: 5, flexShrink: 0,
+        border: `2px solid ${checked ? color : "#D6D3D1"}`,
+        background: checked ? color : "transparent",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        cursor: "pointer", marginRight: 6, transition: "all 0.15s",
+      }}
+    >
+      {checked && <span style={{ color: "#fff", fontSize: 14, fontWeight: 700, lineHeight: 1 }}>✓</span>}
     </div>
   );
 }
