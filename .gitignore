@@ -10,3 +10,7 @@ verify-screenshot*
 *.cjs
 verify-fail-*
 test-data/
+PROMPTS_VISION_TEST.md
+CONVERSATION_RESUME.md
+BENCHMARK_VISION_IA.md
+test-data/
