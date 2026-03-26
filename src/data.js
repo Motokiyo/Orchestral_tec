@@ -6,7 +6,6 @@ export const BARNIER = {
   jaune:     { hex: "#FDD835", bg: "#FFF9C4", name: "Jaune" },
   orange:    { hex: "#FB8C00", bg: "#FFE0B2", name: "Orange" },
   violet:    { hex: "#8E24AA", bg: "#E1BEE7", name: "Violet" },
-  rose:      { hex: "#D81B60", bg: "#F8BBD0", name: "Rose" },
   blanc:     { hex: "#E0E0E0", bg: "#FAFAFA", name: "Blanc" },
   noir:      { hex: "#212121", bg: "#E0E0E0", name: "Noir" },
   gris:      { hex: "#78909C", bg: "#CFD8DC", name: "Gris" },
