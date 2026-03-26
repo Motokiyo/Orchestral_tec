@@ -7,3 +7,5 @@ debug_*.cjs
 puppeteer-test*.js
 puppeteer-test*.cjs
 verify-screenshot*
+*.cjs
+verify-fail-*
