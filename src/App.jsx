@@ -5,6 +5,40 @@ import { extractFromPdf } from "./pdfParser.js";
 import { useConcerts, usePhotos } from "./useStorage.js";
 import { S } from "./styles.js";
 
+// ── Shared helper: import image file, apply watermark, return dataUrl ──
+function importImageFile(watermarkOpts) {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".jpg,.jpeg,.png,.webp,.heic";
+    input.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) { resolve(null); return; }
+      const fileDataUrl = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        if (watermarkOpts) {
+          applyWatermark(canvas, ctx, watermarkOpts);
+        }
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = () => resolve(null);
+      img.src = fileDataUrl;
+    };
+    input.click();
+  });
+}
+
 export default function App() {
   const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }]);
   const [screen, setScreen] = useState("concerts");
@@ -284,6 +318,22 @@ export default function App() {
         col={zsCol}
         onSelect={(zone) => {
           setCameraMode({ ...zoneSelectMode, zone });
+          setZoneSelectMode(null);
+        }}
+        onImport={(zone, dataUrl) => {
+          const photoData = {
+            id: uid(),
+            dataUrl,
+            pieceId: zoneSelectMode.pieceId || "standalone",
+            percuId: zoneSelectMode.percuId || null,
+            zone,
+            num: 1,
+            total: 1,
+            couleur: zoneSelectMode.couleur || "blanc",
+          };
+          if (zoneSelectMode.pieceId) {
+            addPhoto(zoneSelectMode.pieceId, photoData);
+          }
           setZoneSelectMode(null);
         }}
         onCancel={() => setZoneSelectMode(null)}
@@ -1248,9 +1298,19 @@ function Lightbox({ photo, onClose, onDelete }) {
 // ════════════════════════════════
 // STANDALONE CAMERA
 // ════════════════════════════════
-function ZoneSelectView({ piece, percu, col, onSelect, onCancel }) {
+function ZoneSelectView({ piece, percu, col, onSelect, onImport, onCancel }) {
   const [zone, setZone] = useState("");
   const defaultZones = ["Cour", "Jardin", "Centre", "Détail", "Devant", "Derrière"];
+
+  async function handleImportWithZone(selectedZone) {
+    const dataUrl = await importImageFile({
+      titre: piece?.titre || "", percuNom: percu?.nom || "",
+      zone: selectedZone, num: 1, total: 1, couleur: col,
+    });
+    if (dataUrl && onImport) onImport(selectedZone, dataUrl);
+  }
+
+  const [importMode, setImportMode] = useState(false);
 
   return (
     <div style={{ background: "#F5F5F4", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
@@ -1258,12 +1318,40 @@ function ZoneSelectView({ piece, percu, col, onSelect, onCancel }) {
         <div style={{ fontSize: 12, opacity: 0.85 }}>
           {piece?.titre}{percu ? ` — ${percu.nom}` : ""}
         </div>
-        <div style={{ fontSize: 18, fontWeight: 700 }}>📸 Quelle zone ?</div>
+        <div style={{ fontSize: 18, fontWeight: 700 }}>{importMode ? "📁 Importer — Quelle zone ?" : "📸 Quelle zone ?"}</div>
       </div>
 
       <div style={{ flex: 1, padding: 16, overflowY: "auto" }}>
+        {/* Mode toggle: Camera vs Import */}
+        {onImport && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <button
+              onClick={() => setImportMode(false)}
+              style={{
+                flex: 1, padding: "10px", borderRadius: 10, fontSize: 13, fontWeight: 600,
+                background: !importMode ? col.hex : "#fff",
+                color: !importMode ? "#fff" : col.hex,
+                border: `2px solid ${col.hex}`, cursor: "pointer",
+              }}
+            >
+              📸 Caméra
+            </button>
+            <button
+              onClick={() => setImportMode(true)}
+              style={{
+                flex: 1, padding: "10px", borderRadius: 10, fontSize: 13, fontWeight: 600,
+                background: importMode ? col.hex : "#fff",
+                color: importMode ? "#fff" : col.hex,
+                border: `2px solid ${col.hex}`, cursor: "pointer",
+              }}
+            >
+              📁 Importer fichier
+            </button>
+          </div>
+        )}
+
         <div style={{ fontSize: 13, color: "#78716C", marginBottom: 12 }}>
-          Sélectionnez ou saisissez la zone de la photo :
+          {importMode ? "Choisissez la zone, puis sélectionnez un fichier image :" : "Sélectionnez ou saisissez la zone de la photo :"}
         </div>
 
         {/* Quick zone buttons */}
@@ -1271,7 +1359,7 @@ function ZoneSelectView({ piece, percu, col, onSelect, onCancel }) {
           {defaultZones.map((z) => (
             <button
               key={z}
-              onClick={() => onSelect(z)}
+              onClick={() => importMode ? handleImportWithZone(z) : onSelect(z)}
               style={{
                 padding: "10px 18px", borderRadius: 10, fontSize: 14, fontWeight: 600,
                 background: "#fff", border: `2px solid ${col.hex}`, color: col.hex,
@@ -1291,7 +1379,7 @@ function ZoneSelectView({ piece, percu, col, onSelect, onCancel }) {
               value={zone}
               onChange={(e) => setZone(e.target.value)}
               placeholder="Ex: Fond de scène..."
-              onKeyDown={(e) => { if (e.key === "Enter" && zone.trim()) onSelect(zone.trim()); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && zone.trim()) { importMode ? handleImportWithZone(zone.trim()) : onSelect(zone.trim()); } }}
               style={{
                 flex: 1, padding: "12px 14px", fontSize: 14, borderRadius: 10,
                 border: `2px solid ${col.hex}44`, background: "#fff", color: "#1C1917",
@@ -1300,7 +1388,7 @@ function ZoneSelectView({ piece, percu, col, onSelect, onCancel }) {
             />
             <button
               disabled={!zone.trim()}
-              onClick={() => onSelect(zone.trim())}
+              onClick={() => importMode ? handleImportWithZone(zone.trim()) : onSelect(zone.trim())}
               style={{
                 padding: "12px 20px", borderRadius: 10, fontSize: 14, fontWeight: 600,
                 background: zone.trim() ? col.hex : "#E7E5E4",
@@ -1335,6 +1423,15 @@ function StandaloneCamera({ onCapture, onCancel, couleur, watermark }) {
   const streamRef = useRef(null);
   const [preview, setPreview] = useState(null);
   const col = BARNIER[couleur] || BARNIER.blanc;
+
+  async function handleImportFile() {
+    const wmOpts = watermark ? {
+      titre: watermark.titre, percuNom: watermark.percuNom,
+      zone: watermark.zone, num: 1, total: 1, couleur: watermark.couleur,
+    } : null;
+    const dataUrl = await importImageFile(wmOpts);
+    if (dataUrl) setPreview(dataUrl);
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -1467,7 +1564,7 @@ function StandaloneCamera({ onCapture, onCancel, couleur, watermark }) {
           Annuler
         </button>
         <button onClick={takePhoto} style={{ width: 68, height: 68, borderRadius: "50%", background: "#fff", border: `4px solid ${col.hex}`, cursor: "pointer" }} />
-        <div style={{ width: 70 }} />
+        <button onClick={handleImportFile} style={{ background: "none", border: "1px solid #555", color: "#888", borderRadius: 10, padding: "10px 14px", fontSize: 12, cursor: "pointer" }}>📁</button>
       </div>
       <canvas ref={canvasRef} style={{ display: "none" }} />
     </div>
@@ -1514,6 +1611,7 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
+  const [preview, setPreview] = useState(null); // { dataUrl, photoData }
 
   const piece = pieces.find((p) => p.id === capture.pieceId);
   const percu = piece?.percus.find((r) => r.id === capture.percuId);
@@ -1538,7 +1636,7 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
         alert("Impossible d'accéder à la caméra. Vérifiez les permissions. (" + e.message + ")");
       }
     }
-    startCamera();
+    if (!preview) startCamera();
     return () => {
       mounted = false;
       if (streamRef.current) {
@@ -1546,7 +1644,38 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
         streamRef.current = null;
       }
     };
-  }, []);
+  }, [preview]);
+
+  function stopCamera() {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+  }
+
+  function buildWatermarkOpts() {
+    return {
+      titre: piece?.titre || "",
+      percuNom: percu?.nom || "",
+      zone,
+      num: capture.currentZone + 1,
+      total: capture.zones.length,
+      couleur: col,
+    };
+  }
+
+  function buildPhotoData(dataUrl) {
+    return {
+      id: uid(),
+      dataUrl,
+      pieceId: capture.pieceId,
+      percuId: capture.percuId,
+      zone,
+      num: capture.currentZone + 1,
+      total: capture.zones.length,
+      couleur: capture.couleur,
+    };
+  }
 
   function takePhoto() {
     const video = videoRef.current;
@@ -1558,38 +1687,74 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
     canvas.height = video.videoHeight || 720;
     ctx.drawImage(video, 0, 0);
 
-    applyWatermark(canvas, ctx, {
-      titre: piece?.titre || "",
-      percuNom: percu?.nom || "",
-      zone,
-      num: capture.currentZone + 1,
-      total: capture.zones.length,
-      couleur: col,
-    });
+    applyWatermark(canvas, ctx, buildWatermarkOpts());
 
     const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-    onPhoto({
-      id: uid(),
-      dataUrl,
-      pieceId: capture.pieceId,
-      percuId: capture.percuId,
-      zone,
-      num: capture.currentZone + 1,
-      total: capture.zones.length,
-      couleur: capture.couleur,
-    });
+    stopCamera();
+    setPreview({ dataUrl, photoData: buildPhotoData(dataUrl) });
+  }
 
+  async function handleImportFile() {
+    const dataUrl = await importImageFile(buildWatermarkOpts());
+    if (dataUrl) {
+      stopCamera();
+      setPreview({ dataUrl, photoData: buildPhotoData(dataUrl) });
+    }
+  }
+
+  function handleValidate() {
+    if (!preview) return;
+    onPhoto(preview.photoData);
     if (capture.currentZone < capture.zones.length - 1) {
+      setPreview(null);
       onNext({ ...capture, currentZone: capture.currentZone + 1 });
     } else {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
       onDone();
     }
   }
 
+  function handleRetake() {
+    setPreview(null);
+  }
+
+  function handleCancel() {
+    stopCamera();
+    onCancel();
+  }
+
+  // Preview mode — show captured/imported photo with options
+  if (preview) {
+    const isLast = capture.currentZone >= capture.zones.length - 1;
+    return (
+      <div style={{ background: "#000", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
+        <div style={{ background: col.hex, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#fff", flexShrink: 0 }}>
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>{piece?.titre} — {percu?.nom}</div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>Aperçu — {zone}</div>
+          </div>
+          <div style={{ fontSize: 28, fontWeight: 800 }}>{capture.currentZone + 1}/{capture.zones.length}</div>
+        </div>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 8, minHeight: 0, overflow: "hidden" }}>
+          <img src={preview.dataUrl} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />
+        </div>
+        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+          <button onClick={handleValidate} style={{ background: col.hex, color: "#fff", border: "none", borderRadius: 10, padding: "14px 20px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+            {isLast ? "✓ Valider et terminer" : `✓ Valider → Zone suivante (${capture.currentZone + 2}/${capture.zones.length})`}
+          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={handleRetake} style={{ flex: 1, background: "none", border: "1px solid #555", color: "#aaa", borderRadius: 10, padding: "10px 16px", fontSize: 13, cursor: "pointer" }}>
+              ↻ Reprendre
+            </button>
+            <button onClick={handleCancel} style={{ flex: 1, background: "none", border: "1px solid #555", color: "#aaa", borderRadius: 10, padding: "10px 16px", fontSize: 13, cursor: "pointer" }}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Camera live view
   return (
     <div style={{ background: "#000", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
       <div style={{ background: col.hex, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#fff", flexShrink: 0 }}>
@@ -1606,9 +1771,9 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
         </div>
       </div>
       <div style={{ padding: 16, display: "flex", justifyContent: "center", alignItems: "center", gap: 24, flexShrink: 0 }}>
-        <button onClick={onCancel} style={{ background: "none", border: "1px solid #555", color: "#888", borderRadius: 10, padding: "10px 20px", fontSize: 14, cursor: "pointer" }}>Annuler</button>
+        <button onClick={handleCancel} style={{ background: "none", border: "1px solid #555", color: "#888", borderRadius: 10, padding: "10px 20px", fontSize: 14, cursor: "pointer" }}>Annuler</button>
         <button onClick={takePhoto} style={{ width: 68, height: 68, borderRadius: "50%", background: "#fff", border: `4px solid ${col.hex}`, cursor: "pointer" }} />
-        <div style={{ width: 70 }} />
+        <button onClick={handleImportFile} style={{ background: "none", border: "1px solid #555", color: "#888", borderRadius: 10, padding: "10px 14px", fontSize: 12, cursor: "pointer" }}>📁</button>
       </div>
       <canvas ref={canvasRef} style={{ display: "none" }} />
     </div>
