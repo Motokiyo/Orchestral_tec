@@ -1,268 +1,180 @@
 # PlateauMap — Prompts de test Vision IA
 
-## Contexte d'utilisation
+## Confidentialité
 
-Ces prompts servent à tester les LLM vision sur des photos réelles d'installations de percussions orchestrales. L'objectif est de déterminer quel modèle est le plus fiable pour :
-1. Identifier le matériel sur les photos
-2. Lire les textes/annotations
-3. Comparer avec un plan théorique (PDF AutoCAD)
+Les photos et plans sont des documents de travail appartenant à l'orchestre.
+Ne jamais publier les photos sur un repo public. Les garder en local uniquement.
+Le dossier `test-data/` est dans le `.gitignore`.
 
-### Principe fondamental : LE TERRAIN PRIME
+---
+
+## Contexte
+
+Ces prompts servent à tester les LLM vision sur des photos et plans de plateau orchestral.
+L'objectif est de générer automatiquement la fiche technique d'un concert au format des plans AutoCAD de Radio France / Maison de la Radio.
+
+### Principe : LE TERRAIN PRIME
 
 On envoie d'abord le PDF (plan théorique), puis les photos (réalité terrain).
-Si les photos montrent quelque chose de différent du plan, c'est que les musiciens ou le chef ont changé l'installation entre le plan et le montage réel.
+Si les photos montrent quelque chose de différent du plan, c'est que les musiciens ou le chef a changé l'installation.
 **Les photos ont toujours raison sur le plan.**
 
 ---
 
-## PROMPT 1 — Analyse complète : PDF + Photos de plateau
+## PROMPT 1 — Extraction complète au format plan de plateau
 
-> Envoyer : d'abord le PDF du plan, puis les photos de l'installation réelle.
-
-```
-Tu es un assistant spécialisé en régie de concert et installations de percussions orchestrales.
-
-Je vais te fournir :
-1. Un PDF de plan de dessus (plan AutoCAD) — c'est le PLAN THÉORIQUE prévu avant le montage
-2. Des photos prises APRÈS le montage sur le plateau — c'est la RÉALITÉ TERRAIN
-
-IMPORTANT : les photos arrivent APRÈS le plan et sont plus fiables. Si quelque chose diffère entre le plan et les photos, c'est que les musiciens ou le chef a changé l'installation. Les photos font foi, pas le plan.
-
-### ÉTAPE 1 : EXTRACTION DU PDF
-
-Depuis le plan PDF, extrais :
-- Titre de l'œuvre
-- Compositeur
-- Durée
-- Salle / lieu
-- Chef d'orchestre
-- Date
-- Nombre de percussionnistes (pôles)
-- Liste du matériel par percussionniste tel qu'indiqué sur le plan
-- Effectif orchestral global (cordes, bois, cuivres, autres)
-- Disposition prévue (qui est où)
-
-### ÉTAPE 2 : ANALYSE DES PHOTOS
-
-Pour chaque photo, identifie :
-
-**A) MATÉRIEL VISIBLE** — classé par catégorie :
-- CLAVIERS (xylophone, marimba, vibraphone, glockenspiel, célesta, cloches tubulaires)
-- TIMBALES & PEAUX (timbales, caisse claire, toms, bongos, congas, tambourin, bodhran, roto-toms)
-- ACCESSOIRES (triangle, wood-block, claves, castagnettes, cymbales, crotales, grelots)
-- GROSSES PIÈCES (gong, tam-tam, grosse caisse, tôle tonnerre)
-- STANDS & SUPPORTS (pieds de cymbale, racks, tables d'accessoires, pupitres)
-- BAGUETTES & SPÉCIAL (mailloches, archets, objets atypiques, électronique, clavier MIDI)
-
-Pour chaque instrument :
-- Nom exact si identifiable (marque, modèle, taille)
-- Quantité
-- Confiance : CERTAIN / PROBABLE / INCERTAIN
-
-**B) DISPOSITION SPATIALE** (vue de dessus si possible) :
-- Côté JARDIN (gauche vu de la salle)
-- CENTRE
-- Côté COUR (droite vu de la salle)
-- DEVANT (côté chef) vs DERRIÈRE (fond de scène)
-
-**C) TEXTE VISIBLE** :
-- Marquages sur les instruments (marques, logos)
-- Texte sur les partitions si lisible
-- Annotations, barnier (gaffer coloré), marquages au sol
-- Filigrane/watermark sur les photos
-
-**D) CONTEXTE** :
-- Moment : montage / répétition / concert
-- Nombre de musiciens visibles
-- La salle (si identifiable)
-- Tout autre détail pertinent
-
-### ÉTAPE 3 : COMPARAISON PLAN vs TERRAIN
-
-Compare ce que le PDF prévoyait avec ce que les photos montrent :
-
-Pour chaque instrument du plan :
-- ✅ CONFIRMÉ : visible sur les photos, conforme au plan
-- ⚠️ MODIFIÉ : présent mais différent (position, modèle, quantité)
-- ❌ ABSENT : prévu sur le plan mais pas visible sur les photos
-- ❓ INCERTAIN : impossible à confirmer depuis les angles disponibles
-
-Instruments AJOUTÉS (visibles sur les photos mais PAS sur le plan) :
-- 🆕 AJOUT : [instrument] — probablement ajouté par le musicien/chef
-
-### ÉTAPE 4 : LISTE MATÉRIEL FINALE (TERRAIN)
-
-Génère la liste de matériel RÉELLE basée sur les photos (pas le plan) :
+> Envoyer : le PDF du plan AutoCAD d'abord, puis les photos de l'installation.
+> Le prompt demande l'effectif COMPLET de l'orchestre, pas seulement les percussions.
 
 ```
-PERCU 1 :
+Tu es un régisseur de plateau spécialisé en musique orchestrale et contemporaine.
+
+Je te fournis un plan de plateau (PDF AutoCAD) et des photos prises pendant le montage ou la répétition.
+Le plan est le PROJET. Les photos sont la RÉALITÉ. Si les photos contredisent le plan, les photos ont raison.
+
+Génère la fiche technique complète du concert au format suivant (c'est le format standard des plans AutoCAD de Radio France / Philharmonie) :
+
+═══════════════════════════════════════════════════
+[COMPOSITEUR en majuscules]
+[Titre de l'œuvre]
+Durée : [XX']
+Direction : [Chef d'orchestre]
+Salle : [Nom de la salle]
+Date : [Date]
+═══════════════════════════════════════════════════
+
+EFFECTIF ORCHESTRAL
+───────────────────────────────────────────────────
+Cordes :      Vl1 [n] pup. — Vl2 [n] pup. — Vla [n] pup. — Vlc [n] pup. — CB [n] pup.
+Bois :        [n] Fl (+ Picc) — [n] Htb (+ CA) — [n] Cl (+ Cl basse) — [n] Fg (+ Cfg)
+Cuivres :     [n] Cor — [n] Tp — [n] Tb — [n] Tuba
+Percussion :  [n] Timbalier — [n] Percussionniste(s)
+Autres :      Harpe — Piano — Célesta — Orgue — [Soliste] — [Électronique]
+
+MOBILIER & STANDS
+───────────────────────────────────────────────────
+Pupitres :    [n] pupitres Manhasset / Riedel
+Chaises :     [n] chaises orchestre
+Estrade :     [description si présente]
+Podium chef : [type]
+Tabourets :   [n] (contrebasses, harpe, etc.)
+Piano :       [type — queue, demi-queue, droit] + banc
+Harpe :       [position : cour/jardin]
+Retours son : [n] enceintes de retour
+Micros :      [description si visible]
+
+TIMBALIER
+───────────────────────────────────────────────────
+Position :    [Jardin / Centre / Cour]
+Timbales :    [nombre] — tailles si identifiables
+Accessoires : [mailloches, sourdines, etc.]
+Stands :      [n] pieds, tables
+Pupitres :    [n]
+
+PERCU 1
+───────────────────────────────────────────────────
+Position :    [Jardin / Centre / Cour]
+
   CLAVIERS
-    - [instrument]
+    - [instrument] (marque/modèle si visible)
+    - ...
+  
   TIMBALES & PEAUX
-    - [instrument]
-  ...
+    - ...
+  
+  ACCESSOIRES
+    - ...
+  
+  GROSSES PIÈCES
+    - ...
+  
+  STANDS & SUPPORTS
+    - [n] pieds de cymbale
+    - [n] tables d'accessoires
+    - [n] pupitres
+    - [n] chaises / tabourets
+    - ...
+  
+  BAGUETTES & SPÉCIAL
+    - ...
 
-PERCU 2 :
-  ...
-```
+PERCU 2
+───────────────────────────────────────────────────
+[même format]
 
-### ÉTAPE 5 : SCORE DE FIABILITÉ
+...
 
-- Instruments confirmés : X / Y du plan
-- Instruments modifiés : X
-- Instruments ajoutés : X
-- Instruments absents : X
-- Confiance globale : HAUTE / MOYENNE / BASSE
-- Photos manquantes ? (angles qui auraient aidé)
+PLAN DE DESSUS (description textuelle)
+───────────────────────────────────────────────────
+Décris la disposition vue de dessus, de Jardin à Cour :
 
-Réponds en français. Sois exhaustif mais honnête sur tes incertitudes.
-```
+JARDIN (gauche vu de la salle) :
+  - [ce qui s'y trouve]
 
----
+CENTRE :
+  - [ce qui s'y trouve]
 
-## PROMPT 2 — Analyse de dessin à la main (plan de dessus)
+COUR (droite vu de la salle) :
+  - [ce qui s'y trouve]
 
-> Envoyer : une photo d'un croquis/schéma fait à la main par un garçon d'orchestre ou régisseur.
+DEVANT (côté chef / public) :
+  - [ce qui s'y trouve]
 
-```
-Tu es un assistant spécialisé en régie de concert et plans de plateau orchestral.
+FOND DE SCÈNE :
+  - [ce qui s'y trouve]
 
-Cette image est un DESSIN À LA MAIN (croquis, schéma) d'un plan de dessus d'une installation de percussions sur un plateau de concert. Ce type de dessin est fait par les garçons d'orchestre ou les régisseurs pour documenter le placement du matériel.
+ÉCARTS PLAN vs TERRAIN
+───────────────────────────────────────────────────
+Si les photos montrent des différences avec le plan PDF :
 
-### 1. LECTURE DU PLAN
+  ✅ CONFORME : [élément] — identique au plan
+  ⚠️ MODIFIÉ : [élément] — [ce qui a changé]
+  🆕 AJOUTÉ : [élément] — pas sur le plan, visible sur les photos
+  ❌ RETIRÉ : [élément] — sur le plan, pas visible sur les photos
 
-Identifie et liste tous les éléments dessinés :
-- Instruments représentés (même par des symboles simples)
-- Texte manuscrit (noms d'instruments, annotations, numéros de percu)
-- Symboles (flèches, zones, repères)
-- Limites du plateau, position du chef, estrade
+CONFIANCE GLOBALE : [HAUTE / MOYENNE / BASSE]
+PHOTOS MANQUANTES : [angles qui auraient aidé]
 
-Conventions courantes dans ces plans :
-- Les rectangles allongés = claviers (marimba, xylo, vibra)
-- Les cercles = timbales, gongs, tam-tams
-- Les petits cercles = cymbales, accessoires
-- "P1", "P2", "Perc 1", "Percu 2" = numéro de percussionniste
-- Le chef est généralement en bas du plan (côté public)
-- Jardin = gauche, Cour = droite (vu du public)
-
-### 2. EXTRACTION DES DONNÉES
-
-À partir du dessin, génère :
-
-**a) La liste de matériel par percussionniste :**
-```
-PERCU 1 :
-  - [instrument 1]
-  - [instrument 2]
-  ...
-
-PERCU 2 :
-  - [instrument 1]
-  ...
-```
-
-**b) Les coordonnées approximatives** (en pourcentage du plan, 0,0 = coin haut-gauche) :
-```
-Instrument : X%, Y%
-```
-
-**c) Les relations spatiales** :
-- Quels instruments sont regroupés ensemble ?
-- Quel est l'ordre de gauche à droite (Jardin → Cour) ?
-- Qu'est-ce qui est partagé entre plusieurs percussionnistes ?
-
-### 3. TEXTE MANUSCRIT
-
-Retranscris TOUT le texte manuscrit visible, même partiellement lisible :
-- Noms d'instruments, annotations, numéros
-- Noms de compositeurs ou de pièces
-- Couleurs mentionnées (barnier)
-- Flèches ou indications de direction
-
-### 4. RECONSTITUTION JSON
-
-Si tu devais reconstituer ce plan pour une app, donne-moi la structure :
-```json
-{
-  "titre": "...",
-  "percussionnistes": [
-    {
-      "nom": "P1",
-      "instruments": [
-        {
-          "type": "clavier",
-          "nom": "Marimba",
-          "x_pct": 30,
-          "y_pct": 50,
-          "largeur_pct": 15,
-          "hauteur_pct": 5,
-          "rotation": 0
-        }
-      ]
-    }
-  ]
-}
-```
-
-### 5. CONFIANCE
-
-Pour chaque élément identifié :
-- CERTAIN : texte lisible ou forme sans ambiguïté
-- PROBABLE : forme reconnaissable mais pas de texte
-- INCERTAIN : forme ambiguë, texte illisible
-
-Réponds en français. En cas de doute, propose plusieurs interprétations.
+Réponds en français. Sois exhaustif sur le mobilier et les stands — chaque pupitre, chaque chaise, chaque pied de cymbale compte pour le montage.
 ```
 
 ---
 
-## PROMPT 3 — Photo seule (sans plan de référence)
+## PROMPT 2 — Photos seules (sans plan PDF)
 
-> Quand on n'a que la photo, sans plan PDF.
-
-```
-Tu es un assistant spécialisé en régie de concert et installations de percussions orchestrales.
-
-Analyse cette photo d'une installation de percussions sur un plateau de concert.
-
-### 1. IDENTIFICATION DU MATÉRIEL
-
-Liste TOUT le matériel visible, classé par catégorie :
-
-CLAVIERS | TIMBALES & PEAUX | ACCESSOIRES | GROSSES PIÈCES | STANDS & SUPPORTS | BAGUETTES & SPÉCIAL
-
-Pour chaque instrument :
-- Nom exact si identifiable (marque, modèle, taille)
-- Quantité
-- Confiance : CERTAIN / PROBABLE / INCERTAIN
-
-### 2. DISPOSITION SPATIALE
-
-Décris la disposition :
-- Côté JARDIN (gauche vu de la salle) ?
-- CENTRE ?
-- Côté COUR (droite vu de la salle) ?
-- DEVANT (côté chef) vs DERRIÈRE ?
-
-### 3. TEXTE VISIBLE
-
-Retranscris tout texte visible :
-- Annotations, filigrane/watermark
-- Marques d'instruments
-- Marquages au sol (barnier/gaffer)
-
-### 4. CONTEXTE
-
-Déduis si possible :
-- Nombre de percussionnistes
-- Type de répertoire (classique, contemporain, opéra)
-- Moment (montage, répétition, concert)
-- Salle
-
-### 5. GÉNÈRE LA LISTE TXT
+> Quand on n'a que les photos, pas de plan de référence.
 
 ```
-PERCU 1 :
+Tu es un régisseur de plateau spécialisé en musique orchestrale et contemporaine.
+
+Analyse ces photos d'un plateau de concert et génère la fiche technique complète.
+
+Génère au format plan AutoCAD standard :
+
+═══════════════════════════════════════════════════
+[COMPOSITEUR] — [Titre] — [Durée si lisible]
+[Chef] — [Salle] — [Date si lisible]
+═══════════════════════════════════════════════════
+
+EFFECTIF ORCHESTRAL (déduit des photos)
+───────────────────────────────────────────────────
+Cordes :      Vl1 [n] pup. — Vl2 [n] pup. — Vla [n] pup. — Vlc [n] pup. — CB [n] pup.
+              (compter les pupitres visibles)
+Bois :        Identifier les instruments à vent visibles
+Cuivres :     Identifier les cuivres visibles
+Percussion :  [n] postes de percussions
+Autres :      Harpe, piano, soliste, électronique
+
+MOBILIER & STANDS
+───────────────────────────────────────────────────
+Pupitres :    [compter tous les pupitres visibles]
+Chaises :     [compter les chaises]
+Estrade :     [oui/non, description]
+Piano :       [type, position]
+Harpe :       [position]
+
+PERCU [n] (pour chaque poste)
+───────────────────────────────────────────────────
   CLAVIERS
     - ...
   TIMBALES & PEAUX
@@ -271,39 +183,74 @@ PERCU 1 :
     - ...
   GROSSES PIÈCES
     - ...
-```
+  STANDS & SUPPORTS
+    - [n] pieds cymbale
+    - [n] tables accessoires
+    - [n] pupitres
+    - [n] chaises/tabourets
 
-Réponds en français. Sois exhaustif mais honnête sur tes incertitudes.
+PLAN DE DESSUS
+───────────────────────────────────────────────────
+JARDIN : ...
+CENTRE : ...
+COUR : ...
+
+Pour chaque instrument identifié, indique :
+- CERTAIN / PROBABLE / INCERTAIN
+- Marque si lisible
+
+Réponds en français. Compte tout le mobilier visible.
 ```
 
 ---
 
-## Données de test
+## PROMPT 3 — Dessin à la main
 
-### Cas de test : ETYMO (Francesconi)
+> Pour les croquis/schémas faits à la main.
 
-**PDF** : `test-data/FRANCESCONI_ETYMO.pdf`
-- Luca FRANCESCONI — ETYMO
-- Dir : Pascal ROPHÉ — CMPP — 26 mars 2026
-- Percu 1 : Vibraphone 3 oct, Xylophone, Glockenspiel, Marimba 4,5 oct, Tam-tam 100cm
-- Percu 2 : Marimba, Xylo, Glock valise, Bongos, Tam-tam grave, Grelots, 2 Roto-toms, Cymbale susp.
-- Soprane, clavier électronique visible sur le plan
+```
+Tu es un régisseur de plateau spécialisé en plans de scène orchestraux.
 
-**Photos** : `test-data/etymo-photos/`
-- 4210.jpg — vue de dessus rapprochée P1 (vibraphone, glockenspiel, xylophone, caisse claire, cymbales, tam-tam)
-- 4213.jpg — vue de dessus P1 élargie (marimba, vibraphone, glockenspiel, tam-tam, caisse claire, bongos, cymbales, clavier électronique)
-- 4216.jpg — vue de dessus P2 (marimba, vibraphone, glockenspiel, tam-tam, clavier électronique)
-- 4219.jpg — vue large du plateau complet (ensemble, chef, cordes, vents, percussions au fond)
-- 4222.jpg — vue large chef au pupitre (ensemble complet, harpe visible côté cour)
-- 4225.jpg — vue large chef (autre angle, ensemble complet)
+Cette image est un DESSIN À LA MAIN d'un plan de plateau. 
 
-**Notes terrain** :
-- Les photos sont prises depuis les balcons supérieurs (vue plongeante)
-- On voit le marquage au sol (scotch bleu = positions)
-- Le chef (Pascal Rophé) est visible en chemise blanche
-- Les musiciens sont en tenue de répétition
-- Une harpe est visible côté cour (pas sur le plan percu, mais fait partie de l'effectif)
-- Un clavier électronique est visible (possiblement le "Soprane" du plan)
+Conventions de lecture :
+- Rectangles allongés = claviers (marimba, xylo, vibra)
+- Grands cercles = timbales, gongs, tam-tams
+- Petits cercles = cymbales, accessoires
+- "P1", "P2" = numéro de percussionniste
+- Chef = en bas (côté public)
+- Jardin = gauche, Cour = droite (vu du public)
+
+Génère la fiche technique au même format que le Prompt 1 :
+- En-tête (titre, compositeur, durée, chef, salle)
+- Effectif orchestral complet
+- Mobilier & stands
+- Détail par percussionniste
+- Plan de dessus textuel
+
+Retranscris TOUT le texte manuscrit visible.
+
+Pour la reconstitution numérique, donne aussi le JSON :
+```json
+{
+  "titre": "...",
+  "compositeur": "...",
+  "effectif": { "cordes": "...", "bois": "...", "cuivres": "...", "percussions": "..." },
+  "postes_percu": [
+    {
+      "nom": "P1",
+      "position": "jardin",
+      "instruments": [
+        { "nom": "Marimba", "type": "clavier", "x_pct": 25, "y_pct": 60 }
+      ]
+    }
+  ]
+}
+```
+
+Confiance par élément : CERTAIN / PROBABLE / INCERTAIN.
+Réponds en français.
+```
 
 ---
 
@@ -311,24 +258,26 @@ Réponds en français. Sois exhaustif mais honnête sur tes incertitudes.
 
 | Critère | Description | /5 |
 |---------|-------------|-----|
-| **Exhaustivité** | Combien d'instruments correctement identifiés ? | |
-| **Précision** | Faux positifs ? Instruments inventés ? | |
-| **Texte** | Qualité de lecture du texte / marques / filigrane | |
-| **Spatialité** | Qualité de la description jardin/centre/cour | |
-| **Comparaison** | Qualité du diff plan vs photos | |
-| **Confiance** | Le modèle sait-il dire "je ne suis pas sûr" ? | |
-| **Format** | Respect de la structure demandée | |
-| **TOTAL** | | **/35** |
+| **Effectif** | Cordes, bois, cuivres, percus bien identifiés ? Nombre de pupitres ? | |
+| **Mobilier** | Pupitres, chaises, estrades, piano, harpe comptés ? | |
+| **Percussions** | Instruments correctement identifiés par poste ? | |
+| **Stands** | Pieds, tables, racks comptés pour chaque percu ? | |
+| **Spatialité** | Disposition jardin/centre/cour correcte ? | |
+| **Texte** | Marques, annotations, marquages lus ? | |
+| **Comparaison** | Diff plan vs photos pertinent ? | |
+| **Confiance** | Le modèle sait dire "je ne suis pas sûr" ? | |
+| **Format** | Respect du format plan AutoCAD demandé ? | |
+| **TOTAL** | | **/45** |
 
-### Résultats par modèle
-
-| Critère | Claude | GPT-4o | Gemini | GLM-4 | Notes |
-|---------|--------|--------|--------|-------|-------|
-| Exhaustivité | /5 | /5 | /5 | 4/5 | GLM: bon mais invente des polyblocks |
-| Précision | /5 | /5 | /5 | 3/5 | GLM: hi-hat douteux, GC non confirmée |
-| Texte | /5 | /5 | /5 | 3/5 | GLM: n'a pas lu le filigrane rouge |
-| Spatialité | /5 | /5 | /5 | 4/5 | GLM: bonne description J/C |
-| Comparaison | /5 | /5 | /5 | 4/5 | GLM: 95% conformité, crédible |
-| Confiance | /5 | /5 | /5 | 4/5 | GLM: utilise CERTAIN/PROBABLE |
-| Format | /5 | /5 | /5 | 5/5 | GLM: format parfait |
-| **TOTAL** | /35 | /35 | /35 | **27/35** | |
+| Critère | Claude | GPT-4o | Gemini | GLM-4 |
+|---------|--------|--------|--------|-------|
+| Effectif | /5 | /5 | /5 | /5 |
+| Mobilier | /5 | /5 | /5 | /5 |
+| Percussions | /5 | /5 | /5 | /5 |
+| Stands | /5 | /5 | /5 | /5 |
+| Spatialité | /5 | /5 | /5 | /5 |
+| Texte | /5 | /5 | /5 | /5 |
+| Comparaison | /5 | /5 | /5 | /5 |
+| Confiance | /5 | /5 | /5 | /5 |
+| Format | /5 | /5 | /5 | /5 |
+| **TOTAL** | /45 | /45 | /45 | /45 |
