@@ -948,8 +948,25 @@ export default function App() {
         piece={piece}
         percu={percu}
         col={col}
+        existingPhotos={photos[piece.id] || []}
         onStart={(zones) => {
           setCapture({ pieceId: piece.id, percuId: percu.id, zones, currentZone: 0, couleur: piece.couleur });
+        }}
+        onSelectExisting={(selectedPhotos) => {
+          // Re-tag selected photos with current percu context and add as new entries
+          const zoneNames = ["Jardin", "Milieu", "Cour"];
+          selectedPhotos.forEach((photo, idx) => {
+            const newPhoto = {
+              ...photo,
+              id: uid(),
+              percuId: percu.id,
+              zone: photo.zone || zoneNames[idx % zoneNames.length] || "Photo",
+              num: idx + 1,
+              total: selectedPhotos.length,
+            };
+            addPhoto(piece.id, newPhoto);
+          });
+          setScreen("gallery");
         }}
         onBack={() => setScreen("piece")}
       />
@@ -1454,7 +1471,7 @@ function Lightbox({ photo, photos, pieces, onClose, onDelete, onNavigate }) {
 // ════════════════════════════════
 function ZoneSelectView({ piece, percu, col, onSelect, onImport, onCancel }) {
   const [zone, setZone] = useState("");
-  const defaultZones = ["Cour", "Jardin", "Centre", "Détail", "Devant", "Derrière"];
+  const defaultZones = ["Cour", "Jardin", "Centre", "Détail", "Devant", "Derrière", "Pôle complet", "Ensemble"];
 
   async function handleImportWithZone(selectedZone) {
     const dataUrl = await importImageFile();
@@ -1716,10 +1733,130 @@ function StandaloneCamera({ onCapture, onCancel, couleur, watermark }) {
   );
 }
 
-function PhotoSetupView({ piece, percu, col, onStart, onBack }) {
+function PhotoSetupView({ piece, percu, col, onStart, onBack, existingPhotos, onSelectExisting }) {
   const [zones, setZones] = useState(["Jardin", "Milieu", "Cour"]);
   const [custom, setCustom] = useState("");
+  const [mode, setMode] = useState("setup"); // "setup" | "select"
+  const [selected, setSelected] = useState(new Set());
 
+  // Filter existing photos for this piece (optionally this percu)
+  const availablePhotos = (existingPhotos || []);
+
+  function togglePhoto(photoId) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(photoId)) next.delete(photoId);
+      else next.add(photoId);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    if (selected.size === availablePhotos.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(availablePhotos.map((p) => p.id)));
+    }
+  }
+
+  function handleValidateSelection() {
+    const selectedPhotos = availablePhotos.filter((p) => selected.has(p.id));
+    if (selectedPhotos.length > 0 && onSelectExisting) {
+      onSelectExisting(selectedPhotos);
+    }
+  }
+
+  // ── Select existing photos mode ──
+  if (mode === "select") {
+    return (
+      <div style={{ ...S.shell, height: "100dvh", minHeight: 0, display: "flex", flexDirection: "column", background: "rgba(0,0,0,.6)", overflow: "hidden" }}>
+        <div style={{ background: "#fff", borderRadius: 16, margin: "auto", padding: 20, width: "90%", maxWidth: 420, maxHeight: "85dvh", display: "flex", flexDirection: "column" }}>
+          <h3 style={{ margin: "0 0 4px", fontSize: 16, color: "#1C1917" }}>Sélectionner des photos</h3>
+          <p style={{ color: "#78716C", fontSize: 13, margin: "0 0 12px" }}>
+            {percu.nom} — {piece.titre}<br />
+            <span style={{ color: "#2563EB" }}>Cochez les photos à utiliser pour la série</span>
+          </p>
+
+          {availablePhotos.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "30px 10px", color: "#A8A29E" }}>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>📷</div>
+              <div style={{ fontSize: 13 }}>Aucune photo existante pour cette pièce</div>
+              <div style={{ fontSize: 12, marginTop: 4, color: "#D6D3D1" }}>Utilisez "Nouvelles photos" pour capturer</div>
+            </div>
+          ) : (
+            <>
+              {/* Select all toggle */}
+              <button
+                onClick={selectAll}
+                style={{
+                  padding: "6px 12px", marginBottom: 10, borderRadius: 8, fontSize: 12, fontWeight: 600,
+                  background: selected.size === availablePhotos.length ? col.hex : "#F5F5F4",
+                  color: selected.size === availablePhotos.length ? "#fff" : "#78716C",
+                  border: `1px solid ${col.hex}44`, cursor: "pointer",
+                }}
+              >
+                {selected.size === availablePhotos.length ? "✓ Tout désélectionner" : "☐ Tout sélectionner"} ({availablePhotos.length})
+              </button>
+
+              {/* Photo grid with checkboxes */}
+              <div style={{ flex: 1, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 12 }}>
+                {availablePhotos.map((photo) => {
+                  const isSelected = selected.has(photo.id);
+                  return (
+                    <div
+                      key={photo.id}
+                      onClick={() => togglePhoto(photo.id)}
+                      style={{
+                        position: "relative", cursor: "pointer", borderRadius: 8, overflow: "hidden",
+                        border: isSelected ? `3px solid ${col.hex}` : "3px solid transparent",
+                        aspectRatio: "1", background: "#E7E5E4",
+                      }}
+                    >
+                      <img src={photo.dataUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      {/* Checkbox overlay */}
+                      <div style={{
+                        position: "absolute", top: 4, right: 4, width: 24, height: 24, borderRadius: 6,
+                        background: isSelected ? col.hex : "rgba(255,255,255,0.85)",
+                        border: isSelected ? "none" : "2px solid #A8A29E",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 14, fontWeight: 700, color: "#fff",
+                      }}>
+                        {isSelected && "✓"}
+                      </div>
+                      {/* Zone label */}
+                      <div style={{
+                        position: "absolute", bottom: 0, left: 0, right: 0,
+                        background: "rgba(0,0,0,0.6)", padding: "2px 6px",
+                        fontSize: 10, color: "#fff", fontWeight: 600, textAlign: "center",
+                        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                      }}>
+                        {photo.zone || "—"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {/* Action buttons */}
+          <button
+            disabled={selected.size === 0}
+            onClick={handleValidateSelection}
+            style={{
+              ...S.btnPrimary(col.hex),
+              opacity: selected.size > 0 ? 1 : 0.5,
+            }}
+          >
+            ✓ Utiliser {selected.size} photo{selected.size !== 1 ? "s" : ""} sélectionnée{selected.size !== 1 ? "s" : ""}
+          </button>
+          <button onClick={() => setMode("setup")} style={{ ...S.btnSecondary, marginTop: 8 }}>← Retour au protocole</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Setup mode (default — configure zones then capture) ──
   return (
     <div style={{ ...S.shell, height: "100dvh", minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.6)", overflow: "hidden" }}>
       <div style={{ background: "#fff", borderRadius: 16, padding: 20, width: "90%", maxWidth: 380 }}>
@@ -1728,6 +1865,22 @@ function PhotoSetupView({ piece, percu, col, onStart, onBack }) {
           {percu.nom} — {piece.titre}<br />
           <span style={{ color: "#2563EB" }}>Toujours de Jardin → Cour</span>
         </p>
+
+        {/* Existing photos button — only if photos exist */}
+        {availablePhotos.length > 0 && (
+          <button
+            onClick={() => setMode("select")}
+            style={{
+              width: "100%", padding: "10px 14px", marginBottom: 14, borderRadius: 10,
+              fontSize: 13, fontWeight: 600, cursor: "pointer",
+              background: "#F0F9FF", border: `2px solid #2563EB44`, color: "#2563EB",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}
+          >
+            🖼️ Choisir parmi {availablePhotos.length} photo{availablePhotos.length !== 1 ? "s" : ""} existante{availablePhotos.length !== 1 ? "s" : ""}
+          </button>
+        )}
+
         {zones.map((z, i) => (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
             <span style={{ ...S.badge, background: "#E7E5E4", color: "#57534E", minWidth: 20, textAlign: "center" }}>{i + 1}</span>
@@ -1744,7 +1897,7 @@ function PhotoSetupView({ piece, percu, col, onStart, onBack }) {
         </div>
         <button disabled={!zones.length} onClick={() => onStart(zones)}
           style={{ ...S.btnPrimary(col.hex), opacity: zones.length ? 1 : 0.5 }}>
-          Commencer ({zones.length} photo{zones.length > 1 ? "s" : ""})
+          📸 Nouvelles photos ({zones.length} zone{zones.length > 1 ? "s" : ""})
         </button>
         <button onClick={onBack} style={{ ...S.btnSecondary, marginTop: 8 }}>Annuler</button>
       </div>
