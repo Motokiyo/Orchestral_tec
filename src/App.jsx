@@ -17,6 +17,7 @@ export default function App() {
   const [galleryFilter, setGalleryFilter] = useState("all");
   const [pdfLoading, setPdfLoading] = useState(false);
   const [cameraMode, setCameraMode] = useState(null);
+  const [zoneSelectMode, setZoneSelectMode] = useState(null);
 
   const concert = concerts.find((c) => c.id === concertId);
   const pieces = concert ? concert.pieces : [];
@@ -270,19 +271,42 @@ export default function App() {
   }
 
   // ════════════════════════════════
-  // STANDALONE CAMERA
+  // ZONE SELECT (before standalone camera)
+  // ════════════════════════════════
+  if (zoneSelectMode) {
+    const zsPiece = pieces.find((p) => p.id === zoneSelectMode.pieceId);
+    const zsPercu = zsPiece?.percus.find((r) => r.id === zoneSelectMode.percuId);
+    const zsCol = BARNIER[zoneSelectMode.couleur || "blanc"];
+    return (
+      <ZoneSelectView
+        piece={zsPiece}
+        percu={zsPercu}
+        col={zsCol}
+        onSelect={(zone) => {
+          setCameraMode({ ...zoneSelectMode, zone });
+          setZoneSelectMode(null);
+        }}
+        onCancel={() => setZoneSelectMode(null)}
+      />
+    );
+  }
+
+  // ════════════════════════════════
+  // STANDALONE CAMERA (with watermark)
   // ════════════════════════════════
   if (cameraMode) {
+    const cmPiece = pieces.find((p) => p.id === cameraMode.pieceId);
+    const cmPercu = cmPiece?.percus.find((r) => r.id === cameraMode.percuId);
+    const cmCol = BARNIER[cameraMode.couleur || "blanc"];
     return (
       <StandaloneCamera
         onCapture={(dataUrl) => {
-          // Store standalone photo
           const photoData = {
             id: uid(),
             dataUrl,
             pieceId: cameraMode.pieceId || "standalone",
             percuId: cameraMode.percuId || null,
-            zone: cameraMode.percuId ? "Photo percu" : "Photo libre",
+            zone: cameraMode.zone || "Photo libre",
             num: 1,
             total: 1,
             couleur: cameraMode.couleur || "blanc",
@@ -294,6 +318,12 @@ export default function App() {
         }}
         onCancel={() => setCameraMode(null)}
         couleur={cameraMode.couleur || "blanc"}
+        watermark={{
+          titre: cmPiece?.titre || "",
+          percuNom: cmPercu?.nom || "",
+          zone: cameraMode.zone || "Photo libre",
+          couleur: cmCol,
+        }}
       />
     );
   }
@@ -600,7 +630,7 @@ export default function App() {
               {pdfLoading ? "⏳..." : "📄 Ajouter plan"}
             </button>
             <button
-              onClick={() => setCameraMode({ pieceId: piece.id, couleur: piece.couleur })}
+              onClick={() => setZoneSelectMode({ pieceId: piece.id, couleur: piece.couleur })}
               style={{ ...S.btnSecondary, flex: 1, fontSize: 12, padding: "8px 10px" }}
             >
               📸 Photo libre
@@ -712,7 +742,7 @@ export default function App() {
                         </div>
                       ))}
                       <button
-                        onClick={() => setCameraMode({ pieceId: piece.id, percuId: r.id, couleur: piece.couleur })}
+                        onClick={() => setZoneSelectMode({ pieceId: piece.id, percuId: r.id, couleur: piece.couleur })}
                         style={{ width: 80, height: 60, borderRadius: 6, border: `2px dashed ${col.hex}`, background: "transparent", color: col.hex, fontSize: 22, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
                         title="Ajouter une photo"
                       >+</button>
@@ -853,7 +883,7 @@ export default function App() {
           )}
           {pieceId && (
             <button
-              onClick={() => setCameraMode({ pieceId, couleur: piece?.couleur || "blanc" })}
+              onClick={() => setZoneSelectMode({ pieceId, couleur: piece?.couleur || "blanc" })}
               style={{ ...S.btnPrimary(BARNIER[piece?.couleur || "blanc"].hex), marginBottom: 12, fontSize: 13 }}
             >
               📸 Ajouter une photo
@@ -1218,7 +1248,88 @@ function Lightbox({ photo, onClose, onDelete }) {
 // ════════════════════════════════
 // STANDALONE CAMERA
 // ════════════════════════════════
-function StandaloneCamera({ onCapture, onCancel, couleur }) {
+function ZoneSelectView({ piece, percu, col, onSelect, onCancel }) {
+  const [zone, setZone] = useState("");
+  const defaultZones = ["Cour", "Jardin", "Centre", "Détail", "Devant", "Derrière"];
+
+  return (
+    <div style={{ background: "#F5F5F4", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
+      <div style={{ background: col.hex, padding: "14px 16px", color: "#fff", flexShrink: 0 }}>
+        <div style={{ fontSize: 12, opacity: 0.85 }}>
+          {piece?.titre}{percu ? ` — ${percu.nom}` : ""}
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 700 }}>📸 Quelle zone ?</div>
+      </div>
+
+      <div style={{ flex: 1, padding: 16, overflowY: "auto" }}>
+        <div style={{ fontSize: 13, color: "#78716C", marginBottom: 12 }}>
+          Sélectionnez ou saisissez la zone de la photo :
+        </div>
+
+        {/* Quick zone buttons */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+          {defaultZones.map((z) => (
+            <button
+              key={z}
+              onClick={() => onSelect(z)}
+              style={{
+                padding: "10px 18px", borderRadius: 10, fontSize: 14, fontWeight: 600,
+                background: "#fff", border: `2px solid ${col.hex}`, color: col.hex,
+                cursor: "pointer", transition: "all 0.15s",
+              }}
+            >
+              {z}
+            </button>
+          ))}
+        </div>
+
+        {/* Custom zone input */}
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, color: "#78716C", marginBottom: 6, fontWeight: 600 }}>Ou saisir une zone personnalisée :</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={zone}
+              onChange={(e) => setZone(e.target.value)}
+              placeholder="Ex: Fond de scène..."
+              onKeyDown={(e) => { if (e.key === "Enter" && zone.trim()) onSelect(zone.trim()); }}
+              style={{
+                flex: 1, padding: "12px 14px", fontSize: 14, borderRadius: 10,
+                border: `2px solid ${col.hex}44`, background: "#fff", color: "#1C1917",
+                fontFamily: "'DM Sans', sans-serif", outline: "none",
+              }}
+            />
+            <button
+              disabled={!zone.trim()}
+              onClick={() => onSelect(zone.trim())}
+              style={{
+                padding: "12px 20px", borderRadius: 10, fontSize: 14, fontWeight: 600,
+                background: zone.trim() ? col.hex : "#E7E5E4",
+                color: zone.trim() ? "#fff" : "#A8A29E",
+                border: "none", cursor: zone.trim() ? "pointer" : "default",
+              }}
+            >
+              Valider
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: 16, flexShrink: 0 }}>
+        <button
+          onClick={onCancel}
+          style={{
+            width: "100%", padding: "12px 20px", borderRadius: 10, fontSize: 14, fontWeight: 500,
+            background: "none", border: "1px solid #D6D3D1", color: "#78716C", cursor: "pointer",
+          }}
+        >
+          Annuler
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StandaloneCamera({ onCapture, onCancel, couleur, watermark }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -1270,6 +1381,18 @@ function StandaloneCamera({ onCapture, onCancel, couleur }) {
     canvas.height = video.videoHeight || 720;
     ctx.drawImage(video, 0, 0);
 
+    // Apply watermark with metadata
+    if (watermark) {
+      applyWatermark(canvas, ctx, {
+        titre: watermark.titre,
+        percuNom: watermark.percuNom,
+        zone: watermark.zone,
+        num: 1,
+        total: 1,
+        couleur: watermark.couleur,
+      });
+    }
+
     const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
     setPreview(dataUrl);
   }
@@ -1303,7 +1426,8 @@ function StandaloneCamera({ onCapture, onCancel, couleur }) {
     return (
       <div style={{ background: "#000", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
         <div style={{ background: col.hex, padding: "12px 16px", color: "#fff", textAlign: "center", flexShrink: 0 }}>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>Aperçu photo</div>
+          {watermark && <div style={{ fontSize: 12, opacity: 0.85 }}>{watermark.titre}{watermark.percuNom ? ` — ${watermark.percuNom}` : ""}</div>}
+          <div style={{ fontSize: 16, fontWeight: 700 }}>{watermark ? `Aperçu — ${watermark.zone}` : "Aperçu photo"}</div>
         </div>
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 8, minHeight: 0, overflow: "hidden" }}>
           <img src={preview} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />
@@ -1332,7 +1456,8 @@ function StandaloneCamera({ onCapture, onCancel, couleur }) {
   return (
     <div style={{ background: "#000", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
       <div style={{ background: col.hex, padding: "12px 16px", color: "#fff", textAlign: "center", flexShrink: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>📸 Prendre une photo</div>
+        {watermark && <div style={{ fontSize: 12, opacity: 0.85 }}>{watermark.titre}{watermark.percuNom ? ` — ${watermark.percuNom}` : ""}</div>}
+        <div style={{ fontSize: 16, fontWeight: 700 }}>{watermark ? `📸 ${watermark.zone}` : "📸 Prendre une photo"}</div>
       </div>
       <div style={{ flex: 1, position: "relative", minHeight: 0, overflow: "hidden" }}>
         <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
