@@ -154,17 +154,19 @@ Mobile:      PWA (meme app, + sync)
 ## Ce qui est fait (26 mars 2026)
 
 - [x] Hierarchie Concert > Pieces > Poles
+- [x] **Persistance IndexedDB** (donnees survivent au rechargement)
 - [x] Import PDF multi-format (EIC, Radio France, Lamoureux, generique)
 - [x] Decodeur effectif Daniels complet
 - [x] Timbaliers auto avec 4 timbales par defaut
 - [x] Orchestre editable (4 sections)
 - [x] Plans multiples (PDF + images)
-- [x] 11 couleurs barnier reelles
+- [x] **Pinch-to-zoom + pan** sur plans et photos (x0.5 a x8, double-tap)
+- [x] 11 couleurs barnier reelles (Advance AT7)
 - [x] Champs editables (auto-remplis + correction manuelle)
 - [x] Reorder poles et pieces (DragHandle)
 - [x] TXT complet concert ou par piece/percu
 - [x] Notes libres (concert + piece)
-- [x] Checkbox installation avec tri auto
+- [x] **Checkbox installation** avec tri auto (non-coches en haut)
 - [x] Compteur N/M installes par pole
 - [x] Logo OrkMap + branding
 - [x] PWA installable
