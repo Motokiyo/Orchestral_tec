@@ -58,14 +58,14 @@ export async function extractFromPdf(file) {
   if (curLine.length) lines.push(curLine.join(" "));
 
   const fullText = lines.join("\n");
-  console.log("[PlateauMap] Lines:", lines);
+  console.log("[OrkMap] Lines:", lines);
 
   // ── 2. Render page 1 as image for plan display ──
   let planDataUrl = null;
   try {
     planDataUrl = await renderPageToImage(pdf);
   } catch (err) {
-    console.warn("[PlateauMap] Could not render plan:", err);
+    console.warn("[OrkMap] Could not render plan:", err);
   }
 
   // ── 3. Detect format & parse ──
@@ -84,7 +84,7 @@ export async function extractFromPdf(file) {
   };
 
   const format = detectFormat(lines);
-  console.log("[PlateauMap] Detected format:", format);
+  console.log("[OrkMap] Detected format:", format);
 
   if (format === "radiofrance") {
     parseRadioFrance(lines, result);

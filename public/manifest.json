@@ -1,7 +1,7 @@
 {
-  "name": "PlateauMap",
-  "short_name": "PlateauMap",
-  "description": "Gestion des installations de percussions sur plateau de concert",
+  "name": "OrkMap",
+  "short_name": "OrkMap",
+  "description": "Gestion des installations d'orchestre sur plateau de concert",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#F5F5F4",

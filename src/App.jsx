@@ -301,8 +301,10 @@ export default function App() {
     return (
       <div style={S.shell}>
         <div style={S.header}>
-          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>PlateauMap</div>
-          <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 2 }}>Mes concerts</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 36 }} />
+            <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917" }}>Mes concerts</div>
+          </div>
         </div>
         <div style={S.body}>
           <button
