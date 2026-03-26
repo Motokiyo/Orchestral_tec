@@ -1,7 +1,7 @@
 node_modules/
 dist/
 .DS_Store
-*.png
+verify-screenshot*.png
 debug_*.js
 debug_*.cjs
 puppeteer-test*.js
