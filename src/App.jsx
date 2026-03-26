@@ -4,6 +4,7 @@ import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyTo
 import { extractFromPdf } from "./pdfParser.js";
 import { useConcerts, usePhotos } from "./useStorage.js";
 import { S } from "./styles.js";
+import JSZip from "jszip";
 
 // ── Shared helper: import image file, return raw dataUrl (no watermark baked) ──
 function importImageFile() {
@@ -54,6 +55,279 @@ function bakeWatermark(rawDataUrl, watermarkOpts) {
   });
 }
 
+// ── Helper: dataUrl → Blob ──
+function dataUrlToBlob(dataUrl) {
+  const [header, b64] = dataUrl.split(",");
+  const mime = header.match(/:(.*?);/)?.[1] || "image/jpeg";
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+// ── Helper: sanitize filename part ──
+function sanitize(str) {
+  return (str || "Sans_titre").replace(/[/\\?%*:|"<>]/g, "_").replace(/\s+/g, "_");
+}
+
+// ── Download photos as ZIP (piece level) ──
+async function downloadPiecePhotosZip(piece, photosList, onProgress) {
+  if (!photosList || photosList.length === 0) return;
+  const zip = new JSZip();
+  const col = BARNIER[piece.couleur] || BARNIER.blanc;
+
+  for (let i = 0; i < photosList.length; i++) {
+    const ph = photosList[i];
+    const percu = piece.percus?.find((r) => r.id === ph.percuId);
+    const wmOpts = {
+      titre: piece.titre || "",
+      percuNom: percu?.nom || "",
+      zone: ph.zone || "",
+      num: ph.num || i + 1,
+      total: ph.total || photosList.length,
+      couleur: col,
+    };
+    const baked = await bakeWatermark(ph.dataUrl, wmOpts);
+    const blob = dataUrlToBlob(baked);
+    const fname = `${sanitize(piece.titre)}_${sanitize(percu?.nom || "Percu")}_${sanitize(ph.zone || "Photo")}_${i + 1}.jpg`;
+    zip.file(fname, blob);
+    if (onProgress) onProgress(i + 1, photosList.length);
+  }
+
+  const content = await zip.generateAsync({ type: "blob" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(content);
+  a.download = `${sanitize(piece.titre)}_photos.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+// ── Download photos as ZIP (concert level, multi-piece) ──
+async function downloadConcertPhotosZip(concert, pieces, photos, selectedPieceIds, onProgress) {
+  const zip = new JSZip();
+  let total = 0;
+  let done = 0;
+
+  // Count total photos
+  for (const pid of selectedPieceIds) {
+    total += (photos[pid] || []).length;
+  }
+  if (total === 0) return;
+
+  for (const pid of selectedPieceIds) {
+    const piece = pieces.find((p) => p.id === pid);
+    if (!piece) continue;
+    const piecePhotos = photos[pid] || [];
+    if (piecePhotos.length === 0) continue;
+
+    const folder = zip.folder(sanitize(piece.titre));
+    const col = BARNIER[piece.couleur] || BARNIER.blanc;
+
+    for (let i = 0; i < piecePhotos.length; i++) {
+      const ph = piecePhotos[i];
+      const percu = piece.percus?.find((r) => r.id === ph.percuId);
+      const wmOpts = {
+        titre: piece.titre || "",
+        percuNom: percu?.nom || "",
+        zone: ph.zone || "",
+        num: ph.num || i + 1,
+        total: ph.total || piecePhotos.length,
+        couleur: col,
+      };
+      const baked = await bakeWatermark(ph.dataUrl, wmOpts);
+      const blob = dataUrlToBlob(baked);
+      const fname = `${sanitize(piece.titre)}_${sanitize(percu?.nom || "Percu")}_${sanitize(ph.zone || "Photo")}_${i + 1}.jpg`;
+      folder.file(fname, blob);
+      done++;
+      if (onProgress) onProgress(done, total);
+    }
+  }
+
+  const content = await zip.generateAsync({ type: "blob" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(content);
+  a.download = `${sanitize(concert.titre)}_photos.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+// ── Photo Download Modal (piece level) ──
+function PhotoDownloadPieceModal({ piece, piecePhotos, onClose }) {
+  const [mode, setMode] = useState(null); // null | "all" | "select"
+  const [selected, setSelected] = useState(new Set());
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+
+  function toggleSelect(id) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleDownload(photos) {
+    setDownloading(true);
+    setProgress({ done: 0, total: photos.length });
+    await downloadPiecePhotosZip(piece, photos, (done, total) => setProgress({ done, total }));
+    setDownloading(false);
+    onClose();
+  }
+
+  const col = BARNIER[piece.couleur] || BARNIER.blanc;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, maxHeight: "85vh", overflow: "auto", padding: 20 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#1C1917" }}>📥 Télécharger photos</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, color: "#A8A29E", cursor: "pointer" }}>✕</button>
+        </div>
+        <div style={{ fontSize: 13, color: "#78716C", marginBottom: 16 }}>{piece.titre} · {piecePhotos.length} photo{piecePhotos.length !== 1 ? "s" : ""}</div>
+
+        {downloading ? (
+          <div style={{ textAlign: "center", padding: "20px 0" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#1C1917", marginBottom: 8 }}>Préparation du ZIP...</div>
+            <div style={{ width: "100%", height: 6, background: "#E7E5E4", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ width: `${(progress.done / progress.total) * 100}%`, height: "100%", background: col.hex, borderRadius: 3, transition: "width 0.3s" }} />
+            </div>
+            <div style={{ fontSize: 12, color: "#A8A29E", marginTop: 6 }}>{progress.done}/{progress.total} photos traitées</div>
+          </div>
+        ) : !mode ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <button onClick={() => handleDownload(piecePhotos)} style={{ ...S.btnPrimary(col.hex), fontSize: 14, padding: "12px 16px" }}>
+              📦 Toutes les photos ({piecePhotos.length})
+            </button>
+            <button onClick={() => setMode("select")} style={{ ...S.btnSecondary, fontSize: 14, padding: "12px 16px" }}>
+              ☑️ Sélectionner des photos
+            </button>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+              {piecePhotos.map((ph) => {
+                const isSelected = selected.has(ph.id);
+                return (
+                  <div key={ph.id} onClick={() => toggleSelect(ph.id)} style={{ position: "relative", borderRadius: 8, overflow: "hidden", cursor: "pointer", border: isSelected ? `3px solid ${col.hex}` : "2px solid #E7E5E4", aspectRatio: "1", opacity: isSelected ? 1 : 0.6 }}>
+                    <img src={ph.dataUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    {isSelected && (
+                      <div style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: "50%", background: col.hex, display: "flex", alignItems: "center", justifyContent: "center", color: getContrastColor(col.hex), fontSize: 13, fontWeight: 700 }}>✓</div>
+                    )}
+                    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent, rgba(0,0,0,.6))", padding: "8px 6px 4px" }}>
+                      <div style={{ fontSize: 9, color: "#E7E5E4" }}>{ph.zone}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => handleDownload(piecePhotos.filter((ph) => selected.has(ph.id)))}
+              disabled={selected.size === 0}
+              style={{ ...S.btnPrimary(col.hex), fontSize: 14, padding: "12px 16px", width: "100%", opacity: selected.size === 0 ? 0.4 : 1 }}
+            >
+              📥 Télécharger {selected.size} photo{selected.size !== 1 ? "s" : ""}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Photo Download Modal (concert level) ──
+function PhotoDownloadConcertModal({ concert, pieces, photos, onClose }) {
+  const [mode, setMode] = useState(null); // null | "all" | "select"
+  const [selected, setSelected] = useState(new Set());
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+
+  // Only pieces that have photos
+  const piecesWithPhotos = pieces.filter((p) => (photos[p.id] || []).length > 0);
+  const totalPhotos = piecesWithPhotos.reduce((s, p) => s + (photos[p.id] || []).length, 0);
+
+  function toggleSelect(id) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleDownload(pieceIds) {
+    setDownloading(true);
+    setProgress({ done: 0, total: pieceIds.reduce((s, pid) => s + (photos[pid] || []).length, 0) });
+    await downloadConcertPhotosZip(concert, pieces, photos, pieceIds, (done, total) => setProgress({ done, total }));
+    setDownloading(false);
+    onClose();
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 420, maxHeight: "85vh", overflow: "auto", padding: 20 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#1C1917" }}>📥 Télécharger photos du concert</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, color: "#A8A29E", cursor: "pointer" }}>✕</button>
+        </div>
+        <div style={{ fontSize: 13, color: "#78716C", marginBottom: 16 }}>{concert.titre} · {totalPhotos} photo{totalPhotos !== 1 ? "s" : ""} · {piecesWithPhotos.length} pièce{piecesWithPhotos.length !== 1 ? "s" : ""}</div>
+
+        {piecesWithPhotos.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "20px 0", color: "#A8A29E", fontSize: 14 }}>Aucune photo dans ce concert</div>
+        ) : downloading ? (
+          <div style={{ textAlign: "center", padding: "20px 0" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#1C1917", marginBottom: 8 }}>Préparation du ZIP...</div>
+            <div style={{ width: "100%", height: 6, background: "#E7E5E4", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ width: `${(progress.done / progress.total) * 100}%`, height: "100%", background: "#1C1917", borderRadius: 3, transition: "width 0.3s" }} />
+            </div>
+            <div style={{ fontSize: 12, color: "#A8A29E", marginTop: 6 }}>{progress.done}/{progress.total} photos traitées</div>
+          </div>
+        ) : !mode ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <button onClick={() => handleDownload(piecesWithPhotos.map((p) => p.id))} style={{ ...S.btnPrimary("#1C1917"), fontSize: 14, padding: "12px 16px" }}>
+              📦 Toutes les pièces ({totalPhotos} photos)
+            </button>
+            <button onClick={() => setMode("select")} style={{ ...S.btnSecondary, fontSize: 14, padding: "12px 16px" }}>
+              ☑️ Sélectionner des pièces
+            </button>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+              {piecesWithPhotos.map((p) => {
+                const isSelected = selected.has(p.id);
+                const col = BARNIER[p.couleur] || BARNIER.blanc;
+                const count = (photos[p.id] || []).length;
+                return (
+                  <div key={p.id} onClick={() => toggleSelect(p.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, cursor: "pointer", border: isSelected ? `2px solid ${col.hex}` : "2px solid #E7E5E4", background: isSelected ? col.bg : "#FAFAF9" }}>
+                    <div style={{ width: 24, height: 24, borderRadius: "50%", border: `2px solid ${col.hex}`, display: "flex", alignItems: "center", justifyContent: "center", background: isSelected ? col.hex : "transparent", color: isSelected ? getContrastColor(col.hex) : "transparent", fontSize: 14, fontWeight: 700 }}>
+                      {isSelected ? "✓" : ""}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: "#1C1917" }}>{p.titre}</div>
+                      <div style={{ fontSize: 11, color: "#78716C" }}>{count} photo{count !== 1 ? "s" : ""}</div>
+                    </div>
+                    <div style={{ ...S.badge, background: col.bg, color: col.hex, fontSize: 10 }}>{col.name}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => handleDownload([...selected])}
+              disabled={selected.size === 0}
+              style={{ ...S.btnPrimary("#1C1917"), fontSize: 14, padding: "12px 16px", width: "100%", opacity: selected.size === 0 ? 0.4 : 1 }}
+            >
+              📥 Télécharger {selected.size} pièce{selected.size !== 1 ? "s" : ""}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── CSS Watermark overlay component (dynamic, not baked) ──
 function WatermarkOverlay({ photo, pieces, couleurOverride }) {
   const piece = pieces?.find((p) => p.id === photo.pieceId);
@@ -100,6 +374,7 @@ export default function App() {
   const [photos, setPhotos] = usePhotos();
   const [capture, setCapture] = useState(null);
   const [fullPhoto, setFullPhoto] = useState(null);
+  const [showPhotoDownload, setShowPhotoDownload] = useState(null); // "piece" | "concert" | null
   const [galleryFilter, setGalleryFilter] = useState("all");
   const [pdfLoading, setPdfLoading] = useState(false);
   const [cameraMode, setCameraMode] = useState(null);
@@ -603,9 +878,14 @@ export default function App() {
           })}
 
           {totalPhotos > 0 && (
-            <button onClick={() => goGallery(null)} style={{ ...S.btnSecondary, marginTop: 8 }}>
-              📷 Toutes les photos ({totalPhotos})
-            </button>
+            <>
+              <button onClick={() => goGallery(null)} style={{ ...S.btnSecondary, marginTop: 8 }}>
+                📷 Toutes les photos ({totalPhotos})
+              </button>
+              <button onClick={() => setShowPhotoDownload("concert")} style={{ ...S.btnSecondary, marginTop: 6 }}>
+                📥 Télécharger photos du concert
+              </button>
+            </>
           )}
 
           {/* Concert notes */}
@@ -622,6 +902,9 @@ export default function App() {
           />
         </div>
         <NavBar active="pieces" onPieces={goHome} onPhotos={() => goGallery(null)} onTxt={() => { setPieceId(null); setScreen("txt"); }} />
+        {showPhotoDownload === "concert" && concert && (
+          <PhotoDownloadConcertModal concert={concert} pieces={pieces} photos={photos} onClose={() => setShowPhotoDownload(null)} />
+        )}
       </div>
     );
   }
@@ -931,9 +1214,15 @@ export default function App() {
 
           <button onClick={() => goTxt(piece.id)} style={{ ...S.btnSecondary, marginTop: 10 }}>☰ Liste TXT</button>
           <button onClick={() => downloadTxt(piece)} style={{ ...S.btnSecondary, marginTop: 6 }}>↓ Télécharger TXT</button>
+          {(photos[piece.id] || []).length > 0 && (
+            <button onClick={() => setShowPhotoDownload("piece")} style={{ ...S.btnSecondary, marginTop: 6 }}>📥 Télécharger photos</button>
+          )}
         </div>
         <NavBar active="pieces" onPieces={goHome} onPhotos={() => goGallery(pieceId)} onTxt={() => { setPieceId(pieceId); setScreen("txt"); }} />
         {fullPhoto && <Lightbox photo={fullPhoto} photos={photos[piece.id] || []} pieces={pieces} onClose={() => setFullPhoto(null)} onDelete={() => { deletePhoto(fullPhoto.pieceId, fullPhoto.id); setFullPhoto(null); }} onNavigate={(ph) => setFullPhoto(ph)} />}
+        {showPhotoDownload === "piece" && piece && (
+          <PhotoDownloadPieceModal piece={piece} piecePhotos={photos[piece.id] || []} onClose={() => setShowPhotoDownload(null)} />
+        )}
       </div>
     );
   }
