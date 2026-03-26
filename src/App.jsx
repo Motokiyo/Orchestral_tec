@@ -300,11 +300,9 @@ export default function App() {
   if (screen === "concerts") {
     return (
       <div style={S.shell}>
-        <div style={S.header}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 56, objectFit: "contain" }} />
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#78716C" }}>Mes concerts</div>
-          </div>
+        <div style={{ ...S.header, padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 48 }} />
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#78716C" }}>Mes concerts</div>
         </div>
         <div style={S.body}>
           <button
