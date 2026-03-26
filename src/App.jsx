@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard } from "./utils.js";
 import { extractFromPdf } from "./pdfParser.js";
-import { useConcerts } from "./useStorage.js";
+import { useConcerts, usePhotos } from "./useStorage.js";
 import { S } from "./styles.js";
 
 export default function App() {
@@ -11,7 +11,7 @@ export default function App() {
   const [concertId, setConcertId] = useState(null);
   const [pieceId, setPieceId] = useState(null);
   const [percuId, setPercuId] = useState(null);
-  const [photos, setPhotos] = useState({});
+  const [photos, setPhotos] = usePhotos();
   const [capture, setCapture] = useState(null);
   const [fullPhoto, setFullPhoto] = useState(null);
   const [galleryFilter, setGalleryFilter] = useState("all");
@@ -154,6 +154,12 @@ export default function App() {
       [pieceKey]: [...(prev[pieceKey] || []), photoData],
     }));
   }
+  function deletePhoto(pieceKey, photoId) {
+    setPhotos((prev) => ({
+      ...prev,
+      [pieceKey]: (prev[pieceKey] || []).filter((ph) => ph.id !== photoId),
+    }));
+  }
 
   // ── PDF Import: new piece (from home screen) ──
   async function handlePdfImportNew() {
@@ -275,8 +281,8 @@ export default function App() {
             id: uid(),
             dataUrl,
             pieceId: cameraMode.pieceId || "standalone",
-            percuId: null,
-            zone: "Photo libre",
+            percuId: cameraMode.percuId || null,
+            zone: cameraMode.percuId ? "Photo percu" : "Photo libre",
             num: 1,
             total: 1,
             couleur: cameraMode.couleur || "blanc",
@@ -693,15 +699,24 @@ export default function App() {
                       Copier TXT {r.nom}
                     </button>
 
-                    {rPhotos.length > 0 && (
-                      <div style={{ display: "flex", gap: 6, marginTop: 10, overflowX: "auto", paddingBottom: 4 }}>
-                        {rPhotos.map((ph) => (
-                          <img key={ph.id} src={ph.dataUrl} onClick={() => setFullPhoto(ph)}
-                            style={{ width: 80, height: 60, objectFit: "cover", borderRadius: 6, border: `2px solid ${col.hex}`, cursor: "pointer", flexShrink: 0 }}
+                    <div style={{ display: "flex", gap: 6, marginTop: 10, overflowX: "auto", paddingBottom: 4, alignItems: "flex-start" }}>
+                      {rPhotos.map((ph) => (
+                        <div key={ph.id} style={{ position: "relative", flexShrink: 0 }}>
+                          <img src={ph.dataUrl} onClick={() => setFullPhoto(ph)}
+                            style={{ width: 80, height: 60, objectFit: "cover", borderRadius: 6, border: `2px solid ${col.hex}`, cursor: "pointer" }}
                           />
-                        ))}
-                      </div>
-                    )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); if (confirm("Supprimer cette photo ?")) deletePhoto(piece.id, ph.id); }}
+                            style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", background: "#EF4444", border: "none", color: "#fff", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
+                          >✕</button>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => setCameraMode({ pieceId: piece.id, percuId: r.id, couleur: piece.couleur })}
+                        style={{ width: 80, height: 60, borderRadius: 6, border: `2px dashed ${col.hex}`, background: "transparent", color: col.hex, fontSize: 22, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+                        title="Ajouter une photo"
+                      >+</button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -786,7 +801,7 @@ export default function App() {
           <button onClick={() => downloadTxt(piece)} style={{ ...S.btnSecondary, marginTop: 6 }}>↓ Télécharger TXT</button>
         </div>
         <NavBar active="pieces" onPieces={goHome} onPhotos={() => goGallery(pieceId)} onTxt={() => { setPieceId(pieceId); setScreen("txt"); }} />
-        {fullPhoto && <Lightbox photo={fullPhoto} onClose={() => setFullPhoto(null)} />}
+        {fullPhoto && <Lightbox photo={fullPhoto} onClose={() => setFullPhoto(null)} onDelete={() => { deletePhoto(fullPhoto.pieceId, fullPhoto.id); setFullPhoto(null); }} />}
       </div>
     );
   }
@@ -836,19 +851,31 @@ export default function App() {
               ))}
             </div>
           )}
+          {pieceId && (
+            <button
+              onClick={() => setCameraMode({ pieceId, couleur: piece?.couleur || "blanc" })}
+              style={{ ...S.btnPrimary(BARNIER[piece?.couleur || "blanc"].hex), marginBottom: 12, fontSize: 13 }}
+            >
+              📸 Ajouter une photo
+            </button>
+          )}
           {allPhotos.length === 0 ? (
             <div style={{ textAlign: "center", padding: "60px 20px", color: "#A8A29E" }}>
               <div style={{ fontSize: 40, marginBottom: 8 }}>📷</div>
               <div style={{ fontSize: 14 }}>Aucune photo</div>
-              <div style={{ fontSize: 12, marginTop: 4 }}>Ouvrez un pôle percu et lancez le mode photo</div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>Utilisez le bouton ci-dessus ou ouvrez un pôle percu</div>
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               {allPhotos.filter((ph) => galleryFilter === "all" || ph.pieceId === galleryFilter || pieceId).map((ph) => {
                 const col = BARNIER[ph.couleur];
                 return (
-                  <div key={ph.id} onClick={() => setFullPhoto(ph)} style={{ position: "relative", borderRadius: 8, overflow: "hidden", border: `2px solid ${col.hex}`, cursor: "pointer", aspectRatio: "4/3" }}>
-                    <img src={ph.dataUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <div key={ph.id} style={{ position: "relative", borderRadius: 8, overflow: "hidden", border: `2px solid ${col.hex}`, cursor: "pointer", aspectRatio: "4/3" }}>
+                    <img src={ph.dataUrl} onClick={() => setFullPhoto(ph)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <button
+                      onClick={(e) => { e.stopPropagation(); if (confirm("Supprimer cette photo ?")) deletePhoto(ph.pieceId, ph.id); }}
+                      style={{ position: "absolute", top: 4, right: 4, width: 24, height: 24, borderRadius: "50%", background: "rgba(239,68,68,0.9)", border: "none", color: "#fff", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2 }}
+                    >✕</button>
                     <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent, rgba(0,0,0,.7))", padding: "12px 8px 6px" }}>
                       <div style={{ fontSize: 10, color: col.hex, fontWeight: 700 }}>{pieces.find((x) => x.id === ph.pieceId)?.titre}</div>
                       <div style={{ fontSize: 11, color: "#E7E5E4" }}>{ph.zone} · {ph.num}/{ph.total}</div>
@@ -860,7 +887,7 @@ export default function App() {
           )}
         </div>
         <NavBar active="photos" onPieces={goHome} onPhotos={() => goGallery(null)} onTxt={() => goTxt(pieces[0]?.id)} />
-        {fullPhoto && <Lightbox photo={fullPhoto} onClose={() => setFullPhoto(null)} />}
+        {fullPhoto && <Lightbox photo={fullPhoto} onClose={() => setFullPhoto(null)} onDelete={() => { deletePhoto(fullPhoto.pieceId, fullPhoto.id); setFullPhoto(null); }} />}
       </div>
     );
   }
@@ -1071,7 +1098,7 @@ function CheckBox({ checked, color, onToggle }) {
   );
 }
 
-function Lightbox({ photo, onClose }) {
+function Lightbox({ photo, onClose, onDelete }) {
   const [scale, setScale] = useState(1);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const lastTouch = useRef({});
@@ -1173,6 +1200,11 @@ function Lightbox({ photo, onClose }) {
         <button onClick={handleDownload} style={{ background: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
           ↓ Télécharger
         </button>
+        {onDelete && (
+          <button onClick={(e) => { e.stopPropagation(); if (confirm("Supprimer cette photo ?")) onDelete(); }} style={{ background: "#EF4444", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, color: "#fff", cursor: "pointer" }}>
+            🗑 Supprimer
+          </button>
+        )}
         {scale !== 1 && (
           <button onClick={(e) => { e.stopPropagation(); setScale(1); setPos({ x: 0, y: 0 }); }} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "10px 20px", fontSize: 14, color: "#fff", cursor: "pointer" }}>
             Réinitialiser

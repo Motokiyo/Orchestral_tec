@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { openDB } from "idb";
 
 const DB_NAME = "orkmap-db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "concerts";
+const PHOTOS_STORE = "photos";
 const DEBOUNCE_MS = 500;
 
 async function getDB() {
@@ -11,6 +12,9 @@ async function getDB() {
     upgrade(db) {
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(PHOTOS_STORE)) {
+        db.createObjectStore(PHOTOS_STORE);
       }
     },
   });
@@ -86,4 +90,53 @@ export function useConcerts(initialConcerts) {
   }, [save]);
 
   return [concerts, setConcertsAndSave, loaded];
+}
+
+/**
+ * Hook: persistent photos state backed by IndexedDB.
+ * Photos are stored as { [pieceKey]: photoData[] }.
+ * Returns [photos, setPhotos, loaded] — same API as useState.
+ */
+export function usePhotos() {
+  const [photos, setPhotos] = useState({});
+  const [loaded, setLoaded] = useState(false);
+  const saveTimer = useRef(null);
+
+  // Load from IndexedDB on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const db = await getDB();
+        const stored = await db.get(PHOTOS_STORE, "all-photos");
+        if (stored) {
+          setPhotos(stored);
+        }
+      } catch (err) {
+        console.warn("[OrkMap] Photos load failed:", err);
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  // Auto-save to IndexedDB (debounced)
+  const save = useCallback(async (data) => {
+    try {
+      const db = await getDB();
+      await db.put(PHOTOS_STORE, data, "all-photos");
+    } catch (err) {
+      console.warn("[OrkMap] Photos save failed:", err);
+    }
+  }, []);
+
+  // Wrap setPhotos to trigger debounced save
+  const setPhotosAndSave = useCallback((fn) => {
+    setPhotos((prev) => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => save(next), DEBOUNCE_MS);
+      return next;
+    });
+  }, [save]);
+
+  return [photos, setPhotosAndSave, loaded];
 }
