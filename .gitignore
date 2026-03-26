@@ -9,3 +9,4 @@ puppeteer-test*.cjs
 verify-screenshot*
 *.cjs
 verify-fail-*
+test-data/
