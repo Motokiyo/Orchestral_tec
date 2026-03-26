@@ -88,8 +88,23 @@ export function downloadTxt(piece) {
   URL.revokeObjectURL(url);
 }
 
+/**
+ * Compute contrast text color (black or white) for a given hex color.
+ * Uses relative luminance formula: (0.299*R + 0.587*G + 0.114*B) / 255
+ * Returns "#000" for light backgrounds, "#fff" for dark backgrounds.
+ */
+export function getContrastColor(hex) {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.5 ? "#000" : "#fff";
+}
+
 export function applyWatermark(canvas, ctx, opts) {
   const { titre, percuNom, zone, num, total, couleur } = opts;
+  const textColor = getContrastColor(couleur.hex);
 
   // Bottom band
   const bandH = canvas.height * 0.08;
@@ -97,7 +112,7 @@ export function applyWatermark(canvas, ctx, opts) {
   ctx.fillRect(0, canvas.height - bandH, canvas.width, bandH);
 
   // Main text
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = textColor;
   ctx.textBaseline = "middle";
   const y = canvas.height - bandH / 2;
   ctx.font = `bold ${Math.round(bandH * 0.4)}px -apple-system, sans-serif`;
@@ -113,7 +128,7 @@ export function applyWatermark(canvas, ctx, opts) {
   ctx.textAlign = "left";
   ctx.fillStyle = couleur.hex + "AA";
   ctx.fillRect(10, 10, 140, 28);
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = textColor;
   ctx.font = "bold 14px -apple-system, sans-serif";
   ctx.fillText(couleur.name.toUpperCase(), 18, 28);
 }

@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
-import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard } from "./utils.js";
+import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor } from "./utils.js";
 import { extractFromPdf } from "./pdfParser.js";
 import { useConcerts, usePhotos } from "./useStorage.js";
 import { S } from "./styles.js";
 
-// ── Shared helper: import image file, apply watermark, return dataUrl ──
-function importImageFile(watermarkOpts) {
+// ── Shared helper: import image file, return raw dataUrl (no watermark baked) ──
+function importImageFile() {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -27,9 +27,6 @@ function importImageFile(watermarkOpts) {
         canvas.height = img.naturalHeight;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0);
-        if (watermarkOpts) {
-          applyWatermark(canvas, ctx, watermarkOpts);
-        }
         resolve(canvas.toDataURL("image/jpeg", 0.85));
       };
       img.onerror = () => resolve(null);
@@ -37,6 +34,61 @@ function importImageFile(watermarkOpts) {
     };
     input.click();
   });
+}
+
+// ── Bake watermark onto image for export/download ──
+function bakeWatermark(rawDataUrl, watermarkOpts) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      applyWatermark(canvas, ctx, watermarkOpts);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => resolve(rawDataUrl);
+    img.src = rawDataUrl;
+  });
+}
+
+// ── CSS Watermark overlay component (dynamic, not baked) ──
+function WatermarkOverlay({ photo, pieces, couleurOverride }) {
+  const piece = pieces?.find((p) => p.id === photo.pieceId);
+  const couleurKey = couleurOverride || piece?.couleur || photo.couleur || "blanc";
+  const col = BARNIER[couleurKey] || BARNIER.blanc;
+  const textColor = getContrastColor(col.hex);
+  const percu = piece?.percus?.find((r) => r.id === photo.percuId);
+
+  return (
+    <>
+      {/* Top badge */}
+      <div style={{
+        position: "absolute", top: 10, left: 10, zIndex: 5,
+        background: col.hex + "AA", padding: "4px 12px", borderRadius: 4,
+      }}>
+        <span style={{ color: textColor, fontWeight: 700, fontSize: 12, fontFamily: "-apple-system, sans-serif" }}>
+          {col.name.toUpperCase()}
+        </span>
+      </div>
+      {/* Bottom band */}
+      <div style={{
+        position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 5,
+        background: col.hex + "CC", padding: "6px 16px",
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        minHeight: "8%",
+      }}>
+        <span style={{ color: textColor, fontWeight: 700, fontSize: 13, fontFamily: "-apple-system, sans-serif" }}>
+          {piece?.titre || "—"} — {percu?.nom || "—"} — {photo.zone || ""}
+        </span>
+        <span style={{ color: textColor, fontWeight: 700, fontSize: 15, fontFamily: "-apple-system, sans-serif" }}>
+          {photo.num}/{photo.total}
+        </span>
+      </div>
+    </>
+  );
 }
 
 export default function App() {
@@ -608,7 +660,7 @@ export default function App() {
                   border: piece.couleur === key ? "3px solid #1C1917" : "2px solid #E7E5E4",
                   cursor: "pointer",
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 11, color: "#fff", fontWeight: 700,
+                  fontSize: 11, color: getContrastColor(b.hex), fontWeight: 700,
                 }}
                 title={b.name}
               >
@@ -881,7 +933,7 @@ export default function App() {
           <button onClick={() => downloadTxt(piece)} style={{ ...S.btnSecondary, marginTop: 6 }}>↓ Télécharger TXT</button>
         </div>
         <NavBar active="pieces" onPieces={goHome} onPhotos={() => goGallery(pieceId)} onTxt={() => { setPieceId(pieceId); setScreen("txt"); }} />
-        {fullPhoto && <Lightbox photo={fullPhoto} onClose={() => setFullPhoto(null)} onDelete={() => { deletePhoto(fullPhoto.pieceId, fullPhoto.id); setFullPhoto(null); }} />}
+        {fullPhoto && <Lightbox photo={fullPhoto} photos={photos[piece.id] || []} pieces={pieces} onClose={() => setFullPhoto(null)} onDelete={() => { deletePhoto(fullPhoto.pieceId, fullPhoto.id); setFullPhoto(null); }} onNavigate={(ph) => setFullPhoto(ph)} />}
       </div>
     );
   }
@@ -967,7 +1019,7 @@ export default function App() {
           )}
         </div>
         <NavBar active="photos" onPieces={goHome} onPhotos={() => goGallery(null)} onTxt={() => goTxt(pieces[0]?.id)} />
-        {fullPhoto && <Lightbox photo={fullPhoto} onClose={() => setFullPhoto(null)} onDelete={() => { deletePhoto(fullPhoto.pieceId, fullPhoto.id); setFullPhoto(null); }} />}
+        {fullPhoto && <Lightbox photo={fullPhoto} photos={allPhotos.filter((ph) => galleryFilter === "all" || ph.pieceId === galleryFilter || pieceId)} pieces={pieces} onClose={() => setFullPhoto(null)} onDelete={() => { deletePhoto(fullPhoto.pieceId, fullPhoto.id); setFullPhoto(null); }} onNavigate={(ph) => setFullPhoto(ph)} />}
       </div>
     );
   }
@@ -1117,11 +1169,12 @@ function NavBar({ active, onPieces, onPhotos, onTxt }) {
 }
 
 function FilterBtn({ label, color, active, onClick }) {
+  const bg = active ? (color || "#2563EB") : "#E7E5E4";
   return (
     <button onClick={onClick} style={{
       padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600,
-      background: active ? (color || "#2563EB") : "#E7E5E4",
-      color: active ? "#fff" : "#78716C",
+      background: bg,
+      color: active ? getContrastColor(bg) : "#78716C",
       border: "none", cursor: "pointer", whiteSpace: "nowrap",
     }}>
       {label}
@@ -1178,17 +1231,62 @@ function CheckBox({ checked, color, onToggle }) {
   );
 }
 
-function Lightbox({ photo, onClose, onDelete }) {
+function Lightbox({ photo, photos, pieces, onClose, onDelete, onNavigate }) {
   const [scale, setScale] = useState(1);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const lastTouch = useRef({});
   const lastDist = useRef(0);
   const dragging = useRef(false);
+  const swipeStart = useRef(null);
 
-  function handleDownload(e) {
+  // Reset zoom when photo changes
+  useEffect(() => {
+    setScale(1);
+    setPos({ x: 0, y: 0 });
+  }, [photo?.id]);
+
+  // Navigation: find current index in photos array
+  const currentIdx = photos ? photos.findIndex((p) => p.id === photo.id) : -1;
+  const hasPrev = currentIdx > 0;
+  const hasNext = photos && currentIdx < photos.length - 1;
+
+  function goPrev(e) {
+    if (e) e.stopPropagation();
+    if (hasPrev && onNavigate) onNavigate(photos[currentIdx - 1]);
+  }
+  function goNext(e) {
+    if (e) e.stopPropagation();
+    if (hasNext && onNavigate) onNavigate(photos[currentIdx + 1]);
+  }
+
+  // Keyboard navigation
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "ArrowLeft") goPrev();
+      else if (e.key === "ArrowRight") goNext();
+      else if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [currentIdx, photos]);
+
+  // Download with baked watermark (current color)
+  async function handleDownload(e) {
     e.stopPropagation();
+    const piece = pieces?.find((p) => p.id === photo.pieceId);
+    const col = BARNIER[piece?.couleur || photo.couleur || "blanc"] || BARNIER.blanc;
+    const percu = piece?.percus?.find((r) => r.id === photo.percuId);
+    const wmOpts = {
+      titre: piece?.titre || "",
+      percuNom: percu?.nom || "",
+      zone: photo.zone || "",
+      num: photo.num || 1,
+      total: photo.total || 1,
+      couleur: col,
+    };
+    const exportUrl = await bakeWatermark(photo.dataUrl, wmOpts);
     const a = document.createElement("a");
-    a.href = photo.dataUrl;
+    a.href = exportUrl;
     a.download = `photo_${photo.zone || "libre"}_${photo.id}.jpg`;
     document.body.appendChild(a);
     a.click();
@@ -1204,9 +1302,14 @@ function Lightbox({ photo, onClose, onDelete }) {
   function onTouchStart(e) {
     if (e.touches.length === 2) {
       lastDist.current = dist(e.touches);
+      swipeStart.current = null;
     } else if (e.touches.length === 1) {
       dragging.current = true;
       lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      // Track swipe start for navigation (only when not zoomed)
+      if (scale <= 1) {
+        swipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, time: Date.now() };
+      }
     }
   }
 
@@ -1221,6 +1324,7 @@ function Lightbox({ photo, onClose, onDelete }) {
       }
       lastDist.current = d;
       dragging.current = false;
+      swipeStart.current = null;
     } else if (e.touches.length === 1 && dragging.current && scale > 1) {
       // Pan (only when zoomed in)
       const dx = e.touches[0].clientX - lastTouch.current.x;
@@ -1230,7 +1334,18 @@ function Lightbox({ photo, onClose, onDelete }) {
     }
   }
 
-  function onTouchEnd() {
+  function onTouchEnd(e) {
+    // Detect horizontal swipe for navigation (only when not zoomed)
+    if (swipeStart.current && scale <= 1 && e.changedTouches.length === 1) {
+      const dx = e.changedTouches[0].clientX - swipeStart.current.x;
+      const dy = e.changedTouches[0].clientY - swipeStart.current.y;
+      const dt = Date.now() - swipeStart.current.time;
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 500) {
+        if (dx > 0 && hasPrev) { goPrev(); swipeStart.current = null; lastDist.current = 0; dragging.current = false; return; }
+        if (dx < 0 && hasNext) { goNext(); swipeStart.current = null; lastDist.current = 0; dragging.current = false; return; }
+      }
+    }
+    swipeStart.current = null;
     lastDist.current = 0;
     dragging.current = false;
   }
@@ -1251,6 +1366,14 @@ function Lightbox({ photo, onClose, onDelete }) {
     lastTap.current = now;
   }
 
+  const navBtnStyle = {
+    position: "absolute", top: "50%", transform: "translateY(-50%)", zIndex: 100,
+    background: "rgba(0,0,0,0.45)", border: "none", borderRadius: "50%",
+    width: 44, height: 44, color: "#fff", fontSize: 22, cursor: "pointer",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    backdropFilter: "blur(4px)",
+  };
+
   return (
     <div
       style={{ ...S.overlay, touchAction: "none", overflow: "hidden" }}
@@ -1259,22 +1382,53 @@ function Lightbox({ photo, onClose, onDelete }) {
       onTouchEnd={onTouchEnd}
       onClick={onDoubleTap}
     >
-      <button onClick={onClose} style={{
+      {/* Close button */}
+      <button onClick={(e) => { e.stopPropagation(); onClose(); }} style={{
         position: "absolute", top: 16, right: 16, zIndex: 100,
         background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%",
         width: 40, height: 40, color: "#fff", fontSize: 20, cursor: "pointer",
       }}>✕</button>
 
-      <img
-        src={photo.dataUrl}
-        style={{
-          maxWidth: "100vw", maxHeight: "100vh", objectFit: "contain",
+      {/* Counter */}
+      {photos && photos.length > 1 && (
+        <div style={{
+          position: "absolute", top: 18, left: "50%", transform: "translateX(-50%)", zIndex: 100,
+          background: "rgba(0,0,0,0.5)", borderRadius: 12, padding: "4px 14px",
+          color: "#fff", fontSize: 14, fontWeight: 600, backdropFilter: "blur(4px)",
+        }}>
+          {currentIdx + 1} / {photos.length}
+        </div>
+      )}
+
+      {/* Prev button */}
+      {hasPrev && (
+        <button onClick={goPrev} style={{ ...navBtnStyle, left: 12 }}>‹</button>
+      )}
+
+      {/* Next button */}
+      {hasNext && (
+        <button onClick={goNext} style={{ ...navBtnStyle, right: 12 }}>›</button>
+      )}
+
+      {/* Photo with dynamic watermark overlay */}
+      <div style={{ position: "relative", maxWidth: "100vw", maxHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{
+          position: "relative",
           transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`,
           transition: dragging.current ? "none" : "transform 0.1s",
-          userSelect: "none", WebkitUserSelect: "none",
-        }}
-        draggable={false}
-      />
+        }}>
+          <img
+            src={photo.dataUrl}
+            style={{
+              maxWidth: "100vw", maxHeight: "100vh", objectFit: "contain",
+              userSelect: "none", WebkitUserSelect: "none", display: "block",
+            }}
+            draggable={false}
+          />
+          {/* Dynamic watermark overlay — follows current piece color */}
+          {scale <= 1.5 && <WatermarkOverlay photo={photo} pieces={pieces} />}
+        </div>
+      </div>
 
       <div style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", gap: 10, justifyContent: "center", zIndex: 100 }}>
         <button onClick={handleDownload} style={{ background: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
@@ -1303,10 +1457,7 @@ function ZoneSelectView({ piece, percu, col, onSelect, onImport, onCancel }) {
   const defaultZones = ["Cour", "Jardin", "Centre", "Détail", "Devant", "Derrière"];
 
   async function handleImportWithZone(selectedZone) {
-    const dataUrl = await importImageFile({
-      titre: piece?.titre || "", percuNom: percu?.nom || "",
-      zone: selectedZone, num: 1, total: 1, couleur: col,
-    });
+    const dataUrl = await importImageFile();
     if (dataUrl && onImport) onImport(selectedZone, dataUrl);
   }
 
@@ -1314,7 +1465,7 @@ function ZoneSelectView({ piece, percu, col, onSelect, onImport, onCancel }) {
 
   return (
     <div style={{ background: "#F5F5F4", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
-      <div style={{ background: col.hex, padding: "14px 16px", color: "#fff", flexShrink: 0 }}>
+      <div style={{ background: col.hex, padding: "14px 16px", color: getContrastColor(col.hex), flexShrink: 0 }}>
         <div style={{ fontSize: 12, opacity: 0.85 }}>
           {piece?.titre}{percu ? ` — ${percu.nom}` : ""}
         </div>
@@ -1425,11 +1576,7 @@ function StandaloneCamera({ onCapture, onCancel, couleur, watermark }) {
   const col = BARNIER[couleur] || BARNIER.blanc;
 
   async function handleImportFile() {
-    const wmOpts = watermark ? {
-      titre: watermark.titre, percuNom: watermark.percuNom,
-      zone: watermark.zone, num: 1, total: 1, couleur: watermark.couleur,
-    } : null;
-    const dataUrl = await importImageFile(wmOpts);
+    const dataUrl = await importImageFile();
     if (dataUrl) setPreview(dataUrl);
   }
 
@@ -1478,18 +1625,7 @@ function StandaloneCamera({ onCapture, onCancel, couleur, watermark }) {
     canvas.height = video.videoHeight || 720;
     ctx.drawImage(video, 0, 0);
 
-    // Apply watermark with metadata
-    if (watermark) {
-      applyWatermark(canvas, ctx, {
-        titre: watermark.titre,
-        percuNom: watermark.percuNom,
-        zone: watermark.zone,
-        num: 1,
-        total: 1,
-        couleur: watermark.couleur,
-      });
-    }
-
+    // Store raw image without baked watermark
     const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
     setPreview(dataUrl);
   }
@@ -1499,10 +1635,17 @@ function StandaloneCamera({ onCapture, onCancel, couleur, watermark }) {
     onCapture(preview);
   }
 
-  function handleDownload() {
+  async function handleDownload() {
     if (!preview) return;
+    let exportUrl = preview;
+    if (watermark) {
+      exportUrl = await bakeWatermark(preview, {
+        titre: watermark.titre, percuNom: watermark.percuNom,
+        zone: watermark.zone, num: 1, total: 1, couleur: watermark.couleur,
+      });
+    }
     const a = document.createElement("a");
-    a.href = preview;
+    a.href = exportUrl;
     a.download = `photo_${Date.now()}.jpg`;
     document.body.appendChild(a);
     a.click();
@@ -1520,9 +1663,10 @@ function StandaloneCamera({ onCapture, onCancel, couleur, watermark }) {
 
   // Preview mode — show captured photo with options
   if (preview) {
+    const headerTextColor = getContrastColor(col.hex);
     return (
       <div style={{ background: "#000", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
-        <div style={{ background: col.hex, padding: "12px 16px", color: "#fff", textAlign: "center", flexShrink: 0 }}>
+        <div style={{ background: col.hex, padding: "12px 16px", color: headerTextColor, textAlign: "center", flexShrink: 0 }}>
           {watermark && <div style={{ fontSize: 12, opacity: 0.85 }}>{watermark.titre}{watermark.percuNom ? ` — ${watermark.percuNom}` : ""}</div>}
           <div style={{ fontSize: 16, fontWeight: 700 }}>{watermark ? `Aperçu — ${watermark.zone}` : "Aperçu photo"}</div>
         </div>
@@ -1530,7 +1674,7 @@ function StandaloneCamera({ onCapture, onCancel, couleur, watermark }) {
           <img src={preview} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />
         </div>
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
-          <button onClick={handleValidate} style={{ background: col.hex, color: "#fff", border: "none", borderRadius: 10, padding: "14px 20px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+          <button onClick={handleValidate} style={{ background: col.hex, color: headerTextColor, border: "none", borderRadius: 10, padding: "14px 20px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
             ✓ Valider la photo
           </button>
           <button onClick={handleDownload} style={{ background: "#fff", color: "#1C1917", border: "none", borderRadius: 10, padding: "12px 20px", fontSize: 14, fontWeight: 500, cursor: "pointer" }}>
@@ -1550,9 +1694,10 @@ function StandaloneCamera({ onCapture, onCancel, couleur, watermark }) {
   }
 
   // Camera live view
+  const liveTextColor = getContrastColor(col.hex);
   return (
     <div style={{ background: "#000", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
-      <div style={{ background: col.hex, padding: "12px 16px", color: "#fff", textAlign: "center", flexShrink: 0 }}>
+      <div style={{ background: col.hex, padding: "12px 16px", color: liveTextColor, textAlign: "center", flexShrink: 0 }}>
         {watermark && <div style={{ fontSize: 12, opacity: 0.85 }}>{watermark.titre}{watermark.percuNom ? ` — ${watermark.percuNom}` : ""}</div>}
         <div style={{ fontSize: 16, fontWeight: 700 }}>{watermark ? `📸 ${watermark.zone}` : "📸 Prendre une photo"}</div>
       </div>
@@ -1687,15 +1832,14 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
     canvas.height = video.videoHeight || 720;
     ctx.drawImage(video, 0, 0);
 
-    applyWatermark(canvas, ctx, buildWatermarkOpts());
-
+    // Store raw image without baked watermark
     const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
     stopCamera();
     setPreview({ dataUrl, photoData: buildPhotoData(dataUrl) });
   }
 
   async function handleImportFile() {
-    const dataUrl = await importImageFile(buildWatermarkOpts());
+    const dataUrl = await importImageFile();
     if (dataUrl) {
       stopCamera();
       setPreview({ dataUrl, photoData: buildPhotoData(dataUrl) });
@@ -1725,9 +1869,10 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
   // Preview mode — show captured/imported photo with options
   if (preview) {
     const isLast = capture.currentZone >= capture.zones.length - 1;
+    const captureTextColor = getContrastColor(col.hex);
     return (
       <div style={{ background: "#000", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
-        <div style={{ background: col.hex, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#fff", flexShrink: 0 }}>
+        <div style={{ background: col.hex, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", color: captureTextColor, flexShrink: 0 }}>
           <div>
             <div style={{ fontSize: 12, opacity: 0.85 }}>{piece?.titre} — {percu?.nom}</div>
             <div style={{ fontSize: 18, fontWeight: 700 }}>Aperçu — {zone}</div>
@@ -1738,7 +1883,7 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
           <img src={preview.dataUrl} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />
         </div>
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
-          <button onClick={handleValidate} style={{ background: col.hex, color: "#fff", border: "none", borderRadius: 10, padding: "14px 20px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+          <button onClick={handleValidate} style={{ background: col.hex, color: captureTextColor, border: "none", borderRadius: 10, padding: "14px 20px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
             {isLast ? "✓ Valider et terminer" : `✓ Valider → Zone suivante (${capture.currentZone + 2}/${capture.zones.length})`}
           </button>
           <div style={{ display: "flex", gap: 8 }}>
@@ -1755,9 +1900,10 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
   }
 
   // Camera live view
+  const captureLiveTextColor = getContrastColor(col.hex);
   return (
     <div style={{ background: "#000", height: "100dvh", display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto", overflow: "hidden" }}>
-      <div style={{ background: col.hex, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#fff", flexShrink: 0 }}>
+      <div style={{ background: col.hex, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", color: captureLiveTextColor, flexShrink: 0 }}>
         <div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{piece?.titre} — {percu?.nom}</div>
           <div style={{ fontSize: 18, fontWeight: 700 }}>{zone}</div>
@@ -1767,7 +1913,7 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
       <div style={{ flex: 1, position: "relative", minHeight: 0, overflow: "hidden" }}>
         <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: col.hex + "55", padding: "8px", textAlign: "center" }}>
-          <span style={{ color: "#fff", fontSize: 14, fontWeight: 600 }}>📸 Photo {capture.currentZone + 1}/{capture.zones.length} — {zone}</span>
+          <span style={{ color: captureLiveTextColor, fontSize: 14, fontWeight: 600 }}>📸 Photo {capture.currentZone + 1}/{capture.zones.length} — {zone}</span>
         </div>
       </div>
       <div style={{ padding: 16, display: "flex", justifyContent: "center", alignItems: "center", gap: 24, flexShrink: 0 }}>

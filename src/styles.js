@@ -35,9 +35,16 @@ export const S = {
     cursor: "pointer",
     padding: "4px 8px 4px 0",
   },
-  btnPrimary: (bg) => ({
-    background: bg || "#2563EB",
-    color: "#fff",
+  btnPrimary: (bg) => {
+    const hex = bg || "#2563EB";
+    const h = hex.replace("#", "");
+    const r = parseInt(h.substring(0, 2), 16);
+    const g = parseInt(h.substring(2, 4), 16);
+    const b = parseInt(h.substring(4, 6), 16);
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return {
+    background: hex,
+    color: lum > 0.5 ? "#000" : "#fff",
     border: "none",
     borderRadius: 10,
     padding: "12px 20px",
@@ -49,7 +56,8 @@ export const S = {
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-  }),
+  };
+  },
   btnSecondary: {
     background: "#fff",
     border: "1px solid #D6D3D1",
