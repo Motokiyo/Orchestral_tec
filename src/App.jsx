@@ -1072,7 +1072,12 @@ function CheckBox({ checked, color, onToggle }) {
 }
 
 function Lightbox({ photo, onClose }) {
-  // Allow download
+  const [scale, setScale] = useState(1);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const lastTouch = useRef({});
+  const lastDist = useRef(0);
+  const dragging = useRef(false);
+
   function handleDownload(e) {
     e.stopPropagation();
     const a = document.createElement("a");
@@ -1083,18 +1088,96 @@ function Lightbox({ photo, onClose }) {
     document.body.removeChild(a);
   }
 
+  function dist(t) {
+    const dx = t[0].clientX - t[1].clientX;
+    const dy = t[0].clientY - t[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function onTouchStart(e) {
+    if (e.touches.length === 2) {
+      lastDist.current = dist(e.touches);
+    } else if (e.touches.length === 1) {
+      dragging.current = true;
+      lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+  }
+
+  function onTouchMove(e) {
+    e.preventDefault();
+    if (e.touches.length === 2) {
+      // Pinch zoom
+      const d = dist(e.touches);
+      if (lastDist.current > 0) {
+        const ratio = d / lastDist.current;
+        setScale((s) => Math.min(Math.max(s * ratio, 0.5), 8));
+      }
+      lastDist.current = d;
+      dragging.current = false;
+    } else if (e.touches.length === 1 && dragging.current && scale > 1) {
+      // Pan (only when zoomed in)
+      const dx = e.touches[0].clientX - lastTouch.current.x;
+      const dy = e.touches[0].clientY - lastTouch.current.y;
+      setPos((p) => ({ x: p.x + dx, y: p.y + dy }));
+      lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+  }
+
+  function onTouchEnd() {
+    lastDist.current = 0;
+    dragging.current = false;
+  }
+
+  // Double-tap to toggle zoom
+  const lastTap = useRef(0);
+  function onDoubleTap(e) {
+    const now = Date.now();
+    if (now - lastTap.current < 300) {
+      e.preventDefault();
+      if (scale > 1.5) {
+        setScale(1);
+        setPos({ x: 0, y: 0 });
+      } else {
+        setScale(3);
+      }
+    }
+    lastTap.current = now;
+  }
+
   return (
-    <div style={S.overlay} onClick={onClose}>
-      <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
-        <img src={photo.dataUrl} style={{ maxWidth: "95vw", maxHeight: "85vh", objectFit: "contain", borderRadius: 8 }} />
-        <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 12 }}>
-          <button onClick={handleDownload} style={{ background: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-            ↓ Télécharger
+    <div
+      style={{ ...S.overlay, touchAction: "none", overflow: "hidden" }}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onClick={onDoubleTap}
+    >
+      <button onClick={onClose} style={{
+        position: "absolute", top: 16, right: 16, zIndex: 100,
+        background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%",
+        width: 40, height: 40, color: "#fff", fontSize: 20, cursor: "pointer",
+      }}>✕</button>
+
+      <img
+        src={photo.dataUrl}
+        style={{
+          maxWidth: "100vw", maxHeight: "100vh", objectFit: "contain",
+          transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`,
+          transition: dragging.current ? "none" : "transform 0.1s",
+          userSelect: "none", WebkitUserSelect: "none",
+        }}
+        draggable={false}
+      />
+
+      <div style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", gap: 10, justifyContent: "center", zIndex: 100 }}>
+        <button onClick={handleDownload} style={{ background: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+          ↓ Télécharger
+        </button>
+        {scale !== 1 && (
+          <button onClick={(e) => { e.stopPropagation(); setScale(1); setPos({ x: 0, y: 0 }); }} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "10px 20px", fontSize: 14, color: "#fff", cursor: "pointer" }}>
+            Réinitialiser
           </button>
-          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "10px 20px", fontSize: 14, color: "#fff", cursor: "pointer" }}>
-            Fermer
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );
