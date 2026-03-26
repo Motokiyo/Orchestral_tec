@@ -2,10 +2,11 @@ import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard } from "./utils.js";
 import { extractFromPdf } from "./pdfParser.js";
+import { useConcerts } from "./useStorage.js";
 import { S } from "./styles.js";
 
 export default function App() {
-  const [concerts, setConcerts] = useState([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }]);
+  const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }]);
   const [screen, setScreen] = useState("concerts");
   const [concertId, setConcertId] = useState(null);
   const [pieceId, setPieceId] = useState(null);
@@ -16,7 +17,6 @@ export default function App() {
   const [galleryFilter, setGalleryFilter] = useState("all");
   const [pdfLoading, setPdfLoading] = useState(false);
   const [cameraMode, setCameraMode] = useState(null);
-  const [dragIdx, setDragIdx] = useState(null);
 
   const concert = concerts.find((c) => c.id === concertId);
   const pieces = concert ? concert.pieces : [];
@@ -249,12 +249,18 @@ export default function App() {
     });
   }
 
-  // Pick next unused barnier color
-  function pickNextColor(existingPieces) {
-    const usedColors = existingPieces.map((p) => p.couleur);
-    const allColors = Object.keys(BARNIER);
-    const available = allColors.filter((c) => !usedColors.includes(c));
-    return available.length > 0 ? available[0] : allColors[existingPieces.length % allColors.length];
+  // ════════════════════════════════
+  // LOADING
+  // ════════════════════════════════
+  if (!dbLoaded) {
+    return (
+      <div style={{ ...S.shell, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ textAlign: "center" }}>
+          <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 80, marginBottom: 16 }} />
+          <div style={{ fontSize: 14, color: "#78716C" }}>Chargement...</div>
+        </div>
+      </div>
+    );
   }
 
   // ════════════════════════════════
