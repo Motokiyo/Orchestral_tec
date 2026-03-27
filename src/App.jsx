@@ -834,25 +834,72 @@ export default function App() {
             </div>
           )}
           {ex.percus && ex.percus.length > 0 && (
-            <div style={{ marginTop: 10, padding: "8px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>Percussions IA</div>
-              {ex.percus.map((p, i) => (
-                <div key={i} style={{ fontSize: 12, color: "#1C1917", marginTop: 4 }}>
-                  <strong>{p.nom}</strong>: {p.items.map(it => it.nom).join(", ") || "(vide)"}
-                </div>
-              ))}
-              <button onClick={() => {
-                updatePiece(mergeData.pieceId, p => ({
-                  ...p,
-                  percus: ex.percus.map((ep, i) => ({
-                    id: `p${Date.now()}_${i}`,
-                    nom: ep.nom,
-                    items: ep.items,
-                  })),
-                }));
-              }} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600, marginTop: 8 }}>
-                Remplacer les percussions
-              </button>
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase", marginBottom: 6 }}>Percussions IA — par pôle</div>
+              {ex.percus.map((aiPole, i) => {
+                const extractNum = (nom) => { const m = nom.match(/(\d+)/); return m ? parseInt(m[1]) : null; };
+                const aiNum = extractNum(aiPole.nom);
+                const existingPole = mergePiece?.percus.find(p => {
+                  if (p.nom.toLowerCase() === aiPole.nom.toLowerCase()) return true;
+                  const pNum = extractNum(p.nom);
+                  return aiNum !== null && pNum !== null && aiNum === pNum;
+                });
+                const hasExisting = existingPole && existingPole.items.length > 0;
+                const btnStyle = { fontSize: 11, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontWeight: 600, border: "1px solid #D6D3D1", background: "#fff", color: "#1C1917", minHeight: 36 };
+                const activeBtnStyle = { ...btnStyle, background: "#FFFBEB", borderColor: "#FCD34D", color: "#92400E" };
+                return (
+                  <div key={i} style={{ marginBottom: 8, padding: "10px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#1C1917" }}>{aiPole.nom}</div>
+                    <div style={{ fontSize: 11, color: "#78716C", marginTop: 2 }}>
+                      IA : {aiPole.items.map(it => it.nom).join(", ") || "(vide)"}
+                    </div>
+                    {hasExisting && (
+                      <div style={{ fontSize: 11, color: "#A8A29E", marginTop: 2 }}>
+                        Existant ({existingPole.nom}) : {existingPole.items.map(it => it.nom).join(", ")}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                      {!hasExisting ? (
+                        <button onClick={() => {
+                          updatePiece(mergeData.pieceId, p => ({
+                            ...p,
+                            percus: [...p.percus, { id: `p${Date.now()}_${i}`, nom: aiPole.nom, items: aiPole.items }],
+                          }));
+                        }} style={activeBtnStyle}>
+                          + Ajouter ce pôle
+                        </button>
+                      ) : (
+                        <>
+                          <button onClick={() => {
+                            updatePiece(mergeData.pieceId, p => ({
+                              ...p,
+                              percus: p.percus.map(r => r.id === existingPole.id ? { ...r, items: aiPole.items } : r),
+                            }));
+                          }} style={activeBtnStyle}>
+                            Écraser
+                          </button>
+                          <button onClick={() => {
+                            updatePiece(mergeData.pieceId, p => ({
+                              ...p,
+                              percus: p.percus.map(r => {
+                                if (r.id !== existingPole.id) return r;
+                                const existingNames = new Set(r.items.map(it => it.nom.toLowerCase()));
+                                const newItems = aiPole.items.filter(it => !existingNames.has(it.nom.toLowerCase()));
+                                return { ...r, items: [...r.items, ...newItems] };
+                              }),
+                            }));
+                          }} style={activeBtnStyle}>
+                            Fusionner
+                          </button>
+                          <button style={btnStyle} disabled>
+                            Ignorer
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
           <button onClick={() => setMergeData(null)} style={{ ...S.btnPrimary("#1C1917"), marginTop: 16 }}>
