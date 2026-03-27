@@ -635,6 +635,11 @@ export default function App() {
     }
   }
 
+  function extractNum(nom) {
+    const m = nom.match(/(\d+)/);
+    return m ? parseInt(m[1]) : null;
+  }
+
   async function handleAiExtract(targetPieceId) {
     const targetPiece = pieces.find(p => p.id === targetPieceId);
     if (!targetPiece || !(targetPiece.plans || []).length) {
@@ -644,7 +649,60 @@ export default function App() {
     setAiLoading(true);
     try {
       const extracted = await extractWithGemini(targetPiece.plans[0]);
-      setMergeData({ pieceId: targetPieceId, newPages: [], extracted, showMerge: true });
+      const ex = extracted || {};
+      const autoFilled = [];
+
+      const LABELS = { titre: "Titre", compositeur: "Compositeur", duree: "Durée", salle: "Lieu", chef: "Chef", date: "Date", effectif: "Effectif" };
+
+      // Auto-fill empty scalar fields
+      for (const key of Object.keys(LABELS)) {
+        if (!targetPiece[key] && ex[key]) {
+          updatePiece(targetPieceId, p => ({ ...p, [key]: ex[key] }));
+          autoFilled.push(LABELS[key]);
+        }
+      }
+
+      // Auto-fill empty orchestre sections
+      if (ex.orchestre) {
+        for (const sec of ["bois", "cuivres", "cordes", "autres"]) {
+          const cur = targetPiece.orchestre?.[sec] || [];
+          const aiItems = ex.orchestre[sec] || [];
+          if (cur.length === 0 && aiItems.length > 0) {
+            updatePiece(targetPieceId, p => ({
+              ...p,
+              orchestre: { ...(p.orchestre || { bois: [], cuivres: [], cordes: [], autres: [] }), [sec]: aiItems },
+            }));
+            autoFilled.push(`Orchestre ${sec}`);
+          }
+        }
+      }
+
+      // Auto-fill empty or missing percus poles
+      if (ex.percus) {
+        for (const aiPole of ex.percus) {
+          const aiNum = extractNum(aiPole.nom);
+          const existing = targetPiece.percus.find(p => {
+            if (p.nom.toLowerCase() === aiPole.nom.toLowerCase()) return true;
+            const pNum = extractNum(p.nom);
+            return aiNum !== null && pNum !== null && aiNum === pNum;
+          });
+          if (!existing) {
+            updatePiece(targetPieceId, p => ({
+              ...p,
+              percus: [...p.percus, { id: uid(), nom: aiPole.nom, items: aiPole.items }],
+            }));
+            autoFilled.push(aiPole.nom);
+          } else if (existing.items.length === 0) {
+            updatePiece(targetPieceId, p => ({
+              ...p,
+              percus: p.percus.map(r => r.id === existing.id ? { ...r, items: aiPole.items } : r),
+            }));
+            autoFilled.push(aiPole.nom);
+          }
+        }
+      }
+
+      setMergeData({ pieceId: targetPieceId, extracted, autoFilled, showMerge: true });
     } catch (err) {
       alert("Erreur extraction IA : " + err.message);
     } finally {
@@ -778,59 +836,13 @@ export default function App() {
   if (mergeData && mergeData.showMerge) {
     const mergePiece = pieces.find(p => p.id === mergeData.pieceId);
     const ex = mergeData.extracted || {};
+    const autoFilled = mergeData.autoFilled || [];
     const LABELS = { titre: "Titre", compositeur: "Compositeur", duree: "Durée", salle: "Lieu", chef: "Chef", date: "Date", effectif: "Effectif" };
     const btnApply = { fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600 };
     const btnChoice = { fontSize: 11, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontWeight: 600, border: "1px solid #D6D3D1", background: "#fff", color: "#1C1917", minHeight: 36 };
     const btnActive = { ...btnChoice, background: "#FFFBEB", borderColor: "#FCD34D", color: "#92400E" };
-    // Auto-fill empty fields on first render
-    const autoFilled = [];
-    if (mergePiece) {
-      for (const key of Object.keys(LABELS)) {
-        if (!mergePiece[key] && ex[key]) {
-          updatePiece(mergeData.pieceId, p => ({ ...p, [key]: ex[key] }));
-          autoFilled.push(LABELS[key]);
-        }
-      }
-      // Auto-fill empty orchestre sections
-      if (ex.orchestre) {
-        for (const sec of ["bois", "cuivres", "cordes", "autres"]) {
-          const cur = mergePiece.orchestre?.[sec] || [];
-          const aiItems = ex.orchestre[sec] || [];
-          if (cur.length === 0 && aiItems.length > 0) {
-            updatePiece(mergeData.pieceId, p => ({
-              ...p,
-              orchestre: { ...(p.orchestre || { bois: [], cuivres: [], cordes: [], autres: [] }), [sec]: aiItems },
-            }));
-            autoFilled.push(`Orchestre ${sec}`);
-          }
-        }
-      }
-      // Auto-fill empty percu poles
-      if (ex.percus) {
-        const extractNum = (nom) => { const m = nom.match(/(\d+)/); return m ? parseInt(m[1]) : null; };
-        for (const aiPole of ex.percus) {
-          const aiNum = extractNum(aiPole.nom);
-          const existing = mergePiece.percus.find(p => {
-            if (p.nom.toLowerCase() === aiPole.nom.toLowerCase()) return true;
-            const pNum = extractNum(p.nom);
-            return aiNum !== null && pNum !== null && aiNum === pNum;
-          });
-          if (!existing || existing.items.length === 0) {
-            if (!existing) {
-              updatePiece(mergeData.pieceId, p => ({
-                ...p, percus: [...p.percus, { id: `p${Date.now()}_${Math.random().toString(36).slice(2,5)}`, nom: aiPole.nom, items: aiPole.items }],
-              }));
-            } else {
-              updatePiece(mergeData.pieceId, p => ({
-                ...p, percus: p.percus.map(r => r.id === existing.id ? { ...r, items: aiPole.items } : r),
-              }));
-            }
-            autoFilled.push(aiPole.nom);
-          }
-        }
-      }
-    }
-    // Now show only fields that need a choice (both have values and they differ)
+
+    // Fields where both sides have a value and they differ — user must choose
     const needsChoice = Object.keys(LABELS).filter(key => {
       const cur = mergePiece?.[key] || "";
       const ai = ex[key] || "";
@@ -841,7 +853,6 @@ export default function App() {
       const ai = ex.orchestre[sec] || [];
       return cur.length > 0 && ai.length > 0 && JSON.stringify(cur) !== JSON.stringify(ai);
     }) : [];
-    const extractNum = (nom) => { const m = nom.match(/(\d+)/); return m ? parseInt(m[1]) : null; };
     const percuNeedsChoice = (ex.percus || []).filter(aiPole => {
       const aiNum = extractNum(aiPole.nom);
       const existing = mergePiece?.percus.find(p => {
