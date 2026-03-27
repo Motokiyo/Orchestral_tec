@@ -28,44 +28,50 @@ export default async function handler(req, res) {
   const base64 = image.replace(/^data:image\/\w+;base64,/, "");
   const mimeType = image.match(/^data:(image\/\w+);/)?.[1] || "image/jpeg";
 
-  const prompt = `Tu es un assistant spécialisé dans l'extraction de données de plans de scène d'orchestre.
+  const prompt = `Tu es un régisseur d'orchestre professionnel (20 ans Radio France/Philharmonie). Tu lis des plans de scène orchestraux comme un expert du métier.
 
-Analyse cette image de plan de scène et extrais les informations suivantes au format JSON strict :
+PROCÈDE EN 6 ÉTAPES :
+1. OBSERVER : structure du document — cartouche info (haut), nomenclature (marge), plan de placement (vue dessus), légende.
+2. IDENTIFIER LE STYLE : compositeur → baroque (<1750) / classique (1750-1830) / romantique (1830-1910) / contemporain (>1950). Adapte ton interprétation.
+3. CHERCHER LA NOMENCLATURE DANIELS : format Bois/Cuivres/Percus/Cordes. Séparateurs : points (2.2.2.2) ou tirets (0-1-0-1). Normalise en points.
+   - Bois : Fl.Hb.Cl.Bn | Cuivres : Cor.Tp.Tb.Tuba | Percus : Timb.Percu.Hp.Clav [spécif] | Cordes : Vl1.Vl2.Alt.Vlc.CB
+4. DÉCODER DANIELS PERCUS (W.X.Y.Z) : W=Timbaliers, X=Percussionnistes, Y=Harpes→orchestre.autres, Z=Claviers→orchestre.autres. Crochets [Cel/Pno] = quels claviers.
+5. LIRE LE TEXTE ÉCRIT : effectifs explicites, annotations, noms.
+6. CROISER : Daniels > Texte > Visuel. En cas de conflit, priorité dans cet ordre.
 
+ABRÉVIATIONS (FR/EN/DE) :
+Fl/Flûte/Flöte, Picc/Petite flûte, Hb/Ob/Hautbois, CA/Cor anglais/Englischhorn, Cl/Clarinette/Klarinette, Bcl/Clarinette basse, Fg/Bn/Basson/Fagott, Cbn/Contrebasson/Kontrafagott, Cor/Hn/Horn, Tp/Trp/Trompette, Tb/Tbn/Trombone/Posaune/Pos, Tuba, Vl/Vn/Violon/Geige, Vla/Va/Alto/Bratsche, Vlc/Vc/Violoncelle/Cello, CB/Cb/DB/Kb/Contrebasse/Kontrabass, Hp/Harpe, Pno/Piano/Klavier, Cel→CONTEXTE(voir règle), Org/Orgue, Clav/Clavecin/Cembalo.
+Baroque : Dessus, Tailles, Viole, Violone, Théorbe → GARDER tels quels.
+
+RÈGLES CRITIQUES :
+• Timbalier = poste SÉPARÉ des Percu. Ne JAMAIS mélanger.
+• Chaque timbale = 1 item séparé ("Timbale 1", "Timbale 2"...), pas "4 Timbales".
+• W=0 dans Daniels → pas de pôle Timbalier.
+• "Cel" entre crochets [Cel] ou près claviers/percus = Célesta. "Cel" dans section cordes = Violoncelle. VÉRIFIER LE CONTEXTE.
+• Baroque : clavecin/orgue → orchestre.continuo (pas orchestre.autres). Remplir continuo si basse continue visible.
+• "Direction" = chef d'orchestre.
+• Si illisible/ambigu : NE PAS inventer. Mettre "" ou [].
+
+EXEMPLES :
+Ex1 : "0-1-0-1 / 0-2-0-0 / 1-0-0-2" + Purcell → baroque. Bois: 1Hb, 1Bn. Cuivres: 2Trp naturelles. Percus: 1Timb, 0Percu, 0Hp, 2 claviers continuo (orgue+clavecin).
+Ex2 : "2.2.2.2 / 4.2.3.1 / 1.3.2.1 [Cel/Pno]" + Mahler → romantique. 1Timbalier, 3Percu, 2Harpes, Célesta+Piano dans autres.
+
+OUTPUT JSON STRICT (sans markdown, sans backticks) :
 {
-  "titre": "titre de la pièce ou du concert",
-  "compositeur": "nom du compositeur",
-  "duree": "durée (ex: 25')",
-  "salle": "nom de la salle / lieu",
-  "chef": "nom du chef d'orchestre (peut être indiqué comme Direction)",
-  "date": "date du concert",
-  "effectif": "notation Daniels si visible (ex: 3.3.3.3 - 4.3.3.1 - 1.3.1.1 - 14.12.10.8.6)",
+  "titre": "", "compositeur": "", "duree": "", "salle": "", "chef": "", "date": "",
+  "effectif": "notation Daniels normalisée en points",
   "orchestre": {
-    "bois": ["3 Flûtes", "3 Hautbois", ...],
-    "cuivres": ["4 Cors", "3 Trompettes", ...],
-    "cordes": ["16 Violons I", "14 Violons II", ...],
-    "autres": ["2 Harpes", "Piano", ...]
+    "bois": ["3 Flûtes", ...],
+    "cuivres": ["4 Cors", ...],
+    "cordes": ["16 Violons I", ...],
+    "autres": ["2 Harpes", "Célesta", ...]
   },
   "percus": [
-    {
-      "nom": "Timbalier",
-      "items": [{"cat": "Timbales & Peaux", "nom": "4 Timbales"}]
-    },
-    {
-      "nom": "Percu 1",
-      "items": [
-        {"cat": "Claviers", "nom": "Vibraphone"},
-        {"cat": "Accessoires", "nom": "Triangle"}
-      ]
-    }
+    {"nom": "Timbalier", "items": [{"cat": "Timbales & Peaux", "nom": "Timbale 1"}, ...]},
+    {"nom": "Percu 1", "items": [{"cat": "Claviers", "nom": "Vibraphone"}, {"cat": "Accessoires", "nom": "Triangle"}]}
   ]
 }
-
-Règles :
-- Ne retourne QUE le JSON, sans texte autour, sans backticks markdown.
-- Si un champ n'est pas visible, mets une chaîne vide "" ou un tableau vide [].
-- Pour les catégories d'instruments de percussion : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pièces", "Stands & supports", "Baguettes & spécial"
-- "Direction" = chef d'orchestre.`;
+Catégories percus : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pièces", "Stands & supports", "Baguettes & spécial"`;
 
   const body = {
     contents: [{
