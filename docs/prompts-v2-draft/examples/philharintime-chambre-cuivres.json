@@ -1,0 +1,40 @@
+{
+  "_meta": {
+    "description": "Exemple référence — PHILHAR'INTIME (chambre cuivres)",
+    "source": "Analyse manuelle 27/03/2026",
+    "style": "classique/romantique (chambre)",
+    "notation_daniels": "1.3.3.1 / 1.0.0.1"
+  },
+  "titre": "PHILHAR'INTIME",
+  "compositeur": "",
+  "style": "classique",
+  "effectif": "1.3.3.1 / 1.0.0.1",
+  "effectif_decode": {
+    "bois": "1 Fl (ou Hb?), 3 Cl (ou Cor?), 3 Tb (ou Bn?), 1 Tuba — à vérifier sur plan",
+    "cuivres_possible": "1.3.3.1 pourrait être cuivres : 1 Cor, 3 Tp, 3 Tb, 1 Tuba",
+    "percussions": "1 Timbalier, 0 Percussionniste, 0 Harpe, 1 Clavier",
+    "notes": "Format chambre, interprétation dépend du contexte visuel du plan"
+  },
+  "orchestre": {
+    "bois": [],
+    "cuivres": ["1 Cor", "3 Trompettes", "3 Trombones", "1 Tuba"],
+    "cordes": [],
+    "autres": ["1 Clavier (à identifier)"],
+    "continuo": []
+  },
+  "percus": [
+    {
+      "nom": "Timbalier",
+      "items": [
+        {"cat": "Timbales & Peaux", "nom": "Timbale 1"},
+        {"cat": "Timbales & Peaux", "nom": "Timbale 2"}
+      ]
+    }
+  ],
+  "_notes": [
+    "Formation chambre avec cuivres dominants",
+    "1.0.0.1 = 1 timbalier, 0 percussionniste, 0 harpe, 1 clavier",
+    "Le clavier (Z=1) doit être identifié sur le plan",
+    "Pas de cordes ni de bois dans cette formation"
+  ]
+}

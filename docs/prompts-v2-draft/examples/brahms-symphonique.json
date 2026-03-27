@@ -1,0 +1,41 @@
+{
+  "_meta": {
+    "description": "Exemple référence — Brahms symphonique (romantique)",
+    "source": "Analyse manuelle 27/03/2026",
+    "style": "romantique",
+    "notation_daniels": "2.2.2.2 / 4.2.3.1 / 1.0.0.0 - cordes"
+  },
+  "titre": "Brahms — Programme symphonique",
+  "compositeur": "Johannes Brahms",
+  "style": "romantique",
+  "effectif": "2.2.2.2 / 4.2.3.1 / 1.0.0.0",
+  "effectif_decode": {
+    "bois": "2 Fl, 2 Hb, 2 Cl, 2 Bn",
+    "cuivres": "4 Cor, 2 Tp, 3 Tb, 1 Tuba",
+    "percussions": "1 Timbalier, 0 Percussionniste, 0 Harpe, 0 Clavier",
+    "cordes": "effectif non spécifié dans la nomenclature"
+  },
+  "orchestre": {
+    "bois": ["2 Flûtes", "2 Hautbois", "2 Clarinettes", "2 Bassons"],
+    "cuivres": ["4 Cors", "2 Trompettes", "3 Trombones", "1 Tuba"],
+    "cordes": [],
+    "autres": [],
+    "continuo": []
+  },
+  "percus": [
+    {
+      "nom": "Timbalier",
+      "items": [
+        {"cat": "Timbales & Peaux", "nom": "Timbale 1"},
+        {"cat": "Timbales & Peaux", "nom": "Timbale 2"},
+        {"cat": "Timbales & Peaux", "nom": "Timbale 3"},
+        {"cat": "Timbales & Peaux", "nom": "Timbale 4"}
+      ]
+    }
+  ],
+  "_notes": [
+    "Notation 1.0.0.0 = 1 timbalier seul, pas de percussionniste additionnel",
+    "Brahms romantique : pas de harpe, pas de célesta, pas de piano",
+    "Tuba non systématique chez Brahms (dépend de la symphonie)"
+  ]
+}

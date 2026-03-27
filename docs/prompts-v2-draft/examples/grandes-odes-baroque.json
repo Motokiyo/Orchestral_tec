@@ -1,0 +1,46 @@
+{
+  "_meta": {
+    "description": "Exemple référence — GRANDES ODES (baroque, Purcell/Haendel)",
+    "source": "Analyse manuelle 27/03/2026",
+    "style": "baroque",
+    "notation_daniels": "0-1-0-1 / 0-2-0-0 / 1-0-0-2",
+    "notation_separateur": "tirets (variante baroque fréquente)"
+  },
+  "titre": "GRANDES ODES",
+  "compositeur": "",
+  "style": "baroque",
+  "effectif": "0.1.0.1 / 0.2.0.0 / 1.0.0.2",
+  "effectif_original": "0-1-0-1 / 0-2-0-0 / 1-0-0-2",
+  "effectif_decode": {
+    "bois": "0 Fl, 1 Hb, 0 Cl, 1 Bn — bois baroque minimal",
+    "cuivres": "0 Cor, 2 Tp (trompettes naturelles), 0 Tb, 0 Tuba",
+    "percussions": "1 Timbalier, 0 Percussionniste, 0 Harpe, 2 Claviers (orgue + clavecin)",
+    "notes": "Tirets normalisés en points dans effectif principal"
+  },
+  "orchestre": {
+    "bois": ["1 Hautbois"],
+    "cuivres": ["2 Trompettes naturelles"],
+    "cordes": ["Dessus", "Tailles", "Viole", "Violone"],
+    "autres": [],
+    "continuo": ["Orgue", "Clavecin", "Théorbe"]
+  },
+  "percus": [
+    {
+      "nom": "Timbalier",
+      "items": [
+        {"cat": "Timbales & Peaux", "nom": "Timbale 1"},
+        {"cat": "Timbales & Peaux", "nom": "Timbale 2"}
+      ]
+    }
+  ],
+  "_notes": [
+    "FORMAT TIRETS : 0-1-0-1 au lieu de 0.1.0.1 — variante fréquente en baroque",
+    "Le prompt doit normaliser les tirets en points dans le JSON final",
+    "CORDES BAROQUES : Dessus, Tailles, Viole, Violone — garder tels quels",
+    "Pas de Violon I/II/Alto/Violoncelle modernes → vocabulaire baroque",
+    "Théorbe dans le continuo (instrument à cordes pincées)",
+    "2 CLAVIERS (Z=2) : Orgue + Clavecin → dans continuo car baroque, PAS dans orchestre.autres",
+    "0 Clarinette (inexistante à l'époque baroque), 0 Cor d'harmonie, 0 Trombone, 0 Tuba",
+    "Trompettes = trompettes naturelles (sans pistons)"
+  ]
+}

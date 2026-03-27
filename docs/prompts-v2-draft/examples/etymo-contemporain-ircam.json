@@ -1,0 +1,47 @@
+{
+  "_meta": {
+    "description": "Exemple référence — ETYMO (contemporain IRCAM, création)",
+    "source": "Analyse manuelle 27/03/2026",
+    "style": "contemporain",
+    "notation_daniels": "Non-standard (création avec électronique)"
+  },
+  "titre": "ETYMO",
+  "compositeur": "",
+  "style": "contemporain",
+  "effectif": "",
+  "effectif_decode": {
+    "percussions": "2 Percussionnistes + 1 Harpe (pas de timbalier)",
+    "electronique": "IRCAM / live electronics",
+    "notes": "Nomenclature non-standard, effectif de création"
+  },
+  "orchestre": {
+    "bois": [],
+    "cuivres": [],
+    "cordes": [],
+    "autres": ["Électronique IRCAM", "1 Harpe"],
+    "continuo": []
+  },
+  "percus": [
+    {
+      "nom": "Percu 1",
+      "items": [
+        {"cat": "Claviers", "nom": "(à déterminer sur plan)"},
+        {"cat": "Accessoires", "nom": "(à déterminer sur plan)"}
+      ]
+    },
+    {
+      "nom": "Percu 2",
+      "items": [
+        {"cat": "Claviers", "nom": "(à déterminer sur plan)"},
+        {"cat": "Accessoires", "nom": "(à déterminer sur plan)"}
+      ]
+    }
+  ],
+  "_notes": [
+    "Pas de timbalier → W=0 dans la notation Daniels",
+    "Électronique IRCAM = live electronics, à noter dans orchestre.autres",
+    "2 percussionnistes avec setups spéciaux (contemporain)",
+    "1 harpe présente",
+    "Nomenclature peut être absente ou non-standard pour les créations"
+  ]
+}
