@@ -11,6 +11,67 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).href;
 
+const DEBUG_PDF = true;
+
+const KNOWN_COMPOSERS_SET = new Set([
+  "BACH", "MOZART", "BEETHOVEN", "HAYDN", "SCHUBERT", "SCHUMANN", "BRAHMS",
+  "WAGNER", "MENDELSSOHN", "BRUCKNER", "MAHLER", "R. STRAUSS", "DVORAK",
+  "TCHAIKOVSKY", "RACHMANINOV", "PROKOFIEV", "SHOSTAKOVICH", "STRAVINSKY",
+  "BARTOK", "DEBUSSY", "RAVEL", "FAURÉ", "SAINT-SAËNS", "BERLIOZ", "BIZET",
+  "MASSENET", "POULENC", "MESSIAEN", "DUTILLEUX", "BOULEZ", "LIGETI",
+  "STOCKHAUSEN", "BERIO", "NONO", "XENAKIS", "GRISEY", "MURAIL", "DUFOURT",
+  "KURTÁG", "LACHENMANN", "SCELSI", "FELDMAN", "CAGE", "ADAMS", "GLASS",
+  "REICH", "PÄRT", "GÓRECKI", "PENDERECKI", "LUTOSLAWSKI", "SIBELIUS",
+  "GRIEG", "NIELSEN", "ELGAR", "BRITTEN", "VAUGHAN WILLIAMS", "HOLST",
+  "WALTON", "VERDI", "ROSSINI", "PUCCINI", "DONIZETTI", "BELLINI",
+  "MONTEVERDI", "RIMSKY-KORSAKOV", "MUSSORGSKY", "BORODIN", "GLINKA",
+  "SCRIABIN", "JANÁČEK", "SMETANA", "MARTINŮ", "KODÁLY", "ENESCU",
+  "WEBERN", "SCHOENBERG", "BERG", "ZEMLINSKY", "KORNGOLD", "COPLAND",
+  "BERNSTEIN", "BARBER", "IVES", "GERSHWIN", "VARÈSE", "SAARIAHO",
+  "LINDBERG", "UNSUK CHIN", "HAAS", "HANDEL", "HÄNDEL", "VIVALDI",
+  "TELEMANN", "RAMEAU", "LULLY", "COUPERIN", "PURCELL", "CORELLI",
+  "ALBINONI", "PERGOLESI", "GLUCK", "WEBER", "LISZT", "CHOPIN",
+  "PAGANINI", "FRANCK", "LALO", "CHABRIER", "DELIBES", "DUKAS",
+  "MAGNARD", "D'INDY", "CHAUSSON", "SATIE", "ROUSSEL", "HONEGGER",
+  "MILHAUD", "JOLIVET", "IBERT", "SCHMITT", "KOECHLIN", "CAPLET",
+  "ENESCO", "HINDEMITH", "ORFF", "WEILL", "EISLER", "HARTMANN",
+  "ZIMMERMANN", "HENZE", "RIHM", "WIDMANN", "MUNDRY",
+  "FURRER", "SCIARRINO", "NØRGÅRD", "ABRAHAMSEN", "SØRENSEN",
+  "SALONEN", "RAUTAVAARA", "NORDHEIM",
+  "TIPPETT", "MAXWELL DAVIES", "BIRTWISTLE", "TURNAGE", "ADÈS",
+  "BENJAMIN", "KNUSSEN", "HARVEY", "FERNEYHOUGH", "FINNISSY",
+  "CHIN", "HOSOKAWA", "TAKEMITSU", "FUJIKURA",
+  "TAN DUN", "CHEN", "ZHOU LONG", "BRIGHT SHENG",
+  "PIAZZOLLA", "GINASTERA", "VILLA-LOBOS", "REVUELTAS", "CHÁVEZ",
+  "BARRIOS", "CARTER", "ELLIOTT CARTER", "BABBITT", "WUORINEN",
+  "CRUMB", "DRUCKMAN", "TOWER", "CORIGLIANO", "ROUSE",
+  "HIGDON", "MACKEY", "JOHN ADAMS", "THOMAS ADÈS", "MANOURY",
+  "RESPIGHI", "MASCAGNI", "LEONCAVALLO", "PONCHIELLI", "CATALANI",
+  "WOLF", "BRUCH", "SPOHR", "HUMPERDINCK", "PFITZNER",
+  "SZYMANOWSKI", "MONIUSZKO", "WEINBERG", "SCHNITTKE", "GUBAIDULINA",
+  "USTVOLSKAYA", "KABALEVSKY", "KHACHATURIAN", "GLAZUNOV", "TANEYEV",
+  "ARENSKY", "BALAKIREV", "CUI", "TCHÉREPNINE", "LIADOV",
+  "FALLA", "GRANADOS", "ALBÉNIZ", "RODRIGO", "TURINA",
+  "DELIUS", "BAX", "BLISS", "IRELAND",
+  "FRANÇAIX", "TOMASI", "ESCAICH", "DUSAPIN",
+  "JOLAS", "PESSON"
+].map(n => n.toLowerCase()));
+
+function findKnownComposer(text) {
+  const words = text.replace(/[,;:()[\]{}]/g, " ").split(/\s+/).filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    // Try 3-word, 2-word, 1-word combos
+    for (let len = 3; len >= 1; len--) {
+      if (i + len > words.length) continue;
+      const candidate = words.slice(i, i + len).join(" ").toLowerCase();
+      if (KNOWN_COMPOSERS_SET.has(candidate)) {
+        return words.slice(i, i + len).join(" ");
+      }
+    }
+  }
+  return null;
+}
+
 // ══════════════════════════════════════════
 // MAIN EXPORT
 // ══════════════════════════════════════════
@@ -26,10 +87,13 @@ export async function extractFromPdf(file) {
     const tc = await page.getTextContent();
     for (const item of tc.items) {
       if (item.str && item.str.trim()) {
+        // Skip text rotated 90° (transform[1] or transform[2] significantly non-zero)
+        const t = item.transform;
+        if (Math.abs(t[1]) > 0.5 || Math.abs(t[2]) > 0.5) continue;
         allItems.push({
           str: item.str,
-          x: Math.round(item.transform[4]),
-          y: Math.round(item.transform[5]),
+          x: Math.round(t[4]),
+          y: Math.round(t[5]),
           page: i,
         });
       }
@@ -39,7 +103,7 @@ export async function extractFromPdf(file) {
   // Sort top-to-bottom, left-to-right
   allItems.sort((a, b) => {
     if (a.page !== b.page) return a.page - b.page;
-    if (Math.abs(a.y - b.y) < 4) return a.x - b.x;
+    if (Math.abs(a.y - b.y) < 6) return a.x - b.x;
     return b.y - a.y;
   });
 
@@ -48,7 +112,7 @@ export async function extractFromPdf(file) {
   let curLine = [];
   let curY = null;
   for (const item of allItems) {
-    if (curY !== null && Math.abs(item.y - curY) > 4) {
+    if (curY !== null && Math.abs(item.y - curY) > 6) {
       if (curLine.length) lines.push(curLine.join(" "));
       curLine = [];
     }
@@ -60,10 +124,12 @@ export async function extractFromPdf(file) {
   const fullText = lines.join("\n");
   console.log("[OrkMap] Lines:", lines);
 
-  // ── 2. Render page 1 as image for plan display ──
+  // ── 2. Render all pages as images for plan display ──
   let planDataUrl = null;
+  let planDataUrls = [];
   try {
-    planDataUrl = await renderPageToImage(pdf);
+    planDataUrls = await renderAllPages(pdf);
+    planDataUrl = planDataUrls[0] || null;
   } catch (err) {
     console.warn("[OrkMap] Could not render plan:", err);
   }
@@ -81,10 +147,12 @@ export async function extractFromPdf(file) {
     orchestre: null,  // { bois: [...], cuivres: [...], cordes: [...], autres: [...] }
     percus: [],
     planDataUrl,
+    planDataUrls,
   };
 
   const format = detectFormat(lines);
   console.log("[OrkMap] Detected format:", format);
+  if (DEBUG_PDF) console.log("[OrkMap][DEBUG] Format:", format, "| Lines count:", lines.length);
 
   if (format === "radiofrance") {
     parseRadioFrance(lines, result);
@@ -92,9 +160,18 @@ export async function extractFromPdf(file) {
     parseEic(lines, result);
   } else if (format === "lamoureux") {
     parseLamoureux(lines, result);
+  } else if (format === "orchestredeparis") {
+    parseOrchDeParis(lines, result);
+  } else if (format === "cnsm") {
+    parseCnsm(lines, result);
   } else {
     parseGeneric(lines, result);
   }
+
+  if (DEBUG_PDF) console.log("[OrkMap][DEBUG] Extracted fields:", {
+    titre: result.titre, compositeur: result.compositeur, effectif: result.effectif,
+    chef: result.chef, date: result.date, salle: result.salle, percus: result.percus.length,
+  });
 
   if (result.effectif) {
     result.effectifDetail = decodeEffectif(result.effectif);
@@ -150,8 +227,8 @@ export async function extractFromPdf(file) {
   return result;
 }
 
-async function renderPageToImage(pdf) {
-  const page = await pdf.getPage(1);
+async function renderPageToImage(pdf, pageNum = 1) {
+  const page = await pdf.getPage(pageNum);
   const viewport = page.getViewport({ scale: 2 });
   const canvas = document.createElement("canvas");
   canvas.width = viewport.width;
@@ -159,6 +236,19 @@ async function renderPageToImage(pdf) {
   const ctx = canvas.getContext("2d");
   await page.render({ canvasContext: ctx, viewport }).promise;
   return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+async function renderAllPages(pdf) {
+  const urls = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    try {
+      const url = await renderPageToImage(pdf, i);
+      urls.push(url);
+    } catch (err) {
+      console.warn(`[OrkMap] Could not render page ${i}:`, err);
+    }
+  }
+  return urls;
 }
 
 // ══════════════════════════════════════════
@@ -181,6 +271,16 @@ function detectFormat(lines) {
   // Lamoureux / generic with effectif: has "Effectif" or "E ff ectif" with slash notation
   if (/[Ee]\s*ff\s*ectif\s*:/i.test(joined) && /\d[\d\-]+\/\d/.test(joined)) {
     return "lamoureux";
+  }
+
+  // Orchestre de Paris
+  if (/orchestre\s*de\s*paris/i.test(joined)) {
+    return "orchestredeparis";
+  }
+
+  // CNSM
+  if (/cnsm|conservatoire\s*national\s*sup/i.test(joined)) {
+    return "cnsm";
   }
 
   // Short P1: P2: format (could be Radio France without full cartouche)
@@ -367,11 +467,61 @@ function parseGeneric(lines, result) {
   const chefMatch = all.match(/Dir(?:ection)?\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)+)/i);
   if (chefMatch) result.chef = chefMatch[1].trim();
 
+  // French date
   const dateMatch = all.match(/(\d{1,2}\s+(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)\s+\d{4})/i);
   if (dateMatch) result.date = dateMatch[1];
 
+  // Also try JJ/MM/AAAA format
+  if (!result.date) {
+    const dateSlash = all.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+    if (dateSlash) result.date = dateSlash[1];
+  }
+
+  // Daniels notation — flexible regex supporting mixed slash/dash/cordes format
+  const danielsMatch = all.match(
+    /(\d+\.[\d.]+\d\.?\s*[\/\-–]\s*\d+\.[\d.]+\d\.?(?:\s*[\/\-–]\s*(?:cordes?\s+)?\d+\.[\d.]+\d\.?(?:\s*\[[^\]]*\])?)*)/i
+  );
+  if (danielsMatch) {
+    result.effectif = danielsMatch[1].trim().replace(/cordes?\s+/gi, "");
+  }
+
+  // Also try standard dash-separated Daniels
+  if (!result.effectif) {
+    const nomMatch = all.match(/([\d]+(?:\.[\d]+){2,}(?:\s*[-–]\s*[\d]+(?:\.[\d]+){2,}(?:\s*\[[^\]]*\])?)+)/);
+    if (nomMatch) result.effectif = nomMatch[1].trim();
+  }
+
+  // Known composer search
+  if (!result.compositeur) {
+    const found = findKnownComposer(all);
+    if (found) result.compositeur = found;
+  }
+
   // Try to find any perc sections
   parsePercuSections(lines, result, /^\s*(?:Perc(?:u|ussion)?\s*|P)(\d+)\s*:\s*/i);
+
+  // Orchestre from plan labels
+  if (!result.orchestre) {
+    result.orchestre = extractOrchestreFromLabels(lines);
+  }
+}
+
+// ══════════════════════════════════════════
+// ORCHESTRE DE PARIS FORMAT
+// ══════════════════════════════════════════
+
+function parseOrchDeParis(lines, result) {
+  // Reuses Radio France logic — similar cartouche layout
+  parseRadioFrance(lines, result);
+}
+
+// ══════════════════════════════════════════
+// CNSM FORMAT
+// ══════════════════════════════════════════
+
+function parseCnsm(lines, result) {
+  // Similar to generic but with CNSM-specific patterns
+  parseGeneric(lines, result);
 }
 
 // ══════════════════════════════════════════
@@ -453,6 +603,18 @@ function parsePercuFromJoinedLines(lines, result) {
   }
 }
 
+function romanToInt(str) {
+  const map = { I: 1, V: 5, X: 10, L: 50, C: 100 };
+  const s = str.toUpperCase();
+  let result = 0;
+  for (let i = 0; i < s.length; i++) {
+    const cur = map[s[i]] || 0;
+    const next = map[s[i + 1]] || 0;
+    result += cur < next ? -cur : cur;
+  }
+  return result || 1;
+}
+
 /**
  * Flexible: finds "P1:", "P2:", "Perc 1:" etc. ANYWHERE in a line (start, middle, end)
  * Then collects the following lines as instrument items until the next section or cartouche.
@@ -461,10 +623,12 @@ function parsePercuSectionsFlexible(lines, result) {
   // Find all lines containing a perc header
   const sections = [];
   for (let i = 0; i < lines.length; i++) {
-    // Match P1: or Perc 1: anywhere in line
-    const m = lines[i].match(/(?:^|\s)(?:P|Perc\s*)(\d+)\s*:\s*/i);
+    // Match P1: or Perc 1: or Percu I: or Percussion 2: or Timbalier: anywhere in line
+    const m = lines[i].match(/(?:^|\s)(?:P|Perc(?:u|ussion|ussions?)?\s*|Timbalier\s*)(\d+|I{1,3}V?|IV|V?I{0,3})\s*:\s*/i);
     if (m) {
-      sections.push({ num: parseInt(m[1]), lineIdx: i });
+      const numStr = m[1];
+      const num = /^\d+$/.test(numStr) ? parseInt(numStr) : romanToInt(numStr);
+      sections.push({ num, lineIdx: i });
     }
   }
   if (sections.length === 0) return;
@@ -595,6 +759,18 @@ const KNOWN_INSTRUMENTS = [
   "grelots", "tambourin", "tambour de basque",
   "polystirène", "polystirènes", "gong d'opéra", "gong opera",
   "gc",
+  "tambour militaire", "conga", "congas", "tumba", "quinto",
+  "timbale baroque", "glockenspiel à pédale", "glockenspiel valise", "glock valise",
+  "célesta", "cloche église", "cloche d'église",
+  "cymbale charleston", "hi-hat", "charley", "cymbale splash",
+  "arbre à cymbales", "piquininos", "pikininos",
+  "plaque tonnerre", "temple block", "temple blocks",
+  "tambour de bois", "spring coil", "lion's roar", "lions roar",
+  "tambour à friction", "machine à vent",
+  "bell tree", "bamboo tree", "bambou chime", "bamboo chime", "chime",
+  "mark tree", "boobam", "darbouka", "cajon", "djembe", "pandeiro",
+  "vibraslap", "cabasa", "sifflet", "sirène", "flexatone", "kalimba",
+  "ocean drum", "rain stick", "waterphone", "wind chimes",
 ];
 
 function isKnownInstrument(text) {
@@ -742,7 +918,7 @@ function formatEntry(name, count) {
   return `${count} ${pluralize(name, count)}`;
 }
 
-function orchestreFromEffectif(detail) {
+export function orchestreFromEffectif(detail) {
   const orchestre = { bois: [], cuivres: [], cordes: [], autres: [] };
 
   if (detail.bois) {
@@ -791,16 +967,29 @@ function orchestreFromEffectif(detail) {
 //
 // Separators: "/" or " - " between groups, "." or "-" within groups
 
-function decodeEffectif(notation) {
-  const clean = notation.trim();
-  // Strip bracket contents before detecting separator (brackets may contain "/" like [Cel/Pno])
+export function decodeEffectif(notation) {
+  let clean = notation.trim()
+    .replace(/\.(?=\s*[\/\-–])/g, "")
+    .replace(/\.$/g, "")
+    .replace(/\s*-\s*cordes?\s+/gi, " - ")
+    .replace(/\s*-\s*strings?\s+/gi, " - ");
   const withoutBrackets = clean.replace(/\[[^\]]*\]/g, "").trim();
 
   // Detect separator style and split into 4 groups
   let groups;
-  if (/\d\.\d/.test(withoutBrackets) && /\d\s+[\-\u2013\u2014]\s+\d/.test(withoutBrackets)) {
+  if (withoutBrackets.includes("/") && /\d\s*[\-\u2013\u2014]\s*\d/.test(withoutBrackets)) {
+    // Mixed slash + dash format: "3.3.3.3/4.3.3.1 - 14.12.10.8.6"
+    const slashParts = clean.split("/").map(g => g.trim());
+    const lastPart = slashParts[slashParts.length - 1];
+    const dashInLast = lastPart.match(/^(.+?)\s*[\-\u2013\u2014]\s*(.+)$/);
+    if (dashInLast) {
+      groups = [...slashParts.slice(0, -1), dashInLast[1].trim(), dashInLast[2].trim()];
+    } else {
+      groups = slashParts;
+    }
+  } else if (/\d\.\d/.test(withoutBrackets) && /\d\s*[\-\u2013\u2014]\s*\d/.test(withoutBrackets)) {
     // Dot notation with dash separators: "3.3.3.3 - 4.3.3.1 - 2.4.0.1 - 14.12.10.8.6"
-    groups = clean.split(/\s+[\-\u2013\u2014]\s+/).map(g => g.trim());
+    groups = clean.split(/\s*[\-\u2013\u2014]\s*(?=\d)/).map(g => g.trim());
   } else if (withoutBrackets.includes("/")) {
     // Slash notation: "1-1-1-2sax/2-2-2-1/1-0-1-0/6-4-2-2-1"
     groups = clean.split("/").map(g => g.trim());
@@ -930,4 +1119,46 @@ function addSummary(summary, group) {
       summary.push(formatEntry(name, count));
     }
   }
+}
+
+// ══════════════════════════════════════════
+// GEMINI AI EXTRACTION
+// ══════════════════════════════════════════
+
+export async function extractWithGemini(imageDataUrl) {
+  const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
+  if (!apiKey) throw new Error("Clé API Google manquante (VITE_GOOGLE_API_KEY)");
+  const base64 = imageDataUrl.replace(/^data:image\/\w+;base64,/, "");
+  const mimeType = imageDataUrl.match(/^data:(image\/\w+);/)?.[1] || "image/jpeg";
+  const prompt = `Tu es un assistant spécialisé dans l'extraction de données de plans de scène d'orchestre.
+Analyse cette image et extrais au format JSON strict :
+{"titre":"","compositeur":"","duree":"","salle":"","chef":"","date":"","effectif":"notation Daniels si visible","orchestre":{"bois":[],"cuivres":[],"cordes":[],"autres":[]},"percus":[{"nom":"Percu 1","items":[{"cat":"Claviers","nom":"Vibraphone"}]}]}
+Règles : JSON seul, pas de backticks. Champs vides = "". Categories percus : "Claviers","Timbales & Peaux","Accessoires","Grosses pièces","Stands & supports","Baguettes & spécial". Direction = chef.`;
+  const body = {
+    contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }],
+    generationConfig: { temperature: 0.1, maxOutputTokens: 4096 }
+  };
+  const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+  });
+  if (!resp.ok) throw new Error(`Gemini API error ${resp.status}`);
+  const data = await resp.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  const jsonStr = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+  const parsed = JSON.parse(jsonStr);
+  const result = {
+    titre: parsed.titre || "", compositeur: parsed.compositeur || "",
+    duree: parsed.duree || "", salle: parsed.salle || "",
+    chef: parsed.chef || "", date: parsed.date || "",
+    effectif: parsed.effectif || "", effectifDetail: null,
+    orchestre: parsed.orchestre || null,
+    percus: (parsed.percus || []).map(p => ({
+      nom: p.nom || "Percu", items: (p.items || []).map(it => ({ cat: it.cat || "Accessoires", nom: it.nom || "" })).filter(it => it.nom)
+    })),
+  };
+  if (result.effectif) {
+    result.effectifDetail = decodeEffectif(result.effectif);
+    if (result.effectifDetail && !result.orchestre) result.orchestre = orchestreFromEffectif(result.effectifDetail);
+  }
+  return result;
 }

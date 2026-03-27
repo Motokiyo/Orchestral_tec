@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor } from "./utils.js";
-import { extractFromPdf } from "./pdfParser.js";
+import { extractFromPdf, decodeEffectif, orchestreFromEffectif, extractWithGemini } from "./pdfParser.js";
 import { useConcerts, usePhotos } from "./useStorage.js";
 import { S } from "./styles.js";
 import JSZip from "jszip";
@@ -379,6 +379,11 @@ export default function App() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [cameraMode, setCameraMode] = useState(null);
   const [zoneSelectMode, setZoneSelectMode] = useState(null);
+  const [showArchives, setShowArchives] = useState(false);
+  const [archiveSearch, setArchiveSearch] = useState("");
+  const [archiveModal, setArchiveModal] = useState(null);
+  const [mergeData, setMergeData] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
   const concert = concerts.find((c) => c.id === concertId);
   const pieces = concert ? concert.pieces : [];
@@ -533,7 +538,8 @@ export default function App() {
       if (!file) return;
       setPdfLoading(true);
       try {
-        const data = await extractFromPdf(file);
+        const localData = await extractFromPdf(file);
+        const data = await enrichWithAi(localData);
         const newPiece = {
           id: uid(),
           titre: data.titre || file.name.replace(".pdf", ""),
@@ -546,7 +552,7 @@ export default function App() {
           effectifDetail: data.effectifDetail || null,
           orchestre: data.orchestre || null,
           planDataUrl: data.planDataUrl || null,
-          plans: data.planDataUrl ? [data.planDataUrl] : [],
+          plans: data.planDataUrls?.length > 0 ? data.planDataUrls : (data.planDataUrl ? [data.planDataUrl] : []),
           couleur: "blanc",
           percus: data.percus.length > 0
             ? data.percus.map((p, i) => ({
@@ -599,6 +605,52 @@ export default function App() {
       }
     };
     input.click();
+  }
+
+  async function enrichWithAi(localData) {
+    const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
+    if (!apiKey) return localData;
+    const score = [localData.titre, localData.compositeur, localData.effectif, localData.chef]
+      .filter(Boolean).length + (localData.percus.length > 0 ? 1 : 0);
+    if (score >= 3) return localData;
+    const image = localData.planDataUrls?.[0] || localData.planDataUrl;
+    if (!image) return localData;
+    try {
+      const aiData = await extractWithGemini(image);
+      return {
+        ...localData,
+        titre: localData.titre || aiData.titre || "",
+        compositeur: localData.compositeur || aiData.compositeur || "",
+        duree: localData.duree || aiData.duree || "",
+        salle: localData.salle || aiData.salle || "",
+        chef: localData.chef || aiData.chef || "",
+        date: localData.date || aiData.date || "",
+        effectif: localData.effectif || aiData.effectif || "",
+        effectifDetail: localData.effectifDetail || aiData.effectifDetail || null,
+        orchestre: localData.orchestre || aiData.orchestre || null,
+        percus: localData.percus.length > 0 ? localData.percus : (aiData.percus || []),
+      };
+    } catch (err) {
+      console.warn("[OrkMap] AI enrichment failed:", err.message);
+      return localData;
+    }
+  }
+
+  async function handleAiExtract(targetPieceId) {
+    const targetPiece = pieces.find(p => p.id === targetPieceId);
+    if (!targetPiece || !(targetPiece.plans || []).length) {
+      alert("Ajoutez d'abord un plan à cette pièce.");
+      return;
+    }
+    setAiLoading(true);
+    try {
+      const extracted = await extractWithGemini(targetPiece.plans[0]);
+      setMergeData({ pieceId: targetPieceId, newPages: [], extracted, showMerge: true });
+    } catch (err) {
+      alert("Erreur extraction IA : " + err.message);
+    } finally {
+      setAiLoading(false);
+    }
   }
 
   function fileToDataUrl(file) {
@@ -753,7 +805,7 @@ export default function App() {
             + Nouveau concert
           </button>
 
-          {concerts.map((c, ci) => (
+          {concerts.filter(c => !c.archived).map((c, ci, arr) => (
             <div key={c.id} onClick={() => goConcert(c.id)} style={{ ...S.card("#57534E"), marginBottom: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div style={{ flex: 1 }}>
@@ -766,15 +818,56 @@ export default function App() {
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }} onClick={(e) => e.stopPropagation()}>
                   <span style={{ fontSize: 12, color: "#78716C", fontWeight: 600 }}>{c.pieces.length} pièce{c.pieces.length !== 1 ? "s" : ""}</span>
                   <DragHandle onMove={(dir) => {
-                    if (dir === -1 && ci > 0) setConcerts(prev => { const a = [...prev]; const [m] = a.splice(ci, 1); a.splice(ci - 1, 0, m); return a; });
-                    if (dir === 1 && ci < concerts.length - 1) setConcerts(prev => { const a = [...prev]; const [m] = a.splice(ci, 1); a.splice(ci + 1, 0, m); return a; });
+                    const idx = concerts.findIndex(x => x.id === c.id);
+                    if (dir === -1 && idx > 0) setConcerts(prev => { const a = [...prev]; const [m] = a.splice(idx, 1); a.splice(idx - 1, 0, m); return a; });
+                    if (dir === 1 && idx < concerts.length - 1) setConcerts(prev => { const a = [...prev]; const [m] = a.splice(idx, 1); a.splice(idx + 1, 0, m); return a; });
                   }} />
+                  <button onClick={() => { setConcerts(prev => prev.map(x => x.id === c.id ? { ...x, archived: true } : x)); }}
+                    style={{ background: "none", border: "none", fontSize: 16, color: "#A8A29E", cursor: "pointer", padding: "2px 4px" }} title="Archiver">📦</button>
                   <button onClick={() => { if (confirm("Supprimer ce concert ?")) setConcerts(prev => prev.filter(x => x.id !== c.id)); }}
                     style={{ background: "none", border: "none", fontSize: 16, color: "#A8A29E", cursor: "pointer", padding: "2px 4px" }}>✕</button>
                 </div>
               </div>
             </div>
           ))}
+
+          {/* Archives section */}
+          {concerts.filter(c => c.archived).length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <button onClick={() => setShowArchives(!showArchives)}
+                style={{ ...S.btnSecondary, width: "100%", fontSize: 13, marginBottom: 8 }}>
+                📦 Archives ({concerts.filter(c => c.archived).length}) {showArchives ? "▾" : "▸"}
+              </button>
+              {showArchives && (
+                <>
+                  <input
+                    value={archiveSearch}
+                    onChange={(e) => setArchiveSearch(e.target.value)}
+                    placeholder="Rechercher dans les archives..."
+                    style={{ width: "100%", padding: "8px 10px", fontSize: 13, border: "1px solid #E7E5E4", borderRadius: 8, marginBottom: 8, outline: "none", background: "#FAFAF9" }}
+                  />
+                  {concerts.filter(c => c.archived).filter(c =>
+                    !archiveSearch || [c.titre, c.orchestre, c.lieu, c.chef, c.date].filter(Boolean).join(" ").toLowerCase().includes(archiveSearch.toLowerCase())
+                  ).map(c => (
+                    <div key={c.id} style={{ ...S.card("#A8A29E"), marginBottom: 6, opacity: 0.75 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ flex: 1 }} onClick={() => goConcert(c.id)}>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: "#57534E" }}>{c.titre}</div>
+                          <div style={{ fontSize: 11, color: "#A8A29E" }}>{[c.orchestre, c.lieu, c.date].filter(Boolean).join(" — ")}</div>
+                        </div>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button onClick={() => setConcerts(prev => prev.map(x => x.id === c.id ? { ...x, archived: false } : x))}
+                            style={{ background: "none", border: "none", fontSize: 14, color: "#78716C", cursor: "pointer" }} title="Désarchiver">↩</button>
+                          <button onClick={() => { if (confirm("Supprimer ce concert ?")) setConcerts(prev => prev.filter(x => x.id !== c.id)); }}
+                            style={{ background: "none", border: "none", fontSize: 14, color: "#A8A29E", cursor: "pointer" }}>✕</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1021,6 +1114,13 @@ export default function App() {
               📸 Photo libre
             </button>
           </div>
+
+          {(piece.plans || []).length > 0 && (
+            <button onClick={() => handleAiExtract(piece.id)} disabled={aiLoading}
+              style={{ ...S.btnSecondary, marginBottom: 14, fontSize: 12, padding: "8px 10px", background: aiLoading ? "#F5F5F4" : "#FFFBEB", borderColor: "#FCD34D", color: "#92400E" }}>
+              {aiLoading ? "⏳ Extraction IA en cours..." : "🤖 Extraire les données par IA"}
+            </button>
+          )}
 
           {/* Percus with reorder */}
           {piece.percus.map((r, ri) => {
@@ -1399,6 +1499,78 @@ export default function App() {
           </div>
         </div>
         <NavBar active="txt" onPieces={goHome} onPhotos={() => goGallery(null)} onTxt={() => { setPieceId(null); setScreen("txt"); }} />
+      </div>
+    );
+  }
+
+  // ════════════════════════════════
+  // MERGE DATA (AI extraction results)
+  // ════════════════════════════════
+  if (mergeData && mergeData.showMerge) {
+    const mergePiece = pieces.find(p => p.id === mergeData.pieceId);
+    const ex = mergeData.extracted || {};
+    return (
+      <div style={S.shell}>
+        <div style={S.header}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button onClick={() => setMergeData(null)} style={S.backBtn}>←</button>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>Résultats IA</div>
+              <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 1 }}>{mergePiece?.titre || "Fusion"}</div>
+            </div>
+          </div>
+        </div>
+        <div style={S.body}>
+          <div style={{ fontSize: 13, color: "#78716C", marginBottom: 12 }}>
+            Sélectionnez les champs à fusionner avec la pièce existante :
+          </div>
+          {["titre", "compositeur", "duree", "salle", "chef", "date", "effectif"].map(key => {
+            const aiVal = ex[key] || "";
+            const curVal = mergePiece?.[key] || "";
+            if (!aiVal) return null;
+            return (
+              <div key={key} style={{ marginBottom: 8, padding: "8px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>{key}</div>
+                <div style={{ fontSize: 12, color: "#78716C", marginTop: 2 }}>Actuel : {curVal || "(vide)"}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#1C1917", flex: 1 }}>IA : {aiVal}</div>
+                  {(!curVal || curVal !== aiVal) && (
+                    <button onClick={() => {
+                      updatePiece(mergeData.pieceId, p => ({ ...p, [key]: aiVal }));
+                    }} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600 }}>
+                      Appliquer
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {ex.percus && ex.percus.length > 0 && (
+            <div style={{ marginTop: 10, padding: "8px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>Percussions IA</div>
+              {ex.percus.map((p, i) => (
+                <div key={i} style={{ fontSize: 12, color: "#1C1917", marginTop: 4 }}>
+                  <strong>{p.nom}</strong>: {p.items.map(it => it.nom).join(", ") || "(vide)"}
+                </div>
+              ))}
+              <button onClick={() => {
+                updatePiece(mergeData.pieceId, p => ({
+                  ...p,
+                  percus: ex.percus.map((ep, i) => ({
+                    id: `p${Date.now()}_${i}`,
+                    nom: ep.nom,
+                    items: ep.items,
+                  })),
+                }));
+              }} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600, marginTop: 8 }}>
+                Remplacer les percussions
+              </button>
+            </div>
+          )}
+          <button onClick={() => setMergeData(null)} style={{ ...S.btnPrimary("#1C1917"), marginTop: 16 }}>
+            Terminé
+          </button>
+        </div>
       </div>
     );
   }
