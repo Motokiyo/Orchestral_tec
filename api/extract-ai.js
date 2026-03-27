@@ -3,21 +3,27 @@
  * POST /api/extract-ai
  * Body: { image: "data:image/jpeg;base64,..." }
  * Returns: { titre, compositeur, duree, salle, chef, date, effectif, orchestre, percus }
- *
- * The GOOGLE_API_KEY is server-side only (no VITE_ prefix) — never exposed to the client.
  */
 
+export const config = { maxDuration: 30 };
+
 export default async function handler(req, res) {
+  // Debug: log available env vars (keys only, not values)
+  console.log("[extract-ai] ENV keys:", Object.keys(process.env).filter(k => k.includes("GOOGLE") || k.includes("API")).join(", ") || "NONE");
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: "GOOGLE_API_KEY not configured on server" });
+    return res.status(500).json({
+      error: "GOOGLE_API_KEY not configured on server",
+      debug: Object.keys(process.env).filter(k => k.includes("GOOGLE") || k.includes("KEY")).join(", ") || "no matching env vars"
+    });
   }
 
-  const { image } = req.body;
+  const { image } = req.body || {};
   if (!image) {
     return res.status(400).json({ error: "Missing image field" });
   }
@@ -61,12 +67,8 @@ Analyse cette image de plan de scène et extrais les informations suivantes au f
 Règles :
 - Ne retourne QUE le JSON, sans texte autour, sans backticks markdown.
 - Si un champ n'est pas visible, mets une chaîne vide "" ou un tableau vide [].
-- Pour les catégories d'instruments de percussion, utilise : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pièces", "Stands & supports", "Baguettes & spécial"
-- Les percussions sont souvent notées P1, P2, Perc 1, Percu 2, Timbalier, Timb sur les plans.
-- "Direction" = chef d'orchestre.
-- Si tu vois une notation Daniels (chiffres séparés par des points et des tirets), extrais-la dans "effectif".
-- Sois précis sur les instruments de percussion.
-- Si le plan montre des labels d'instruments (Fl, Hb, Cl, Cor, Tp, Vl, etc.), déduis l'orchestre.`;
+- Pour les catégories d'instruments de percussion : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pièces", "Stands & supports", "Baguettes & spécial"
+- "Direction" = chef d'orchestre.`;
 
   const body = {
     contents: [{
@@ -75,10 +77,7 @@ Règles :
         { inline_data: { mime_type: mimeType, data: base64 } }
       ]
     }],
-    generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 4096,
-    }
+    generationConfig: { temperature: 0.1, maxOutputTokens: 4096 }
   };
 
   try {
@@ -97,7 +96,6 @@ Règles :
     const data = await resp.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
     const jsonStr = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-
     const parsed = JSON.parse(jsonStr);
 
     return res.status(200).json({
