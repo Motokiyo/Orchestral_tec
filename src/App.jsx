@@ -778,6 +778,79 @@ export default function App() {
   if (mergeData && mergeData.showMerge) {
     const mergePiece = pieces.find(p => p.id === mergeData.pieceId);
     const ex = mergeData.extracted || {};
+    const LABELS = { titre: "Titre", compositeur: "Compositeur", duree: "Durée", salle: "Lieu", chef: "Chef", date: "Date", effectif: "Effectif" };
+    const btnApply = { fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600 };
+    const btnChoice = { fontSize: 11, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontWeight: 600, border: "1px solid #D6D3D1", background: "#fff", color: "#1C1917", minHeight: 36 };
+    const btnActive = { ...btnChoice, background: "#FFFBEB", borderColor: "#FCD34D", color: "#92400E" };
+    // Auto-fill empty fields on first render
+    const autoFilled = [];
+    if (mergePiece) {
+      for (const key of Object.keys(LABELS)) {
+        if (!mergePiece[key] && ex[key]) {
+          updatePiece(mergeData.pieceId, p => ({ ...p, [key]: ex[key] }));
+          autoFilled.push(LABELS[key]);
+        }
+      }
+      // Auto-fill empty orchestre sections
+      if (ex.orchestre) {
+        for (const sec of ["bois", "cuivres", "cordes", "autres"]) {
+          const cur = mergePiece.orchestre?.[sec] || [];
+          const aiItems = ex.orchestre[sec] || [];
+          if (cur.length === 0 && aiItems.length > 0) {
+            updatePiece(mergeData.pieceId, p => ({
+              ...p,
+              orchestre: { ...(p.orchestre || { bois: [], cuivres: [], cordes: [], autres: [] }), [sec]: aiItems },
+            }));
+            autoFilled.push(`Orchestre ${sec}`);
+          }
+        }
+      }
+      // Auto-fill empty percu poles
+      if (ex.percus) {
+        const extractNum = (nom) => { const m = nom.match(/(\d+)/); return m ? parseInt(m[1]) : null; };
+        for (const aiPole of ex.percus) {
+          const aiNum = extractNum(aiPole.nom);
+          const existing = mergePiece.percus.find(p => {
+            if (p.nom.toLowerCase() === aiPole.nom.toLowerCase()) return true;
+            const pNum = extractNum(p.nom);
+            return aiNum !== null && pNum !== null && aiNum === pNum;
+          });
+          if (!existing || existing.items.length === 0) {
+            if (!existing) {
+              updatePiece(mergeData.pieceId, p => ({
+                ...p, percus: [...p.percus, { id: `p${Date.now()}_${Math.random().toString(36).slice(2,5)}`, nom: aiPole.nom, items: aiPole.items }],
+              }));
+            } else {
+              updatePiece(mergeData.pieceId, p => ({
+                ...p, percus: p.percus.map(r => r.id === existing.id ? { ...r, items: aiPole.items } : r),
+              }));
+            }
+            autoFilled.push(aiPole.nom);
+          }
+        }
+      }
+    }
+    // Now show only fields that need a choice (both have values and they differ)
+    const needsChoice = Object.keys(LABELS).filter(key => {
+      const cur = mergePiece?.[key] || "";
+      const ai = ex[key] || "";
+      return cur && ai && cur !== ai;
+    });
+    const orchNeedsChoice = ex.orchestre ? ["bois", "cuivres", "cordes", "autres"].filter(sec => {
+      const cur = mergePiece?.orchestre?.[sec] || [];
+      const ai = ex.orchestre[sec] || [];
+      return cur.length > 0 && ai.length > 0 && JSON.stringify(cur) !== JSON.stringify(ai);
+    }) : [];
+    const extractNum = (nom) => { const m = nom.match(/(\d+)/); return m ? parseInt(m[1]) : null; };
+    const percuNeedsChoice = (ex.percus || []).filter(aiPole => {
+      const aiNum = extractNum(aiPole.nom);
+      const existing = mergePiece?.percus.find(p => {
+        if (p.nom.toLowerCase() === aiPole.nom.toLowerCase()) return true;
+        const pNum = extractNum(p.nom);
+        return aiNum !== null && pNum !== null && aiNum === pNum;
+      });
+      return existing && existing.items.length > 0;
+    });
     return (
       <div style={S.shell}>
         <div style={S.header}>
@@ -790,112 +863,94 @@ export default function App() {
           </div>
         </div>
         <div style={S.body}>
-          <div style={{ fontSize: 13, color: "#78716C", marginBottom: 12 }}>
-            Sélectionnez les champs à fusionner avec la pièce existante :
-          </div>
-          {["titre", "compositeur", "duree", "salle", "chef", "date", "effectif"].map(key => {
-            const aiVal = ex[key] || "";
-            const curVal = mergePiece?.[key] || "";
-            if (!aiVal) return null;
+          {/* Auto-filled summary */}
+          {autoFilled.length > 0 && (
+            <div style={{ marginBottom: 12, padding: "8px 10px", background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#166534" }}>✓ Rempli automatiquement :</div>
+              <div style={{ fontSize: 12, color: "#166534", marginTop: 2 }}>{autoFilled.join(", ")}</div>
+            </div>
+          )}
+          {/* Fields needing choice */}
+          {needsChoice.length === 0 && orchNeedsChoice.length === 0 && percuNeedsChoice.length === 0 && (
+            <div style={{ fontSize: 13, color: "#78716C", marginBottom: 12 }}>
+              {autoFilled.length > 0 ? "Tous les champs vides ont été remplis. Rien d'autre à modifier." : "Aucune donnée nouvelle extraite par l'IA."}
+            </div>
+          )}
+          {needsChoice.length > 0 && (
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#78716C", marginBottom: 6, textTransform: "uppercase" }}>Champs différents — choisir :</div>
+          )}
+          {needsChoice.map(key => {
+            const aiVal = ex[key];
+            const curVal = mergePiece[key];
             return (
               <div key={key} style={{ marginBottom: 8, padding: "8px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>{key}</div>
-                <div style={{ fontSize: 12, color: "#78716C", marginTop: 2 }}>Actuel : {curVal || "(vide)"}</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>{LABELS[key]}</div>
+                <div style={{ fontSize: 12, color: "#78716C", marginTop: 2 }}>Actuel : {curVal}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "#1C1917", flex: 1 }}>IA : {aiVal}</div>
-                  {(!curVal || curVal !== aiVal) && (
-                    <button onClick={() => {
-                      updatePiece(mergeData.pieceId, p => ({ ...p, [key]: aiVal }));
-                    }} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600 }}>
-                      Appliquer
-                    </button>
-                  )}
+                  <button onClick={() => updatePiece(mergeData.pieceId, p => ({ ...p, [key]: aiVal }))} style={btnApply}>
+                    Remplacer
+                  </button>
                 </div>
               </div>
             );
           })}
-          {ex.orchestre && (
-            <div style={{ marginTop: 10, padding: "8px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>Orchestre IA</div>
-              {["bois", "cuivres", "cordes", "autres"].map(sec => {
-                const items = ex.orchestre[sec] || [];
-                if (!items.length) return null;
+          {/* Orchestre sections needing choice */}
+          {orchNeedsChoice.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#78716C", marginBottom: 6, textTransform: "uppercase" }}>Orchestre — sections différentes :</div>
+              {orchNeedsChoice.map(sec => {
+                const cur = mergePiece.orchestre[sec];
+                const ai = ex.orchestre[sec];
                 return (
-                  <div key={sec} style={{ fontSize: 12, color: "#1C1917", marginTop: 4 }}>
-                    <strong>{sec}</strong>: {items.join(", ")}
+                  <div key={sec} style={{ marginBottom: 8, padding: "8px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>{sec}</div>
+                    <div style={{ fontSize: 11, color: "#A8A29E", marginTop: 2 }}>Actuel : {cur.join(", ")}</div>
+                    <div style={{ fontSize: 11, color: "#1C1917", marginTop: 2 }}>IA : {ai.join(", ")}</div>
+                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                      <button onClick={() => updatePiece(mergeData.pieceId, p => ({
+                        ...p, orchestre: { ...p.orchestre, [sec]: ai },
+                      }))} style={btnActive}>Remplacer</button>
+                      <button style={btnChoice} disabled>Garder</button>
+                    </div>
                   </div>
                 );
               })}
-              <button onClick={() => {
-                updatePiece(mergeData.pieceId, p => ({ ...p, orchestre: ex.orchestre }));
-              }} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600, marginTop: 8 }}>
-                Appliquer l'orchestre
-              </button>
             </div>
           )}
-          {ex.percus && ex.percus.length > 0 && (
+          {/* Percus needing choice */}
+          {percuNeedsChoice.length > 0 && (
             <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase", marginBottom: 6 }}>Percussions IA — par pôle</div>
-              {ex.percus.map((aiPole, i) => {
-                const extractNum = (nom) => { const m = nom.match(/(\d+)/); return m ? parseInt(m[1]) : null; };
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#78716C", marginBottom: 6, textTransform: "uppercase" }}>Percussions — pôles différents :</div>
+              {percuNeedsChoice.map((aiPole, i) => {
                 const aiNum = extractNum(aiPole.nom);
-                const existingPole = mergePiece?.percus.find(p => {
+                const existingPole = mergePiece.percus.find(p => {
                   if (p.nom.toLowerCase() === aiPole.nom.toLowerCase()) return true;
                   const pNum = extractNum(p.nom);
                   return aiNum !== null && pNum !== null && aiNum === pNum;
                 });
-                const hasExisting = existingPole && existingPole.items.length > 0;
-                const btnStyle = { fontSize: 11, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontWeight: 600, border: "1px solid #D6D3D1", background: "#fff", color: "#1C1917", minHeight: 36 };
-                const activeBtnStyle = { ...btnStyle, background: "#FFFBEB", borderColor: "#FCD34D", color: "#92400E" };
                 return (
-                  <div key={i} style={{ marginBottom: 8, padding: "10px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
+                  <div key={i} style={{ marginBottom: 8, padding: "10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: "#1C1917" }}>{aiPole.nom}</div>
-                    <div style={{ fontSize: 11, color: "#78716C", marginTop: 2 }}>
-                      IA : {aiPole.items.map(it => it.nom).join(", ") || "(vide)"}
+                    <div style={{ fontSize: 11, color: "#A8A29E", marginTop: 2 }}>
+                      Existant ({existingPole.nom}) : {existingPole.items.map(it => it.nom).join(", ")}
                     </div>
-                    {hasExisting && (
-                      <div style={{ fontSize: 11, color: "#A8A29E", marginTop: 2 }}>
-                        Existant ({existingPole.nom}) : {existingPole.items.map(it => it.nom).join(", ")}
-                      </div>
-                    )}
+                    <div style={{ fontSize: 11, color: "#1C1917", marginTop: 2 }}>
+                      IA : {aiPole.items.map(it => it.nom).join(", ")}
+                    </div>
                     <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                      {!hasExisting ? (
-                        <button onClick={() => {
-                          updatePiece(mergeData.pieceId, p => ({
-                            ...p,
-                            percus: [...p.percus, { id: `p${Date.now()}_${i}`, nom: aiPole.nom, items: aiPole.items }],
-                          }));
-                        }} style={activeBtnStyle}>
-                          + Ajouter ce pôle
-                        </button>
-                      ) : (
-                        <>
-                          <button onClick={() => {
-                            updatePiece(mergeData.pieceId, p => ({
-                              ...p,
-                              percus: p.percus.map(r => r.id === existingPole.id ? { ...r, items: aiPole.items } : r),
-                            }));
-                          }} style={activeBtnStyle}>
-                            Écraser
-                          </button>
-                          <button onClick={() => {
-                            updatePiece(mergeData.pieceId, p => ({
-                              ...p,
-                              percus: p.percus.map(r => {
-                                if (r.id !== existingPole.id) return r;
-                                const existingNames = new Set(r.items.map(it => it.nom.toLowerCase()));
-                                const newItems = aiPole.items.filter(it => !existingNames.has(it.nom.toLowerCase()));
-                                return { ...r, items: [...r.items, ...newItems] };
-                              }),
-                            }));
-                          }} style={activeBtnStyle}>
-                            Fusionner
-                          </button>
-                          <button style={btnStyle} disabled>
-                            Ignorer
-                          </button>
-                        </>
-                      )}
+                      <button onClick={() => updatePiece(mergeData.pieceId, p => ({
+                        ...p, percus: p.percus.map(r => r.id === existingPole.id ? { ...r, items: aiPole.items } : r),
+                      }))} style={btnActive}>Écraser</button>
+                      <button onClick={() => updatePiece(mergeData.pieceId, p => ({
+                        ...p, percus: p.percus.map(r => {
+                          if (r.id !== existingPole.id) return r;
+                          const names = new Set(r.items.map(it => it.nom.toLowerCase()));
+                          const add = aiPole.items.filter(it => !names.has(it.nom.toLowerCase()));
+                          return { ...r, items: [...r.items, ...add] };
+                        }),
+                      }))} style={btnActive}>Fusionner</button>
+                      <button style={btnChoice} disabled>Ignorer</button>
                     </div>
                   </div>
                 );
