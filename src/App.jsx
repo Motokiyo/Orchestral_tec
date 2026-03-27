@@ -940,27 +940,43 @@ export default function App() {
                   const pNum = extractNum(p.nom);
                   return aiNum !== null && pNum !== null && aiNum === pNum;
                 });
+                const existingNames = new Set(existingPole.items.map(it => it.nom.toLowerCase()));
+                const aiNames = new Set(aiPole.items.map(it => it.nom.toLowerCase()));
+                const onlyExisting = existingPole.items.filter(it => !aiNames.has(it.nom.toLowerCase()));
+                const onlyAi = aiPole.items.filter(it => !existingNames.has(it.nom.toLowerCase()));
+                const common = existingPole.items.filter(it => aiNames.has(it.nom.toLowerCase()));
                 return (
-                  <div key={i} style={{ marginBottom: 8, padding: "10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: "#1C1917" }}>{aiPole.nom}</div>
-                    <div style={{ fontSize: 11, color: "#A8A29E", marginTop: 2 }}>
-                      Existant ({existingPole.nom}) : {existingPole.items.map(it => it.nom).join(", ")}
-                    </div>
-                    <div style={{ fontSize: 11, color: "#1C1917", marginTop: 2 }}>
-                      IA : {aiPole.items.map(it => it.nom).join(", ")}
-                    </div>
+                  <div key={i} style={{ marginBottom: 10, padding: "10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#1C1917", marginBottom: 6 }}>{aiPole.nom} {existingPole.nom !== aiPole.nom ? `(= ${existingPole.nom})` : ""}</div>
+                    {common.length > 0 && (
+                      <div style={{ fontSize: 11, color: "#78716C", marginBottom: 3 }}>
+                        <span style={{ fontWeight: 600 }}>Commun :</span> {common.map(it => it.nom).join(", ")}
+                      </div>
+                    )}
+                    {onlyExisting.length > 0 && (
+                      <div style={{ fontSize: 11, color: "#A8A29E", marginBottom: 3 }}>
+                        <span style={{ fontWeight: 600 }}>Seulement existant :</span> {onlyExisting.map(it => it.nom).join(", ")}
+                      </div>
+                    )}
+                    {onlyAi.length > 0 && (
+                      <div style={{ fontSize: 11, color: "#166534", marginBottom: 3 }}>
+                        <span style={{ fontWeight: 600 }}>Nouveaux (IA) :</span> {onlyAi.map(it => it.nom).join(", ")}
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                       <button onClick={() => updatePiece(mergeData.pieceId, p => ({
                         ...p, percus: p.percus.map(r => r.id === existingPole.id ? { ...r, items: aiPole.items } : r),
-                      }))} style={btnActive}>Écraser</button>
-                      <button onClick={() => updatePiece(mergeData.pieceId, p => ({
-                        ...p, percus: p.percus.map(r => {
-                          if (r.id !== existingPole.id) return r;
-                          const names = new Set(r.items.map(it => it.nom.toLowerCase()));
-                          const add = aiPole.items.filter(it => !names.has(it.nom.toLowerCase()));
-                          return { ...r, items: [...r.items, ...add] };
-                        }),
-                      }))} style={btnActive}>Fusionner</button>
+                      }))} style={btnActive}>Écraser tout</button>
+                      {onlyAi.length > 0 && (
+                        <button onClick={() => updatePiece(mergeData.pieceId, p => ({
+                          ...p, percus: p.percus.map(r => {
+                            if (r.id !== existingPole.id) return r;
+                            const names = new Set(r.items.map(it => it.nom.toLowerCase()));
+                            const add = aiPole.items.filter(it => !names.has(it.nom.toLowerCase()));
+                            return { ...r, items: [...r.items, ...add] };
+                          }),
+                        }))} style={btnActive}>+ Ajouter {onlyAi.length} nouveau{onlyAi.length > 1 ? "x" : ""}</button>
+                      )}
                       <button style={btnChoice} disabled>Ignorer</button>
                     </div>
                   </div>
