@@ -773,6 +773,97 @@ export default function App() {
   }
 
   // ════════════════════════════════
+  // MERGE DATA (AI extraction results) — MUST be before screen routing
+  // ════════════════════════════════
+  if (mergeData && mergeData.showMerge) {
+    const mergePiece = pieces.find(p => p.id === mergeData.pieceId);
+    const ex = mergeData.extracted || {};
+    return (
+      <div style={S.shell}>
+        <div style={S.header}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button onClick={() => setMergeData(null)} style={S.backBtn}>←</button>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>Résultats IA</div>
+              <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 1 }}>{mergePiece?.titre || "Fusion"}</div>
+            </div>
+          </div>
+        </div>
+        <div style={S.body}>
+          <div style={{ fontSize: 13, color: "#78716C", marginBottom: 12 }}>
+            Sélectionnez les champs à fusionner avec la pièce existante :
+          </div>
+          {["titre", "compositeur", "duree", "salle", "chef", "date", "effectif"].map(key => {
+            const aiVal = ex[key] || "";
+            const curVal = mergePiece?.[key] || "";
+            if (!aiVal) return null;
+            return (
+              <div key={key} style={{ marginBottom: 8, padding: "8px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>{key}</div>
+                <div style={{ fontSize: 12, color: "#78716C", marginTop: 2 }}>Actuel : {curVal || "(vide)"}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#1C1917", flex: 1 }}>IA : {aiVal}</div>
+                  {(!curVal || curVal !== aiVal) && (
+                    <button onClick={() => {
+                      updatePiece(mergeData.pieceId, p => ({ ...p, [key]: aiVal }));
+                    }} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600 }}>
+                      Appliquer
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {ex.orchestre && (
+            <div style={{ marginTop: 10, padding: "8px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>Orchestre IA</div>
+              {["bois", "cuivres", "cordes", "autres"].map(sec => {
+                const items = ex.orchestre[sec] || [];
+                if (!items.length) return null;
+                return (
+                  <div key={sec} style={{ fontSize: 12, color: "#1C1917", marginTop: 4 }}>
+                    <strong>{sec}</strong>: {items.join(", ")}
+                  </div>
+                );
+              })}
+              <button onClick={() => {
+                updatePiece(mergeData.pieceId, p => ({ ...p, orchestre: ex.orchestre }));
+              }} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600, marginTop: 8 }}>
+                Appliquer l'orchestre
+              </button>
+            </div>
+          )}
+          {ex.percus && ex.percus.length > 0 && (
+            <div style={{ marginTop: 10, padding: "8px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>Percussions IA</div>
+              {ex.percus.map((p, i) => (
+                <div key={i} style={{ fontSize: 12, color: "#1C1917", marginTop: 4 }}>
+                  <strong>{p.nom}</strong>: {p.items.map(it => it.nom).join(", ") || "(vide)"}
+                </div>
+              ))}
+              <button onClick={() => {
+                updatePiece(mergeData.pieceId, p => ({
+                  ...p,
+                  percus: ex.percus.map((ep, i) => ({
+                    id: `p${Date.now()}_${i}`,
+                    nom: ep.nom,
+                    items: ep.items,
+                  })),
+                }));
+              }} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600, marginTop: 8 }}>
+                Remplacer les percussions
+              </button>
+            </div>
+          )}
+          <button onClick={() => setMergeData(null)} style={{ ...S.btnPrimary("#1C1917"), marginTop: 16 }}>
+            Terminé
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ════════════════════════════════
   // CONCERTS LIST
   // ════════════════════════════════
   if (screen === "concerts") {
@@ -1498,78 +1589,6 @@ export default function App() {
           </div>
         </div>
         <NavBar active="txt" onPieces={goHome} onPhotos={() => goGallery(null)} onTxt={() => { setPieceId(null); setScreen("txt"); }} />
-      </div>
-    );
-  }
-
-  // ════════════════════════════════
-  // MERGE DATA (AI extraction results)
-  // ════════════════════════════════
-  if (mergeData && mergeData.showMerge) {
-    const mergePiece = pieces.find(p => p.id === mergeData.pieceId);
-    const ex = mergeData.extracted || {};
-    return (
-      <div style={S.shell}>
-        <div style={S.header}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <button onClick={() => setMergeData(null)} style={S.backBtn}>←</button>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>Résultats IA</div>
-              <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 1 }}>{mergePiece?.titre || "Fusion"}</div>
-            </div>
-          </div>
-        </div>
-        <div style={S.body}>
-          <div style={{ fontSize: 13, color: "#78716C", marginBottom: 12 }}>
-            Sélectionnez les champs à fusionner avec la pièce existante :
-          </div>
-          {["titre", "compositeur", "duree", "salle", "chef", "date", "effectif"].map(key => {
-            const aiVal = ex[key] || "";
-            const curVal = mergePiece?.[key] || "";
-            if (!aiVal) return null;
-            return (
-              <div key={key} style={{ marginBottom: 8, padding: "8px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>{key}</div>
-                <div style={{ fontSize: 12, color: "#78716C", marginTop: 2 }}>Actuel : {curVal || "(vide)"}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#1C1917", flex: 1 }}>IA : {aiVal}</div>
-                  {(!curVal || curVal !== aiVal) && (
-                    <button onClick={() => {
-                      updatePiece(mergeData.pieceId, p => ({ ...p, [key]: aiVal }));
-                    }} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600 }}>
-                      Appliquer
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-          {ex.percus && ex.percus.length > 0 && (
-            <div style={{ marginTop: 10, padding: "8px 10px", background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase" }}>Percussions IA</div>
-              {ex.percus.map((p, i) => (
-                <div key={i} style={{ fontSize: 12, color: "#1C1917", marginTop: 4 }}>
-                  <strong>{p.nom}</strong>: {p.items.map(it => it.nom).join(", ") || "(vide)"}
-                </div>
-              ))}
-              <button onClick={() => {
-                updatePiece(mergeData.pieceId, p => ({
-                  ...p,
-                  percus: ex.percus.map((ep, i) => ({
-                    id: `p${Date.now()}_${i}`,
-                    nom: ep.nom,
-                    items: ep.items,
-                  })),
-                }));
-              }} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FCD34D", color: "#92400E", cursor: "pointer", fontWeight: 600, marginTop: 8 }}>
-                Remplacer les percussions
-              </button>
-            </div>
-          )}
-          <button onClick={() => setMergeData(null)} style={{ ...S.btnPrimary("#1C1917"), marginTop: 16 }}>
-            Terminé
-          </button>
-        </div>
       </div>
     );
   }
