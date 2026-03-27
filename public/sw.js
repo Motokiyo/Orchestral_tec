@@ -2,7 +2,7 @@
  * PlateauMap Service Worker — Offline support
  */
 
-const CACHE_NAME = "plateaumap-v1";
+const CACHE_NAME = "orkmap-v2";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
