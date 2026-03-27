@@ -77,11 +77,11 @@ Règles :
         { inline_data: { mime_type: mimeType, data: base64 } }
       ]
     }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 4096 }
+    generationConfig: { temperature: 0.1, maxOutputTokens: 16384 }
   };
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -95,8 +95,39 @@ Règles :
 
     const data = await resp.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    console.log("[extract-ai] Gemini raw response length:", text.length);
+    console.log("[extract-ai] Gemini raw text:", text.slice(0, 500));
     const jsonStr = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-    const parsed = JSON.parse(jsonStr);
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (parseErr) {
+      // Try to repair truncated JSON by closing open braces/brackets
+      console.warn("[extract-ai] JSON parse failed, attempting repair:", parseErr.message);
+      let repaired = jsonStr;
+      // Close any unclosed strings
+      const quoteCount = (repaired.match(/(?<!\\)"/g) || []).length;
+      if (quoteCount % 2 !== 0) repaired += '"';
+      // Close open brackets and braces
+      let opens = 0, closesArr = 0, opensBrace = 0, closesBrace = 0;
+      for (const ch of repaired) {
+        if (ch === '[') opens++;
+        if (ch === ']') closesArr++;
+        if (ch === '{') opensBrace++;
+        if (ch === '}') closesBrace++;
+      }
+      for (let i = 0; i < opens - closesArr; i++) repaired += ']';
+      for (let i = 0; i < opensBrace - closesBrace; i++) repaired += '}';
+      try {
+        parsed = JSON.parse(repaired);
+        console.log("[extract-ai] JSON repaired successfully");
+      } catch (e2) {
+        console.error("[extract-ai] JSON repair failed too:", e2.message);
+        return res.status(500).json({ error: "Réponse IA invalide", raw: text.slice(0, 500) });
+      }
+    }
+    console.log("[extract-ai] Parsed keys:", Object.keys(parsed));
+    console.log("[extract-ai] Parsed titre:", parsed.titre, "compositeur:", parsed.compositeur, "effectif:", parsed.effectif);
 
     return res.status(200).json({
       titre: parsed.titre || "",
