@@ -585,7 +585,8 @@ export default function App() {
       setPdfLoading(true);
       try {
         let planDataUrl;
-        if (file.type === "application/pdf") {
+        const isPdf = file.type === "application/pdf" || file.type === "application/x-pdf" || file.name?.toLowerCase().endsWith(".pdf");
+        if (isPdf) {
           const data = await extractFromPdf(file);
           planDataUrl = data.planDataUrl;
         } else {
