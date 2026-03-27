@@ -542,7 +542,7 @@ export default function App() {
         const data = await enrichWithAi(localData);
         const newPiece = {
           id: uid(),
-          titre: data.titre || file.name.replace(".pdf", ""),
+          titre: data.titre || file.name.replace(/\.pdf$/i, ""),
           compositeur: data.compositeur || "",
           duree: data.duree || "",
           salle: data.salle || "",

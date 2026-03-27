@@ -8,9 +8,6 @@
 export const config = { maxDuration: 30 };
 
 export default async function handler(req, res) {
-  // Debug: log available env vars (keys only, not values)
-  console.log("[extract-ai] ENV keys:", Object.keys(process.env).filter(k => k.includes("GOOGLE") || k.includes("API")).join(", ") || "NONE");
-
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -150,4 +147,3 @@ Règles :
     return res.status(500).json({ error: err.message });
   }
 }
-// v3 1774639072

@@ -11,8 +11,6 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).href;
 
-const DEBUG_PDF = true;
-
 const KNOWN_COMPOSERS_SET = new Set([
   "BACH", "MOZART", "BEETHOVEN", "HAYDN", "SCHUBERT", "SCHUMANN", "BRAHMS",
   "WAGNER", "MENDELSSOHN", "BRUCKNER", "MAHLER", "R. STRAUSS", "DVORAK",
@@ -151,8 +149,7 @@ export async function extractFromPdf(file) {
   };
 
   const format = detectFormat(lines);
-  console.log("[OrkMap] Detected format:", format);
-  if (DEBUG_PDF) console.log("[OrkMap][DEBUG] Format:", format, "| Lines count:", lines.length);
+  console.log("[OrkMap] Detected format:", format, "| Lines:", lines.length);
 
   if (format === "radiofrance") {
     parseRadioFrance(lines, result);
@@ -168,7 +165,7 @@ export async function extractFromPdf(file) {
     parseGeneric(lines, result);
   }
 
-  if (DEBUG_PDF) console.log("[OrkMap][DEBUG] Extracted fields:", {
+  console.log("[OrkMap] Extracted:", {
     titre: result.titre, compositeur: result.compositeur, effectif: result.effectif,
     chef: result.chef, date: result.date, salle: result.salle, percus: result.percus.length,
   });
@@ -1156,4 +1153,3 @@ export async function extractWithGemini(imageDataUrl) {
   }
   return result;
 }
-// force rebuild 1774638340
