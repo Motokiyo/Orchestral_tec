@@ -5,7 +5,7 @@
  * Returns: { titre, compositeur, duree, salle, chef, date, effectif, orchestre, percus }
  */
 
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
