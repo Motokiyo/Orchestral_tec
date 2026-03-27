@@ -1125,27 +1125,21 @@ function addSummary(summary, group) {
 // GEMINI AI EXTRACTION
 // ══════════════════════════════════════════
 
+/**
+ * Extract data from a plan image via serverless endpoint (/api/extract-ai).
+ * The API key stays server-side only — never exposed to the browser.
+ */
 export async function extractWithGemini(imageDataUrl) {
-  const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-  if (!apiKey) throw new Error("Clé API Google manquante (VITE_GOOGLE_API_KEY)");
-  const base64 = imageDataUrl.replace(/^data:image\/\w+;base64,/, "");
-  const mimeType = imageDataUrl.match(/^data:(image\/\w+);/)?.[1] || "image/jpeg";
-  const prompt = `Tu es un assistant spécialisé dans l'extraction de données de plans de scène d'orchestre.
-Analyse cette image et extrais au format JSON strict :
-{"titre":"","compositeur":"","duree":"","salle":"","chef":"","date":"","effectif":"notation Daniels si visible","orchestre":{"bois":[],"cuivres":[],"cordes":[],"autres":[]},"percus":[{"nom":"Percu 1","items":[{"cat":"Claviers","nom":"Vibraphone"}]}]}
-Règles : JSON seul, pas de backticks. Champs vides = "". Categories percus : "Claviers","Timbales & Peaux","Accessoires","Grosses pièces","Stands & supports","Baguettes & spécial". Direction = chef.`;
-  const body = {
-    contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 4096 }
-  };
-  const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+  const resp = await fetch("/api/extract-ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image: imageDataUrl }),
   });
-  if (!resp.ok) throw new Error(`Gemini API error ${resp.status}`);
-  const data = await resp.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  const jsonStr = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  const parsed = JSON.parse(jsonStr);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || `Erreur serveur ${resp.status}`);
+  }
+  const parsed = await resp.json();
   const result = {
     titre: parsed.titre || "", compositeur: parsed.compositeur || "",
     duree: parsed.duree || "", salle: parsed.salle || "",

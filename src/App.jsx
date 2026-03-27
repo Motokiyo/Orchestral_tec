@@ -608,8 +608,6 @@ export default function App() {
   }
 
   async function enrichWithAi(localData) {
-    const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-    if (!apiKey) return localData;
     const score = [localData.titre, localData.compositeur, localData.effectif, localData.chef]
       .filter(Boolean).length + (localData.percus.length > 0 ? 1 : 0);
     if (score >= 3) return localData;
