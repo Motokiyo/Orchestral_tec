@@ -72,6 +72,65 @@ export function generateTxt(piece) {
     }
     lines.push("");
   }
+
+  // ── Mobilier section ──
+  const mob = piece.mobilier;
+  if (mob) {
+    lines.push("═".repeat(35));
+    lines.push("📦 MOBILIER");
+    lines.push("═".repeat(35));
+    lines.push("");
+
+    // Décompte général
+    lines.push("DÉCOMPTE GÉNÉRAL");
+    lines.push("─".repeat(16));
+    if (mob.general) {
+      lines.push("• Pupitres : " + (mob.general.pupitres || 0));
+      lines.push("• Chaises normales : " + (mob.general.chaisesNormales || 0));
+      lines.push("• Chaises hautes : " + (mob.general.chaisesHautes || 0));
+      lines.push("• Chaises spéciales : " + (mob.general.chaisesSpeciales || 0));
+    }
+    lines.push("");
+
+    // Stands par section
+    lines.push("STANDS PAR SECTION");
+    lines.push("─".repeat(18));
+
+    const standSections = [
+      { key: "cordes", emoji: "🎻", label: "CORDES" },
+      { key: "bois", emoji: "🎺", label: "BOIS" },
+      { key: "cuivres", emoji: "🎺", label: "CUIVRES" },
+      { key: "percus", emoji: "🥁", label: "PERCUSSIONS" },
+      { key: "autres", emoji: "➕", label: "AUTRES" },
+    ];
+
+    if (mob.stands) {
+      for (const sec of standSections) {
+        const items = mob.stands[sec.key] || [];
+        const visible = items.filter(s => s.qty > 0);
+        if (visible.length > 0) {
+          lines.push("");
+          lines.push(sec.emoji + " " + sec.label);
+          for (const s of visible) {
+            lines.push("• " + s.type + " : " + s.qty);
+          }
+        }
+      }
+
+      // Custom stands (autresCustom)
+      const custom = mob.stands.autresCustom || [];
+      const visibleCustom = custom.filter(s => s.qty > 0);
+      if (visibleCustom.length > 0) {
+        lines.push("");
+        lines.push("🔧 PERSONNALISÉ");
+        for (const s of visibleCustom) {
+          lines.push("• " + s.type + " : " + s.qty);
+        }
+      }
+    }
+    lines.push("");
+  }
+
   return lines.join("\n");
 }
 
