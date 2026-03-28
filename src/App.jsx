@@ -1881,7 +1881,7 @@ export default function App() {
                       <div style={{ fontSize: 13, color: "#1C1917", lineHeight: 1.8 }}>
                         <div>• Pupitres : <strong>{mob.general.pupitres}</strong></div>
                         <div>• Chaises normales : <strong>{mob.general.chaisesNormales}</strong></div>
-                        <div>• Chaises hautes : <strong>{mob.general.chaisesHautes}</strong> (CB)</div>
+                        <div>• Chaises hautes : <strong>{mob.general.chaisesHautesDetail || mob.general.chaisesHautes}</strong></div>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           • Chaises spéciales :
                           <input

@@ -51,9 +51,24 @@ export function calculateMobilier(orchestre, percus) {
 
   // ── Percussions ──
   const nbPercus = percus ? percus.length : 0;
-  const percusStands = [
-    { type: "Tabourets", qty: nbPercus },
-  ];
+  const percusStands = [];
+  if (percus && percus.length > 0) {
+    let chaisesTimbalier = 0;
+    let chaisesHautesPercus = 0;
+    percus.forEach(pole => {
+      if (pole.nom && pole.nom.toLowerCase().includes('timbalier')) {
+        chaisesTimbalier++;
+      } else {
+        chaisesHautesPercus++;
+      }
+    });
+    if (chaisesTimbalier > 0) {
+      percusStands.push({ type: "Chaise timbalier", qty: chaisesTimbalier });
+    }
+    if (chaisesHautesPercus > 0) {
+      percusStands.push({ type: "Chaises hautes", qty: chaisesHautesPercus });
+    }
+  }
 
   // ── Autres (fixed) ──
   const autresStands = [
@@ -81,15 +96,17 @@ export function calculateMobilier(orchestre, percus) {
   const totalBois = boisItems.reduce((sum, it) => sum + extractNumberFromItem(it), 0);
   const totalCuivres = cuivresItems.reduce((sum, it) => sum + extractNumberFromItem(it), 0);
   const chaisesNormales = cordesCounts.v1 + cordesCounts.v2 + cordesCounts.alto + cordesCounts.vlc +
-    totalBois + totalCuivres + nbPercus;
+    totalBois + totalCuivres;
 
-  const chaisesHautes = cordesCounts.cb;
+  const chaisesHautes = cordesCounts.cb + 1 + nbPercus; // CB + chef + percus
+  const chaisesHautesDetail = `${cordesCounts.cb} (CB) + 1 (chef) + ${nbPercus} (percus) = ${chaisesHautes}`;
 
   return {
     general: {
       pupitres,
       chaisesNormales,
       chaisesHautes,
+      chaisesHautesDetail,
       chaisesSpeciales: 0,
     },
     stands: {
@@ -148,7 +165,7 @@ function generateMobilierText(mob) {
   if (mob.general) {
     lines.push("• Pupitres : " + (mob.general.pupitres || 0));
     lines.push("• Chaises normales : " + (mob.general.chaisesNormales || 0));
-    lines.push("• Chaises hautes : " + (mob.general.chaisesHautes || 0));
+    lines.push("• Chaises hautes : " + (mob.general.chaisesHautesDetail || mob.general.chaisesHautes || 0));
     lines.push("• Chaises spéciales : " + (mob.general.chaisesSpeciales || 0));
   }
   lines.push("");
