@@ -517,7 +517,7 @@ export default function App() {
     let newCordes = [...cordes];
     for (const pat of CORDES_PATTERNS) {
       if (pat.key === "v1") continue; // skip V1 itself
-      const calculated = Math.max(0, v1Value + pat.offset);
+      const calculated = Math.max(1, v1Value + pat.offset);
       const existingIdx = findCordeIndex(newCordes, pat.key);
       const newEntry = `${calculated} ${pat.label}`;
       if (existingIdx >= 0) {
