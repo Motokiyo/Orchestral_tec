@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
-import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText } from "./utils.js";
+import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, calculateMobilier } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini } from "./pdfParser.js";
 import { useConcerts, usePhotos } from "./useStorage.js";
 import { S } from "./styles.js";
@@ -398,11 +398,7 @@ const DANIELS_CORDES = [
   { key: "cb", regex: /contrebasses?|cb\b/i, label: "CB" },
 ];
 
-function extractNumberFromItem(item) {
-  // Parse "14 Violons I" → 14, "3 Flûtes" → 3, "Flûte" → 1
-  const m = (typeof item === "string" ? item : "").match(/^(\d+)\s/);
-  return m ? parseInt(m[1], 10) : 1;
-}
+// extractNumberFromItem is now imported from utils.js
 
 function matchSection(items, patterns) {
   const counts = patterns.map(() => 0);
@@ -474,99 +470,7 @@ function calculateTotalMusicians(orchestre) {
   return total;
 }
 
-// ── Calculate mobilier (furniture) from orchestre + percus ──
-function calculateMobilier(orchestre, percus) {
-  if (!orchestre) return null;
-
-  const boisItems = orchestre.bois || [];
-  const cuivresItems = orchestre.cuivres || [];
-  const cordesItems = orchestre.cordes || [];
-
-  // ── Parse cordes counts ──
-  const cordesCounts = { v1: 0, v2: 0, alto: 0, vlc: 0, cb: 0 };
-  for (const item of cordesItems) {
-    const str = typeof item === "string" ? item : "";
-    const num = extractNumberFromItem(str);
-    if (/violons?\s*I(?:\b|$)/i.test(str)) cordesCounts.v1 = num;
-    else if (/violons?\s*II/i.test(str)) cordesCounts.v2 = num;
-    else if (/altos?/i.test(str)) cordesCounts.alto = num;
-    else if (/violoncelles?|vlc|vc\b/i.test(str)) cordesCounts.vlc = num;
-    else if (/contrebasses?|cb\b/i.test(str)) cordesCounts.cb = num;
-  }
-
-  // ── Parse bois items → stands ──
-  const boisStands = [];
-  for (const item of boisItems) {
-    const str = typeof item === "string" ? item : "";
-    const num = extractNumberFromItem(str);
-    // Extract instrument name (remove leading number)
-    const name = str.replace(/^\d+\s*/, "").trim() || str;
-    boisStands.push({ type: `Stands pour ${name.toLowerCase()}`, qty: num });
-  }
-
-  // ── Parse cuivres items → stands ──
-  const cuivresStands = [];
-  for (const item of cuivresItems) {
-    const str = typeof item === "string" ? item : "";
-    const num = extractNumberFromItem(str);
-    const name = str.replace(/^\d+\s*/, "").trim() || str;
-    cuivresStands.push({ type: `Stands pour ${name.toLowerCase()}`, qty: num });
-  }
-
-  // ── Percussions ──
-  const nbPercus = percus ? percus.length : 0;
-  const percusStands = [
-    { type: "Tabourets", qty: nbPercus },
-  ];
-
-  // ── Autres (fixed) ──
-  const autresStands = [
-    { type: "Podium chef", qty: 1 },
-    { type: "Pupitre chef", qty: 1 },
-  ];
-
-  // ── Cordes stands ──
-  const cordesStands = [];
-  if (cordesCounts.cb > 0) {
-    cordesStands.push({ type: "Stands de contrebasse", qty: cordesCounts.cb });
-    cordesStands.push({ type: "Planches à pic CB", qty: cordesCounts.cb });
-  }
-  if (cordesCounts.vlc > 0) {
-    cordesStands.push({ type: "Planches à pic Vlc", qty: cordesCounts.vlc });
-  }
-
-  // ── General counts ──
-  // Pupitres: cordes share 2 per pupitre, bois/cuivres 1 stand each (already counted above)
-  const pupiCordes = Math.ceil(cordesCounts.v1 / 2) + Math.ceil(cordesCounts.v2 / 2) +
-    Math.ceil(cordesCounts.alto / 2) + Math.ceil(cordesCounts.vlc / 2);
-  const pupiBois = boisItems.length; // one pupitre per line in bois
-  const pupiCuivres = cuivresItems.length;
-  const pupitres = pupiCordes + pupiBois + pupiCuivres + (nbPercus > 0 ? nbPercus : 0) + 1; // +1 for chef
-
-  // Chaises normales = all musicians EXCEPT CB
-  const totalBois = boisItems.reduce((sum, it) => sum + extractNumberFromItem(it), 0);
-  const totalCuivres = cuivresItems.reduce((sum, it) => sum + extractNumberFromItem(it), 0);
-  const chaisesNormales = cordesCounts.v1 + cordesCounts.v2 + cordesCounts.alto + cordesCounts.vlc +
-    totalBois + totalCuivres + nbPercus;
-
-  const chaisesHautes = cordesCounts.cb;
-
-  return {
-    general: {
-      pupitres,
-      chaisesNormales,
-      chaisesHautes,
-      chaisesSpeciales: 0,
-    },
-    stands: {
-      cordes: cordesStands,
-      bois: boisStands,
-      cuivres: cuivresStands,
-      percus: percusStands,
-      autres: autresStands,
-    },
-  };
-}
+// calculateMobilier is now imported from utils.js
 
 export default function App() {
   const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }]);
