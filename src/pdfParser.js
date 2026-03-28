@@ -1119,6 +1119,287 @@ function addSummary(summary, group) {
 }
 
 // ══════════════════════════════════════════
+// IMAGE EXTRACTION (JPEG/PNG) — OCR via Tesseract.js
+// ══════════════════════════════════════════
+
+/**
+ * Extract orchestra data from an image file (JPEG/PNG).
+ * Uses Tesseract.js for OCR, then parses the extracted text
+ * with the same patterns used for PDF text parsing.
+ * Falls back to basic metadata if OCR fails.
+ */
+export async function extractFromImage(file) {
+  const result = {
+    titre: "",
+    compositeur: "",
+    duree: "",
+    salle: "",
+    chef: "",
+    date: "",
+    effectif: "",
+    effectifDetail: null,
+    orchestre: null,
+    percus: [],
+    planDataUrl: null,
+    planDataUrls: [],
+    sourceFormat: "image",
+  };
+
+  // Convert file to dataUrl for plan display
+  const dataUrl = await fileToDataUrlLocal(file);
+  result.planDataUrl = dataUrl;
+  result.planDataUrls = [dataUrl];
+
+  // Try OCR with Tesseract.js
+  let ocrText = "";
+  try {
+    console.log("[OrkMap] Starting OCR on image...");
+    const Tesseract = await import("tesseract.js");
+    const worker = await Tesseract.createWorker("fra+eng", 1, {
+      logger: (m) => {
+        if (m.status === "recognizing text") {
+          console.log(`[OrkMap] OCR progress: ${Math.round((m.progress || 0) * 100)}%`);
+        }
+      },
+    });
+    const { data } = await worker.recognize(file);
+    ocrText = data.text || "";
+    await worker.terminate();
+    console.log("[OrkMap] OCR complete, text length:", ocrText.length);
+  } catch (err) {
+    console.warn("[OrkMap] OCR failed:", err.message);
+  }
+
+  if (ocrText.trim()) {
+    // Parse OCR text using the same logic as PDF text parsing
+    parseExtractedText(ocrText, result);
+  }
+
+  // Fallback title from filename
+  if (!result.titre) {
+    result.titre = file.name
+      .replace(/\.(jpe?g|png)$/i, "")
+      .replace(/[-_]/g, " ");
+  }
+
+  if (result.effectif) {
+    result.effectifDetail = decodeEffectif(result.effectif);
+  }
+  if (result.effectifDetail) {
+    result.orchestre = orchestreFromEffectif(result.effectifDetail);
+  }
+
+  // Create percu slots from effectif if none found
+  buildPercuFromEffectif(result);
+
+  return result;
+}
+
+// ══════════════════════════════════════════
+// TXT EXTRACTION — Plain text file parsing
+// ══════════════════════════════════════════
+
+/**
+ * Extract orchestra data from a plain text file (.txt).
+ * Parses the text looking for Daniels notation, composer names,
+ * dates, percussion sections, etc.
+ */
+export async function extractFromTxt(file) {
+  const result = {
+    titre: "",
+    compositeur: "",
+    duree: "",
+    salle: "",
+    chef: "",
+    date: "",
+    effectif: "",
+    effectifDetail: null,
+    orchestre: null,
+    percus: [],
+    planDataUrl: null,
+    planDataUrls: [],
+    sourceFormat: "txt",
+  };
+
+  // Read the text content
+  const text = await file.text();
+  console.log("[OrkMap] TXT file content length:", text.length);
+
+  if (text.trim()) {
+    parseExtractedText(text, result);
+  }
+
+  // Fallback title from filename
+  if (!result.titre) {
+    result.titre = file.name
+      .replace(/\.txt$/i, "")
+      .replace(/[-_]/g, " ");
+  }
+
+  if (result.effectif) {
+    result.effectifDetail = decodeEffectif(result.effectif);
+  }
+  if (result.effectifDetail) {
+    result.orchestre = orchestreFromEffectif(result.effectifDetail);
+  }
+
+  buildPercuFromEffectif(result);
+
+  return result;
+}
+
+// ══════════════════════════════════════════
+// UNIFIED FILE EXTRACTION — Routes by file type
+// ══════════════════════════════════════════
+
+/**
+ * Unified extraction: detects file type and routes to the appropriate extractor.
+ * Supports PDF, JPEG, PNG, and TXT files.
+ * @param {File} file - The uploaded file
+ * @returns {Promise<Object>} Extracted data (same shape as extractFromPdf output)
+ */
+export async function extractFromFile(file) {
+  const name = (file.name || "").toLowerCase();
+  const type = (file.type || "").toLowerCase();
+
+  // PDF
+  if (type === "application/pdf" || type === "application/x-pdf" || name.endsWith(".pdf")) {
+    return extractFromPdf(file);
+  }
+
+  // Images (JPEG/PNG)
+  if (type.startsWith("image/") || /\.(jpe?g|png)$/.test(name)) {
+    return extractFromImage(file);
+  }
+
+  // TXT
+  if (type === "text/plain" || name.endsWith(".txt")) {
+    return extractFromTxt(file);
+  }
+
+  // Fallback: try as PDF
+  console.warn("[OrkMap] Unknown file type, attempting PDF extraction:", type, name);
+  return extractFromPdf(file);
+}
+
+// ══════════════════════════════════════════
+// SHARED TEXT PARSING — Used by Image OCR and TXT
+// ══════════════════════════════════════════
+
+/**
+ * Parse extracted text (from OCR or TXT file) to find orchestra data.
+ * Uses the same detection patterns as the PDF parsers.
+ */
+function parseExtractedText(text, result) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const all = lines.join(" ");
+
+  console.log("[OrkMap] Parsing text, lines:", lines.length);
+
+  // Detect format and use existing parsers
+  const format = detectFormat(lines);
+  console.log("[OrkMap] Text format detected:", format);
+
+  if (format === "radiofrance") {
+    parseRadioFrance(lines, result);
+  } else if (format === "eic") {
+    parseEic(lines, result);
+  } else if (format === "lamoureux") {
+    parseLamoureux(lines, result);
+  } else if (format === "orchestredeparis") {
+    parseOrchDeParis(lines, result);
+  } else if (format === "cnsm") {
+    parseCnsm(lines, result);
+  } else {
+    parseGeneric(lines, result);
+  }
+
+  // Additional patterns specific to free-form text
+
+  // Try to find a title on the first non-empty lines (common in TXT files)
+  if (!result.titre && lines.length > 0) {
+    // First line is often the title if it's not a metadata field
+    const firstLine = lines[0];
+    if (firstLine.length > 3 && firstLine.length < 100 &&
+        !/^(objet|lieu|concert|direction|effectif|nomenclature|programme|date|chef)/i.test(firstLine)) {
+      result.titre = firstLine;
+    }
+  }
+
+  // Try to find composer if not yet found — look for "Compositeur:" or similar label
+  if (!result.compositeur) {
+    const compMatch = all.match(/Compositeur\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Titre|Durée|Effectif|Chef|Lieu|Date)\s*:|\n|$)/i);
+    if (compMatch) result.compositeur = compMatch[1].trim();
+  }
+
+  // Try labeled fields common in text files
+  if (!result.titre) {
+    const titreMatch = all.match(/Titre\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Durée|Effectif|Chef|Lieu|Date)\s*:|\n|$)/i);
+    if (titreMatch) result.titre = titreMatch[1].trim();
+  }
+  if (!result.salle) {
+    const lieuMatch = all.match(/(?:Lieu|Salle)\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Titre|Durée|Effectif|Chef|Date)\s*:|\n|$)/i);
+    if (lieuMatch) result.salle = lieuMatch[1].trim();
+  }
+  if (!result.chef) {
+    const chefMatch = all.match(/Chef\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Titre|Durée|Effectif|Lieu|Date)\s*:|\n|$)/i);
+    if (chefMatch) result.chef = chefMatch[1].trim();
+  }
+  if (!result.date) {
+    const dateMatch = all.match(/Date\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Titre|Durée|Effectif|Chef|Lieu)\s*:|\n|$)/i);
+    if (dateMatch) result.date = dateMatch[1].trim();
+  }
+}
+
+/**
+ * Build percussion slots from effectif detail (shared helper).
+ */
+function buildPercuFromEffectif(result) {
+  if (result.percus.length === 0 && result.effectifDetail?.percussions) {
+    const perc = result.effectifDetail.percussions;
+    const timb = perc["Timbales"] || 0;
+    for (let i = 1; i <= timb; i++) {
+      result.percus.push({
+        nom: timb === 1 ? "Timbalier" : `Timbalier ${i}`,
+        items: [{ cat: "Timbales & Peaux", nom: "4 Timbales" }],
+      });
+    }
+    const percCount = perc["Percussion"] || 0;
+    for (let i = 1; i <= percCount; i++) {
+      result.percus.push({ nom: `Percu ${i}`, items: [] });
+    }
+    if (result.percus.length === 0) {
+      const total = perc.total || 0;
+      for (let i = 1; i <= total; i++) {
+        result.percus.push({ nom: `Percu ${i}`, items: [] });
+      }
+    }
+  }
+  if (result.percus.length > 0 && result.effectifDetail?.percussions) {
+    const timb = result.effectifDetail.percussions["Timbales"] || 0;
+    const existingTimb = result.percus.filter(p => /timbal/i.test(p.nom)).length;
+    for (let i = existingTimb + 1; i <= timb; i++) {
+      result.percus.unshift({
+        nom: timb === 1 ? "Timbalier" : `Timbalier ${i}`,
+        items: [{ cat: "Timbales & Peaux", nom: "4 Timbales" }],
+      });
+    }
+  }
+}
+
+/**
+ * Helper: read file as dataUrl (for image plan display)
+ */
+function fileToDataUrlLocal(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ══════════════════════════════════════════
 // GEMINI AI EXTRACTION
 // ══════════════════════════════════════════
 

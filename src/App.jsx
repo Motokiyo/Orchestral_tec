@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor } from "./utils.js";
-import { extractFromPdf, decodeEffectif, orchestreFromEffectif, extractWithGemini } from "./pdfParser.js";
+import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini } from "./pdfParser.js";
 import { useConcerts, usePhotos } from "./useStorage.js";
 import { S } from "./styles.js";
 import JSZip from "jszip";
@@ -528,21 +528,21 @@ export default function App() {
     }));
   }
 
-  // ── PDF Import: new piece (from home screen) ──
+  // ── File Import: new piece (from home screen) — supports PDF, JPEG, PNG, TXT ──
   async function handlePdfImportNew() {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".pdf";
+    input.accept = ".pdf,.jpg,.jpeg,.png,.txt";
     input.onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
       setPdfLoading(true);
       try {
-        const localData = await extractFromPdf(file);
+        const localData = await extractFromFile(file);
         const data = await enrichWithAi(localData);
         const newPiece = {
           id: uid(),
-          titre: data.titre || file.name.replace(/\.pdf$/i, ""),
+          titre: data.titre || file.name.replace(/\.(pdf|jpe?g|png|txt)$/i, ""),
           compositeur: data.compositeur || "",
           duree: data.duree || "",
           salle: data.salle || "",
@@ -566,7 +566,7 @@ export default function App() {
         setPieceId(newPiece.id);
         setScreen("piece");
       } catch (err) {
-        alert("Erreur lors de l'import PDF : " + err.message);
+        alert("Erreur lors de l'import : " + err.message);
       } finally {
         setPdfLoading(false);
       }
@@ -574,21 +574,53 @@ export default function App() {
     input.click();
   }
 
-  // ── Add plan to piece (PDF or image) ──
+  // ── Add plan to piece (PDF, image, or TXT) ──
   async function handleAddPlan(targetPieceId) {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".pdf,.jpg,.jpeg,.png,.webp,.heic";
+    input.accept = ".pdf,.jpg,.jpeg,.png,.webp,.heic,.txt";
     input.onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
       setPdfLoading(true);
       try {
+        const name = (file.name || "").toLowerCase();
+        const type = (file.type || "").toLowerCase();
+        const isPdf = type === "application/pdf" || type === "application/x-pdf" || name.endsWith(".pdf");
+        const isTxt = type === "text/plain" || name.endsWith(".txt");
+
         let planDataUrl;
-        const isPdf = file.type === "application/pdf" || file.type === "application/x-pdf" || file.name?.toLowerCase().endsWith(".pdf");
         if (isPdf) {
           const data = await extractFromPdf(file);
           planDataUrl = data.planDataUrl;
+        } else if (isTxt) {
+          // TXT files don't have a visual plan, but we extract data from them
+          const data = await extractFromFile(file);
+          // Auto-fill empty fields from TXT extraction
+          const FIELDS = ["titre", "compositeur", "duree", "salle", "chef", "date", "effectif"];
+          updatePiece(targetPieceId, (p) => {
+            const updates = {};
+            for (const key of FIELDS) {
+              if (!p[key] && data[key]) updates[key] = data[key];
+            }
+            if (data.orchestre && !p.orchestre) updates.orchestre = data.orchestre;
+            if (data.effectifDetail && !p.effectifDetail) updates.effectifDetail = data.effectifDetail;
+            // Add percu poles if piece has none or only empty ones
+            if (data.percus?.length > 0) {
+              const hasItems = p.percus.some(r => r.items.length > 0);
+              if (!hasItems && p.percus.length <= 1) {
+                updates.percus = data.percus.map((pole, i) => ({
+                  id: `p${Date.now()}_${i}`,
+                  nom: pole.nom,
+                  items: pole.items,
+                }));
+              }
+            }
+            return { ...p, ...updates };
+          });
+          alert("Données extraites du fichier TXT et appliquées aux champs vides.");
+          setPdfLoading(false);
+          return;
         } else {
           // Image file — convert to dataUrl
           planDataUrl = await fileToDataUrl(file);
@@ -1133,7 +1165,7 @@ export default function App() {
               disabled={pdfLoading}
               style={{ ...S.btnSecondary, flex: 1, fontSize: 13, padding: "10px 12px", opacity: pdfLoading ? 0.6 : 1 }}
             >
-              {pdfLoading ? "⏳ Import..." : "📄 Importer PDF"}
+              {pdfLoading ? "⏳ Import..." : "📄 Importer fichier"}
             </button>
             <button
               onClick={() => {
