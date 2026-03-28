@@ -365,6 +365,115 @@ function WatermarkOverlay({ photo, pieces, couleurOverride }) {
   );
 }
 
+// ── Daniels Notation Calculator ──
+// Standard orchestral nomenclature: Bois / Cuivres / Percus / Cordes
+// Bois: Fl.Hb.Cl.Bn | Cuivres: Cor.Tp.Tb.Tuba | Percus: Timb.Perc.Hp.Clav | Cordes: V1.V2.Alt.Vlc.CB
+
+const DANIELS_BOIS = [
+  { key: "fl", regex: /fl[uû]/i, label: "Fl" },
+  { key: "hb", regex: /hautb|hb|oboe/i, label: "Hb" },
+  { key: "cl", regex: /clarin/i, label: "Cl" },
+  { key: "bn", regex: /bassons?|bn|fagot/i, label: "Bn" },
+];
+
+const DANIELS_CUIVRES = [
+  { key: "cor", regex: /cors?\b/i, label: "Cor" },
+  { key: "tp", regex: /tromp/i, label: "Tp" },
+  { key: "tb", regex: /tromb/i, label: "Tb" },
+  { key: "tuba", regex: /tuba/i, label: "Tuba" },
+];
+
+const DANIELS_PERCUS = [
+  { key: "timb", regex: /timbal/i, label: "Timb" },
+  { key: "perc", regex: /percus?(?!sion)|batterie/i, label: "Perc" },
+  { key: "hp", regex: /harpe/i, label: "Hp" },
+  { key: "clav", regex: /piano|c[ée]lesta|clav/i, label: "Clav" },
+];
+
+const DANIELS_CORDES = [
+  { key: "v1", regex: /violons?\s*I(?:\b|$)/i, label: "V1" },
+  { key: "v2", regex: /violons?\s*II/i, label: "V2" },
+  { key: "alt", regex: /altos?/i, label: "Alt" },
+  { key: "vlc", regex: /violoncelles?|vlc|vc\b/i, label: "Vlc" },
+  { key: "cb", regex: /contrebasses?|cb\b/i, label: "CB" },
+];
+
+function extractNumberFromItem(item) {
+  // Parse "14 Violons I" → 14, "3 Flûtes" → 3, "Flûte" → 1
+  const m = (typeof item === "string" ? item : "").match(/^(\d+)\s/);
+  return m ? parseInt(m[1], 10) : 1;
+}
+
+function matchSection(items, patterns) {
+  const counts = patterns.map(() => 0);
+  const matched = new Set();
+  for (const item of items) {
+    const str = typeof item === "string" ? item : item.nom || "";
+    for (let i = 0; i < patterns.length; i++) {
+      if (patterns[i].regex.test(str) && !matched.has(str)) {
+        counts[i] += extractNumberFromItem(str);
+        matched.add(str);
+        break;
+      }
+    }
+  }
+  return counts;
+}
+
+function calculateDanielsNotation(orchestre, percus) {
+  if (!orchestre) return "";
+  
+  const boisItems = orchestre.bois || [];
+  const cuivresItems = orchestre.cuivres || [];
+  const cordesItems = orchestre.cordes || [];
+  const autresItems = orchestre.autres || [];
+  
+  // Collect percussion items from both orchestre.autres and percus poles
+  // For Daniels, we look for timbalier, percussionists, harpist, keyboard in the orchestre context
+  // Percus poles contain detailed instrument lists, not personnel counts
+  const allPercuContext = [...autresItems];
+  
+  const boisCounts = matchSection(boisItems, DANIELS_BOIS);
+  const cuivresCounts = matchSection(cuivresItems, DANIELS_CUIVRES);
+  const percusCounts = matchSection(allPercuContext, DANIELS_PERCUS);
+  const cordesCounts = matchSection(cordesItems, DANIELS_CORDES);
+  
+  // If percus poles exist, count them as percussion personnel
+  if (percus && percus.length > 0 && percusCounts.every(c => c === 0)) {
+    // Count timbalier if any pole name contains "timbal"
+    const timbPoles = percus.filter(p => /timbal/i.test(p.nom));
+    const percPoles = percus.filter(p => !/timbal/i.test(p.nom));
+    percusCounts[0] = timbPoles.length; // Timb
+    percusCounts[1] = percPoles.length; // Perc
+  }
+  
+  const hasBois = boisCounts.some(c => c > 0);
+  const hasCuivres = cuivresCounts.some(c => c > 0);
+  const hasPercus = percusCounts.some(c => c > 0);
+  const hasCordes = cordesCounts.some(c => c > 0);
+  
+  if (!hasBois && !hasCuivres && !hasPercus && !hasCordes) return "";
+  
+  const parts = [];
+  parts.push(boisCounts.join("."));
+  parts.push(cuivresCounts.join("."));
+  parts.push(percusCounts.join("."));
+  parts.push(cordesCounts.join("."));
+  
+  return parts.join(" / ");
+}
+
+function calculateTotalMusicians(orchestre) {
+  if (!orchestre) return 0;
+  let total = 0;
+  for (const section of ["bois", "cuivres", "cordes", "autres"]) {
+    for (const item of orchestre[section] || []) {
+      total += extractNumberFromItem(item);
+    }
+  }
+  return total;
+}
+
 export default function App() {
   const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }]);
   const [screen, setScreen] = useState("concerts");
@@ -467,22 +576,31 @@ export default function App() {
     });
   }
   function renamePercu(pId, rId, newName) {
-    updatePiece(pId, (p) => ({
-      ...p,
-      percus: p.percus.map((r) => r.id === rId ? { ...r, nom: newName } : r),
-    }));
+    updatePiece(pId, (p) => {
+      const updated = {
+        ...p,
+        percus: p.percus.map((r) => r.id === rId ? { ...r, nom: newName } : r),
+      };
+      return recalcDaniels(updated);
+    });
   }
   function addPercu(pId) {
     const nom = prompt("Nom du pôle (ex: Percu 3, Timbalier) :");
     if (!nom || !nom.trim()) return;
-    updatePiece(pId, (p) => ({
-      ...p,
-      percus: [...p.percus, { id: `p${Date.now()}`, nom: nom.trim(), items: [] }],
-    }));
+    updatePiece(pId, (p) => {
+      const updated = {
+        ...p,
+        percus: [...p.percus, { id: `p${Date.now()}`, nom: nom.trim(), items: [] }],
+      };
+      return recalcDaniels(updated);
+    });
   }
   function deletePercu(pId, rId) {
     if (!confirm("Supprimer ce pôle ?")) return;
-    updatePiece(pId, (p) => ({ ...p, percus: p.percus.filter((r) => r.id !== rId) }));
+    updatePiece(pId, (p) => {
+      const updated = { ...p, percus: p.percus.filter((r) => r.id !== rId) };
+      return recalcDaniels(updated);
+    });
   }
   // ── Cordes auto-completion helpers ──
   // Detects instrument type from a string like "14 Violons I" or "Violons I"
@@ -529,6 +647,12 @@ export default function App() {
     return newCordes;
   }
 
+  // ── Helper: recalculate Daniels notation for a piece ──
+  function recalcDaniels(p) {
+    const notation = calculateDanielsNotation(p.orchestre, p.percus);
+    return notation ? { ...p, effectif: notation } : p;
+  }
+
   // ── Orchestre mutations ──
   function addOrchestreItem(pId, section, nom) {
     updatePiece(pId, (p) => {
@@ -541,14 +665,16 @@ export default function App() {
           newSection = applyCordesAutoComplete(newSection, parsed.number);
         }
       }
-      return { ...p, orchestre: { ...orch, [section]: newSection } };
+      const updated = { ...p, orchestre: { ...orch, [section]: newSection } };
+      return recalcDaniels(updated);
     });
   }
   function deleteOrchestreItem(pId, section, idx) {
     updatePiece(pId, (p) => {
       const orch = { ...p.orchestre };
       orch[section] = orch[section].filter((_, i) => i !== idx);
-      return { ...p, orchestre: orch };
+      const updated = { ...p, orchestre: orch };
+      return recalcDaniels(updated);
     });
   }
   function renameOrchestreItem(pId, section, idx, newName) {
@@ -562,7 +688,8 @@ export default function App() {
           orch[section] = applyCordesAutoComplete(orch[section], parsed.number);
         }
       }
-      return { ...p, orchestre: orch };
+      const updated = { ...p, orchestre: orch };
+      return recalcDaniels(updated);
     });
   }
   function renameItem(pId, rId, idx, newName) {
@@ -1554,27 +1681,66 @@ export default function App() {
 
           {/* Orchestre section — below percus */}
           <div style={{ marginTop: 14, marginBottom: 10 }}>
-            <div
-              onClick={() => setPercuId(percuId === "orchestre" ? null : "orchestre")}
-              style={{
-                background: percuId === "orchestre" ? col.bg : "#FAFAF9",
-                border: `1px solid ${percuId === "orchestre" ? col.hex + "44" : "#E7E5E4"}`,
-                borderRadius: 10, padding: "12px 14px", cursor: "pointer",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>Orchestre</div>
-                  {piece.effectif
-                    ? <div style={{ fontSize: 12, color: "#78716C", fontFamily: "monospace" }}>{piece.effectif}</div>
-                    : <div style={{ fontSize: 12, color: "#A8A29E" }}>{orchCount > 0 ? `${orchCount} pupitres` : "Aucun pupitre"}</div>
-                  }
+            {(() => {
+              const daniels = calculateDanielsNotation(piece.orchestre, piece.percus);
+              const totalMus = calculateTotalMusicians(piece.orchestre);
+              return (
+                <div
+                  onClick={() => setPercuId(percuId === "orchestre" ? null : "orchestre")}
+                  style={{
+                    background: percuId === "orchestre" ? col.bg : "#FAFAF9",
+                    border: `1px solid ${percuId === "orchestre" ? col.hex + "44" : "#E7E5E4"}`,
+                    borderRadius: 10, padding: "12px 14px", cursor: "pointer",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>Orchestre</div>
+                        {totalMus > 0 && (
+                          <span style={{ fontSize: 11, fontWeight: 600, color: col.hex, background: col.bg, padding: "1px 8px", borderRadius: 10 }}>
+                            {totalMus} mus.
+                          </span>
+                        )}
+                      </div>
+                      {daniels
+                        ? <div style={{ fontSize: 12, color: "#78716C", fontFamily: "monospace", marginTop: 2 }}>{daniels}</div>
+                        : piece.effectif
+                          ? <div style={{ fontSize: 12, color: "#78716C", fontFamily: "monospace", marginTop: 2 }}>{piece.effectif}</div>
+                          : <div style={{ fontSize: 12, color: "#A8A29E", marginTop: 2 }}>{orchCount > 0 ? `${orchCount} pupitres` : "Aucun pupitre"}</div>
+                      }
+                    </div>
+                    <span style={{ color: "#A8A29E" }}>{percuId === "orchestre" ? "▾" : "▸"}</span>
+                  </div>
                 </div>
-                <span style={{ color: "#A8A29E" }}>{percuId === "orchestre" ? "▾" : "▸"}</span>
-              </div>
-            </div>
+              );
+            })()}
             {percuId === "orchestre" && (
               <div style={{ padding: "10px 4px 4px" }}>
+                {/* Daniels notation banner */}
+                {(() => {
+                  const daniels = calculateDanielsNotation(piece.orchestre, piece.percus);
+                  return daniels ? (
+                    <div style={{
+                      background: col.bg, border: `1px solid ${col.hex}33`, borderRadius: 8,
+                      padding: "8px 12px", marginBottom: 10, display: "flex", alignItems: "center",
+                      justifyContent: "space-between", gap: 8,
+                    }}>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase", letterSpacing: 1 }}>Nomenclature Daniels</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917", fontFamily: "monospace", marginTop: 2 }}>{daniels}</div>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updatePiece(piece.id, (p) => recalcDaniels(p));
+                        }}
+                        style={{ fontSize: 16, background: "none", border: "none", cursor: "pointer", padding: "4px", flexShrink: 0 }}
+                        title="Recalculer nomenclature"
+                      >🔄</button>
+                    </div>
+                  ) : null;
+                })()}
                 {[
                   { key: "bois", label: "Bois" },
                   { key: "cuivres", label: "Cuivres" },
@@ -1619,7 +1785,8 @@ export default function App() {
                                 if (v1Idx >= 0) { cordes[v1Idx] = `${v1} Violons I`; } else { cordes.push(`${v1} Violons I`); }
                                 // Apply auto-complete for other strings
                                 cordes = applyCordesAutoComplete(cordes, v1);
-                                return { ...p, orchestre: { ...orch, cordes } };
+                                const updated = { ...p, orchestre: { ...orch, cordes } };
+                                return recalcDaniels(updated);
                               });
                             }}
                             style={{ fontSize: 11, color: col.hex, background: col.hex + "15", border: `1px solid ${col.hex}33`, borderRadius: 6, cursor: "pointer", padding: "3px 8px", fontWeight: 600 }}
