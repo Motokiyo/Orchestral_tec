@@ -484,11 +484,64 @@ export default function App() {
     if (!confirm("Supprimer ce pôle ?")) return;
     updatePiece(pId, (p) => ({ ...p, percus: p.percus.filter((r) => r.id !== rId) }));
   }
+  // ── Cordes auto-completion helpers ──
+  // Detects instrument type from a string like "14 Violons I" or "Violons I"
+  const CORDES_PATTERNS = [
+    { key: "v1", regex: /violons?\s*I(?:\b|$)/i, label: "Violons I", offset: 0 },
+    { key: "v2", regex: /violons?\s*II/i, label: "Violons II", offset: -2 },
+    { key: "alto", regex: /altos?/i, label: "Altos", offset: -4 },
+    { key: "vlc", regex: /violoncelles?/i, label: "Violoncelles", offset: -6 },
+    { key: "cb", regex: /contrebasses?/i, label: "Contrebasses", offset: -8 },
+  ];
+
+  function parseCordeName(nom) {
+    // Returns { key, number, label } or null
+    for (const pat of CORDES_PATTERNS) {
+      if (pat.regex.test(nom)) {
+        const numMatch = nom.match(/^(\d+)\s/);
+        return { key: pat.key, number: numMatch ? parseInt(numMatch[1], 10) : null, label: pat.label, offset: pat.offset };
+      }
+    }
+    return null;
+  }
+
+  function findCordeIndex(cordes, key) {
+    return cordes.findIndex(item => {
+      const parsed = parseCordeName(item);
+      return parsed && parsed.key === key;
+    });
+  }
+
+  // Apply V1 auto-completion: given V1 value X, fill V2=X-2, Alto=X-4, Vlc=X-6, CB=X-8
+  function applyCordesAutoComplete(cordes, v1Value) {
+    let newCordes = [...cordes];
+    for (const pat of CORDES_PATTERNS) {
+      if (pat.key === "v1") continue; // skip V1 itself
+      const calculated = Math.max(0, v1Value + pat.offset);
+      const existingIdx = findCordeIndex(newCordes, pat.key);
+      const newEntry = `${calculated} ${pat.label}`;
+      if (existingIdx >= 0) {
+        newCordes[existingIdx] = newEntry;
+      } else {
+        newCordes.push(newEntry);
+      }
+    }
+    return newCordes;
+  }
+
   // ── Orchestre mutations ──
   function addOrchestreItem(pId, section, nom) {
     updatePiece(pId, (p) => {
       const orch = p.orchestre || { bois: [], cuivres: [], cordes: [], autres: [] };
-      return { ...p, orchestre: { ...orch, [section]: [...(orch[section] || []), nom] } };
+      let newSection = [...(orch[section] || []), nom];
+      // Auto-complete cordes if V1 was just added
+      if (section === "cordes") {
+        const parsed = parseCordeName(nom);
+        if (parsed && parsed.key === "v1" && parsed.number !== null) {
+          newSection = applyCordesAutoComplete(newSection, parsed.number);
+        }
+      }
+      return { ...p, orchestre: { ...orch, [section]: newSection } };
     });
   }
   function deleteOrchestreItem(pId, section, idx) {
@@ -502,6 +555,13 @@ export default function App() {
     updatePiece(pId, (p) => {
       const orch = { ...p.orchestre };
       orch[section] = orch[section].map((it, i) => i === idx ? newName : it);
+      // Auto-complete cordes if V1 was just renamed
+      if (section === "cordes") {
+        const parsed = parseCordeName(newName);
+        if (parsed && parsed.key === "v1" && parsed.number !== null) {
+          orch[section] = applyCordesAutoComplete(orch[section], parsed.number);
+        }
+      }
       return { ...p, orchestre: orch };
     });
   }
@@ -1534,15 +1594,40 @@ export default function App() {
                           onDelete={() => deleteOrchestreItem(piece.id, g.key, i)}
                         />
                       ))}
-                      <button
-                        onClick={() => {
-                          const nom = prompt(`Ajouter (${g.label}) — ex: "16 Violons I" :`);
-                          if (nom && nom.trim()) addOrchestreItem(piece.id, g.key, nom.trim());
-                        }}
-                        style={{ fontSize: 11, color: col.hex, background: "none", border: "none", cursor: "pointer", padding: "4px 0", fontWeight: 600 }}
-                      >
-                        + Ajouter
-                      </button>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        <button
+                          onClick={() => {
+                            const nom = prompt(`Ajouter (${g.label}) — ex: "16 Violons I" :`);
+                            if (nom && nom.trim()) addOrchestreItem(piece.id, g.key, nom.trim());
+                          }}
+                          style={{ fontSize: 11, color: col.hex, background: "none", border: "none", cursor: "pointer", padding: "4px 0", fontWeight: 600 }}
+                        >
+                          + Ajouter
+                        </button>
+                        {g.key === "cordes" && (
+                          <button
+                            onClick={() => {
+                              const v1Input = prompt("Nombre de Violons I (ex: 14) :");
+                              if (!v1Input) return;
+                              const v1 = parseInt(v1Input, 10);
+                              if (isNaN(v1) || v1 < 0) return;
+                              updatePiece(piece.id, (p) => {
+                                const orch = p.orchestre || { bois: [], cuivres: [], cordes: [], autres: [] };
+                                let cordes = [...(orch.cordes || [])];
+                                // Set or update V1
+                                const v1Idx = findCordeIndex(cordes, "v1");
+                                if (v1Idx >= 0) { cordes[v1Idx] = `${v1} Violons I`; } else { cordes.push(`${v1} Violons I`); }
+                                // Apply auto-complete for other strings
+                                cordes = applyCordesAutoComplete(cordes, v1);
+                                return { ...p, orchestre: { ...orch, cordes } };
+                              });
+                            }}
+                            style={{ fontSize: 11, color: col.hex, background: col.hex + "15", border: `1px solid ${col.hex}33`, borderRadius: 6, cursor: "pointer", padding: "3px 8px", fontWeight: 600 }}
+                          >
+                            🔄 Ratio standard
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
