@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
-import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor } from "./utils.js";
+import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini } from "./pdfParser.js";
 import { useConcerts, usePhotos } from "./useStorage.js";
 import { S } from "./styles.js";
@@ -620,36 +620,52 @@ export default function App() {
     if (pieceId === id) goHome();
   }
   function addItem(pId, rId, cat, nom) {
-    updatePiece(pId, (p) => ({
-      ...p,
-      percus: p.percus.map((r) =>
-        r.id === rId ? { ...r, items: [...r.items, { cat, nom, notes: "" }] } : r
-      ),
-    }));
+    updatePiece(pId, (p) => {
+      const updated = {
+        ...p,
+        percus: p.percus.map((r) =>
+          r.id === rId ? { ...r, items: [...r.items, { cat, nom, notes: "" }] } : r
+        ),
+      };
+      updated.percusGlobalText = generatePercusGlobalText(updated.percus);
+      return updated;
+    });
   }
   function deleteItem(pId, rId, idx) {
-    updatePiece(pId, (p) => ({
-      ...p,
-      percus: p.percus.map((r) =>
-        r.id === rId ? { ...r, items: r.items.filter((_, i) => i !== idx) } : r
-      ),
-    }));
+    updatePiece(pId, (p) => {
+      const updated = {
+        ...p,
+        percus: p.percus.map((r) =>
+          r.id === rId ? { ...r, items: r.items.filter((_, i) => i !== idx) } : r
+        ),
+      };
+      updated.percusGlobalText = generatePercusGlobalText(updated.percus);
+      return updated;
+    });
   }
   function updateItemNotes(pId, rId, idx, notes) {
-    updatePiece(pId, (p) => ({
-      ...p,
-      percus: p.percus.map((r) =>
-        r.id === rId ? { ...r, items: r.items.map((it, i) => i === idx ? { ...it, notes } : it) } : r
-      ),
-    }));
+    updatePiece(pId, (p) => {
+      const updated = {
+        ...p,
+        percus: p.percus.map((r) =>
+          r.id === rId ? { ...r, items: r.items.map((it, i) => i === idx ? { ...it, notes } : it) } : r
+        ),
+      };
+      updated.percusGlobalText = generatePercusGlobalText(updated.percus);
+      return updated;
+    });
   }
   function toggleItemCheck(pId, rId, idx) {
-    updatePiece(pId, (p) => ({
-      ...p,
-      percus: p.percus.map((r) =>
-        r.id === rId ? { ...r, items: r.items.map((it, i) => i === idx ? { ...it, checked: !it.checked } : it) } : r
-      ),
-    }));
+    updatePiece(pId, (p) => {
+      const updated = {
+        ...p,
+        percus: p.percus.map((r) =>
+          r.id === rId ? { ...r, items: r.items.map((it, i) => i === idx ? { ...it, checked: !it.checked } : it) } : r
+        ),
+      };
+      updated.percusGlobalText = generatePercusGlobalText(updated.percus);
+      return updated;
+    });
   }
   // ── Reorder pieces ──
   function movePiece(fromIdx, toIdx) {
@@ -666,7 +682,9 @@ export default function App() {
       const arr = [...p.percus];
       const [moved] = arr.splice(fromIdx, 1);
       arr.splice(toIdx, 0, moved);
-      return { ...p, percus: arr };
+      const updated = { ...p, percus: arr };
+      updated.percusGlobalText = generatePercusGlobalText(updated.percus);
+      return updated;
     });
   }
   function renamePercu(pId, rId, newName) {
@@ -741,7 +759,7 @@ export default function App() {
     return newCordes;
   }
 
-  // ── Helper: recalculate Daniels notation + mobilier for a piece ──
+  // ── Helper: recalculate Daniels notation + mobilier + percusGlobalText for a piece ──
   function recalcDaniels(p) {
     const notation = calculateDanielsNotation(p.orchestre, p.percus);
     const mobilier = calculateMobilier(p.orchestre, p.percus);
@@ -757,6 +775,8 @@ export default function App() {
       }
       updated.mobilier = mobilier;
     }
+    // Always regenerate percussion global text
+    updated.percusGlobalText = generatePercusGlobalText(updated.percus || []);
     return updated;
   }
 
@@ -800,14 +820,18 @@ export default function App() {
     });
   }
   function renameItem(pId, rId, idx, newName) {
-    updatePiece(pId, (p) => ({
-      ...p,
-      percus: p.percus.map((r) =>
-        r.id === rId
-          ? { ...r, items: r.items.map((it, i) => (i === idx ? { ...it, nom: newName } : it)) }
-          : r
-      ),
-    }));
+    updatePiece(pId, (p) => {
+      const updated = {
+        ...p,
+        percus: p.percus.map((r) =>
+          r.id === rId
+            ? { ...r, items: r.items.map((it, i) => (i === idx ? { ...it, nom: newName } : it)) }
+            : r
+        ),
+      };
+      updated.percusGlobalText = generatePercusGlobalText(updated.percus);
+      return updated;
+    });
   }
   function addPhoto(pieceKey, photoData) {
     setPhotos((prev) => ({
@@ -857,6 +881,7 @@ export default function App() {
           plans: data.planDataUrls?.length > 0 ? data.planDataUrls : (data.planDataUrl ? [data.planDataUrl] : []),
           couleur: "blanc",
           percus: percusList,
+          percusGlobalText: generatePercusGlobalText(percusList),
         };
         setPieces((prev) => [...prev, newPiece]);
         setPieceId(newPiece.id);
@@ -910,6 +935,7 @@ export default function App() {
                   nom: pole.nom,
                   items: pole.items,
                 }));
+                updates.percusGlobalText = generatePercusGlobalText(updates.percus);
               }
             }
             return { ...p, ...updates };
@@ -1015,16 +1041,16 @@ export default function App() {
             return aiNum !== null && pNum !== null && aiNum === pNum;
           });
           if (!existing) {
-            updatePiece(targetPieceId, p => ({
-              ...p,
-              percus: [...p.percus, { id: uid(), nom: aiPole.nom, items: aiPole.items }],
-            }));
+            updatePiece(targetPieceId, p => {
+              const newPercus = [...p.percus, { id: uid(), nom: aiPole.nom, items: aiPole.items }];
+              return { ...p, percus: newPercus, percusGlobalText: generatePercusGlobalText(newPercus) };
+            });
             autoFilled.push(aiPole.nom);
           } else if (existing.items.length === 0) {
-            updatePiece(targetPieceId, p => ({
-              ...p,
-              percus: p.percus.map(r => r.id === existing.id ? { ...r, items: aiPole.items } : r),
-            }));
+            updatePiece(targetPieceId, p => {
+              const newPercus = p.percus.map(r => r.id === existing.id ? { ...r, items: aiPole.items } : r);
+              return { ...p, percus: newPercus, percusGlobalText: generatePercusGlobalText(newPercus) };
+            });
             autoFilled.push(aiPole.nom);
           }
         }
@@ -1292,18 +1318,20 @@ export default function App() {
                       </div>
                     )}
                     <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                      <button onClick={() => updatePiece(mergeData.pieceId, p => ({
-                        ...p, percus: p.percus.map(r => r.id === existingPole.id ? { ...r, items: aiPole.items } : r),
-                      }))} style={btnActive}>Écraser tout</button>
+                      <button onClick={() => updatePiece(mergeData.pieceId, p => {
+                        const newPercus = p.percus.map(r => r.id === existingPole.id ? { ...r, items: aiPole.items } : r);
+                        return { ...p, percus: newPercus, percusGlobalText: generatePercusGlobalText(newPercus) };
+                      })} style={btnActive}>Écraser tout</button>
                       {onlyAi.length > 0 && (
-                        <button onClick={() => updatePiece(mergeData.pieceId, p => ({
-                          ...p, percus: p.percus.map(r => {
+                        <button onClick={() => updatePiece(mergeData.pieceId, p => {
+                          const newPercus = p.percus.map(r => {
                             if (r.id !== existingPole.id) return r;
                             const names = new Set(r.items.map(it => it.nom.toLowerCase()));
                             const add = aiPole.items.filter(it => !names.has(it.nom.toLowerCase()));
                             return { ...r, items: [...r.items, ...add] };
-                          }),
-                        }))} style={btnActive}>+ Ajouter {onlyAi.length} nouveau{onlyAi.length > 1 ? "x" : ""}</button>
+                          });
+                          return { ...p, percus: newPercus, percusGlobalText: generatePercusGlobalText(newPercus) };
+                        })} style={btnActive}>+ Ajouter {onlyAi.length} nouveau{onlyAi.length > 1 ? "x" : ""}</button>
                       )}
                       <button style={btnChoice} disabled>Ignorer</button>
                     </div>
@@ -2036,6 +2064,23 @@ export default function App() {
             );
           })()}
 
+          {/* ── 📋 Texte de la pièce (3 sections : Orchestre + Mobilier + Percussions) ── */}
+          <div style={{ marginTop: 14, marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#78716C", textTransform: "uppercase", marginBottom: 6 }}>📋 Texte de la pièce</div>
+            <pre style={{
+              fontSize: 11, color: "#1C1917", background: "#FAFAF9", border: "1px solid #E7E5E4",
+              borderRadius: 8, padding: 12, whiteSpace: "pre-wrap", wordBreak: "break-word",
+              fontFamily: "'DM Mono', 'Courier New', monospace", lineHeight: 1.5,
+              maxHeight: "40vh", overflowY: "auto",
+            }}>
+              {generatePieceText(piece)}
+            </pre>
+            <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+              <button onClick={() => copyToClipboard(generatePieceText(piece))} style={{ ...S.btnSecondary, flex: 1, fontSize: 11 }}>📋 Copier texte</button>
+              <button onClick={() => downloadTxt(piece)} style={{ ...S.btnSecondary, flex: 1, fontSize: 11 }}>↓ Télécharger TXT</button>
+            </div>
+          </div>
+
           {/* Notes */}
           <textarea
             value={piece.notes || ""}
@@ -2050,7 +2095,6 @@ export default function App() {
           />
 
           <button onClick={() => goTxt(piece.id)} style={{ ...S.btnSecondary, marginTop: 10 }}>☰ Liste TXT</button>
-          <button onClick={() => downloadTxt(piece)} style={{ ...S.btnSecondary, marginTop: 6 }}>↓ Télécharger TXT</button>
           {(photos[piece.id] || []).length > 0 && (
             <button onClick={() => setShowPhotoDownload("piece")} style={{ ...S.btnSecondary, marginTop: 6 }}>📥 Télécharger photos</button>
           )}

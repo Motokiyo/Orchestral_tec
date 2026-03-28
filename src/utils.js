@@ -21,117 +21,194 @@ function formatItemLines(items) {
   });
 }
 
-export function generateTxt(piece) {
-  if (!piece) return "";
-  const col = BARNIER[piece.couleur];
+// ── Generate percussion global text from all poles ──
+export function generatePercusGlobalText(percus) {
+  if (!percus || percus.length === 0) return "";
+  let text = "";
+  percus.forEach((pole, index) => {
+    text += `Pôle ${index + 1} : ${pole.nom}\n`;
+    if (pole.items && pole.items.length > 0) {
+      pole.items.forEach(item => {
+        const nom = typeof item === "string" ? item : item.nom || "";
+        text += `  • ${nom}\n`;
+      });
+    } else {
+      text += "  (aucun instrument)\n";
+    }
+    if (index < percus.length - 1) text += "\n";
+  });
+  return text;
+}
+
+// ── Generate mobilier text section ──
+function generateMobilierText(mob) {
+  if (!mob) return "[Aucun mobilier]\n";
   const lines = [];
 
-  lines.push("=".repeat(50));
-  lines.push("  " + piece.titre);
-  if (piece.compositeur) lines.push("  " + piece.compositeur + (piece.duree ? " — " + piece.duree : ""));
-  if (piece.date || piece.salle) lines.push("  " + [piece.salle, piece.date].filter(Boolean).join(" — "));
-  if (piece.chef) lines.push("  Chef : " + piece.chef);
-  if (piece.effectif) lines.push("  Effectif : " + piece.effectif);
-  lines.push("  Barnier : " + (col ? col.name : piece.couleur));
-  lines.push("=".repeat(50));
+  lines.push("DÉCOMPTE GÉNÉRAL");
+  lines.push("─".repeat(16));
+  if (mob.general) {
+    lines.push("• Pupitres : " + (mob.general.pupitres || 0));
+    lines.push("• Chaises normales : " + (mob.general.chaisesNormales || 0));
+    lines.push("• Chaises hautes : " + (mob.general.chaisesHautes || 0));
+    lines.push("• Chaises spéciales : " + (mob.general.chaisesSpeciales || 0));
+  }
   lines.push("");
 
-  if (piece.orchestre) {
-    const sections = [
-      { key: "bois", label: "BOIS" },
-      { key: "cuivres", label: "CUIVRES" },
-      { key: "cordes", label: "CORDES" },
-      { key: "autres", label: "AUTRES" },
-    ];
-    const hasItems = sections.some((s) => (piece.orchestre[s.key] || []).length > 0);
-    if (hasItems) {
-      lines.push("-".repeat(40));
-      lines.push("  ORCHESTRE");
-      lines.push("-".repeat(40));
-      for (const s of sections) {
-        const items = piece.orchestre[s.key] || [];
-        if (items.length > 0) {
-          lines.push("");
-          lines.push("  " + s.label);
-          for (const it of items) lines.push("    - " + it);
-        }
-      }
-      lines.push("");
-    }
-  }
+  lines.push("STANDS PAR SECTION");
+  lines.push("─".repeat(18));
 
-  for (const percu of piece.percus) {
-    lines.push("-".repeat(40));
-    lines.push("  " + percu.nom.toUpperCase());
-    lines.push("-".repeat(40));
-    const byCat = groupItemsByCategory(percu.items);
-    for (const [cat, items] of Object.entries(byCat)) {
-      lines.push("");
-      lines.push("  " + cat.toUpperCase());
-      lines.push(...formatItemLines(items));
-    }
-    lines.push("");
-  }
+  const standSections = [
+    { key: "cordes", emoji: "🎻", label: "CORDES" },
+    { key: "bois", emoji: "🎵", label: "BOIS" },
+    { key: "cuivres", emoji: "🎺", label: "CUIVRES" },
+    { key: "percus", emoji: "🥁", label: "PERCUSSIONS" },
+    { key: "autres", emoji: "➕", label: "AUTRES" },
+  ];
 
-  // ── Mobilier section ──
-  const mob = piece.mobilier;
-  if (mob) {
-    lines.push("═".repeat(35));
-    lines.push("📦 MOBILIER");
-    lines.push("═".repeat(35));
-    lines.push("");
-
-    // Décompte général
-    lines.push("DÉCOMPTE GÉNÉRAL");
-    lines.push("─".repeat(16));
-    if (mob.general) {
-      lines.push("• Pupitres : " + (mob.general.pupitres || 0));
-      lines.push("• Chaises normales : " + (mob.general.chaisesNormales || 0));
-      lines.push("• Chaises hautes : " + (mob.general.chaisesHautes || 0));
-      lines.push("• Chaises spéciales : " + (mob.general.chaisesSpeciales || 0));
-    }
-    lines.push("");
-
-    // Stands par section
-    lines.push("STANDS PAR SECTION");
-    lines.push("─".repeat(18));
-
-    const standSections = [
-      { key: "cordes", emoji: "🎻", label: "CORDES" },
-      { key: "bois", emoji: "🎺", label: "BOIS" },
-      { key: "cuivres", emoji: "🎺", label: "CUIVRES" },
-      { key: "percus", emoji: "🥁", label: "PERCUSSIONS" },
-      { key: "autres", emoji: "➕", label: "AUTRES" },
-    ];
-
-    if (mob.stands) {
-      for (const sec of standSections) {
-        const items = mob.stands[sec.key] || [];
-        const visible = items.filter(s => s.qty > 0);
-        if (visible.length > 0) {
-          lines.push("");
-          lines.push(sec.emoji + " " + sec.label);
-          for (const s of visible) {
-            lines.push("• " + s.type + " : " + s.qty);
-          }
-        }
-      }
-
-      // Custom stands (autresCustom)
-      const custom = mob.stands.autresCustom || [];
-      const visibleCustom = custom.filter(s => s.qty > 0);
-      if (visibleCustom.length > 0) {
+  if (mob.stands) {
+    for (const sec of standSections) {
+      const items = mob.stands[sec.key] || [];
+      const visible = items.filter(s => s.qty > 0);
+      if (visible.length > 0) {
         lines.push("");
-        lines.push("🔧 PERSONNALISÉ");
-        for (const s of visibleCustom) {
+        lines.push(sec.emoji + " " + sec.label);
+        for (const s of visible) {
           lines.push("• " + s.type + " : " + s.qty);
         }
       }
     }
-    lines.push("");
+
+    const custom = mob.stands.autresCustom || [];
+    const visibleCustom = custom.filter(s => s.qty > 0);
+    if (visibleCustom.length > 0) {
+      lines.push("");
+      lines.push("🔧 PERSONNALISÉ");
+      for (const s of visibleCustom) {
+        lines.push("• " + s.type + " : " + s.qty);
+      }
+    }
   }
 
   return lines.join("\n");
+}
+
+// ── Generate orchestre text section ──
+function generateOrchestreText(orchestre) {
+  if (!orchestre) return "[Aucun orchestre]\n";
+  const sections = [
+    { key: "bois", label: "BOIS" },
+    { key: "cuivres", label: "CUIVRES" },
+    { key: "cordes", label: "CORDES" },
+    { key: "autres", label: "AUTRES" },
+  ];
+  const lines = [];
+  for (const s of sections) {
+    const items = orchestre[s.key] || [];
+    if (items.length > 0) {
+      lines.push("  " + s.label);
+      for (const it of items) lines.push("    - " + it);
+      lines.push("");
+    }
+  }
+  return lines.join("\n");
+}
+
+// ── Generate piece text for UI display (3 sections with separators) ──
+export function generatePieceText(piece) {
+  if (!piece) return "";
+  let text = "";
+
+  // SECTION 1: ORCHESTRE
+  text += "═".repeat(35) + "\n";
+  text += "🎼 ORCHESTRE (dont Timbalier)\n";
+  text += "═".repeat(35) + "\n\n";
+  text += generateOrchestreText(piece.orchestre);
+  if (piece.effectif) {
+    text += "Nomenclature Daniels : " + piece.effectif + "\n";
+  }
+  // Calculate total musicians
+  let totalMus = 0;
+  if (piece.orchestre) {
+    for (const section of ["bois", "cuivres", "cordes", "autres"]) {
+      for (const item of piece.orchestre[section] || []) {
+        const m = (typeof item === "string" ? item : "").match(/^(\d+)\s/);
+        totalMus += m ? parseInt(m[1], 10) : 1;
+      }
+    }
+  }
+  text += "Nombre de musiciens : " + totalMus + "\n";
+  text += "\n" + "─".repeat(37) + "\n\n";
+
+  // SECTION 2: MOBILIER
+  text += "═".repeat(35) + "\n";
+  text += "📦 MOBILIER\n";
+  text += "═".repeat(35) + "\n\n";
+  text += generateMobilierText(piece.mobilier) + "\n";
+  text += "\n" + "─".repeat(37) + "\n\n";
+
+  // SECTION 3: PERCUSSIONS
+  text += "═".repeat(35) + "\n";
+  text += "🥁 PERCUSSIONS\n";
+  text += "═".repeat(35) + "\n\n";
+  text += piece.percusGlobalText || generatePercusGlobalText(piece.percus) || "[Aucune percussion]\n";
+
+  return text;
+}
+
+// ── Generate TXT export (3 sections with form feed page breaks) ──
+export function generateTxt(piece) {
+  if (!piece) return "";
+  const col = BARNIER[piece.couleur];
+  let text = "";
+
+  // Header
+  text += "=".repeat(50) + "\n";
+  text += "  " + piece.titre + "\n";
+  if (piece.compositeur) text += "  " + piece.compositeur + (piece.duree ? " — " + piece.duree : "") + "\n";
+  if (piece.date || piece.salle) text += "  " + [piece.salle, piece.date].filter(Boolean).join(" — ") + "\n";
+  if (piece.chef) text += "  Chef : " + piece.chef + "\n";
+  text += "  Barnier : " + (col ? col.name : piece.couleur) + "\n";
+  text += "=".repeat(50) + "\n\n";
+
+  // SECTION 1: ORCHESTRE
+  text += "═".repeat(35) + "\n";
+  text += "🎼 ORCHESTRE (dont Timbalier)\n";
+  text += "═".repeat(35) + "\n\n";
+  text += generateOrchestreText(piece.orchestre);
+  if (piece.effectif) {
+    text += "Nomenclature Daniels : " + piece.effectif + "\n";
+  }
+  let totalMus = 0;
+  if (piece.orchestre) {
+    for (const section of ["bois", "cuivres", "cordes", "autres"]) {
+      for (const item of piece.orchestre[section] || []) {
+        const m = (typeof item === "string" ? item : "").match(/^(\d+)\s/);
+        totalMus += m ? parseInt(m[1], 10) : 1;
+      }
+    }
+  }
+  text += "Nombre de musiciens : " + totalMus + "\n";
+
+  // PAGE BREAK
+  text += "\n\f\n\n";
+
+  // SECTION 2: MOBILIER
+  text += "═".repeat(35) + "\n";
+  text += "📦 MOBILIER\n";
+  text += "═".repeat(35) + "\n\n";
+  text += generateMobilierText(piece.mobilier) + "\n";
+
+  // PAGE BREAK
+  text += "\n\f\n\n";
+
+  // SECTION 3: PERCUSSIONS
+  text += "═".repeat(35) + "\n";
+  text += "🥁 PERCUSSIONS\n";
+  text += "═".repeat(35) + "\n\n";
+  text += piece.percusGlobalText || generatePercusGlobalText(piece.percus) || "[Aucune percussion]\n";
+
+  return text;
 }
 
 export function downloadTxt(piece) {
