@@ -438,13 +438,13 @@ function calculateDanielsNotation(orchestre, percus) {
   const percusCounts = matchSection(allPercuContext, DANIELS_PERCUS);
   const cordesCounts = matchSection(cordesItems, DANIELS_CORDES);
   
-  // If percus poles exist, count them as percussion personnel
-  if (percus && percus.length > 0 && percusCounts.every(c => c === 0)) {
-    // Count timbalier if any pole name contains "timbal"
+  // If percus poles exist, use them as authoritative source for timbalier/percussionist counts
+  // (orchestre.autres may have harpe/clavier info but percus poles are the real personnel)
+  if (percus && percus.length > 0) {
     const timbPoles = percus.filter(p => /timbal/i.test(p.nom));
-    const percPoles = percus.filter(p => !/timbal/i.test(p.nom));
+    const percPoles = percus.filter(p => !/timbal/i.test(p.nom) && !/harp/i.test(p.nom) && !/piano|c[ée]lesta|clav/i.test(p.nom));
     percusCounts[0] = timbPoles.length; // Timb
-    percusCounts[1] = percPoles.length; // Perc
+    if (percPoles.length > 0) percusCounts[1] = percPoles.length; // Perc
   }
   
   const hasBois = boisCounts.some(c => c > 0);
