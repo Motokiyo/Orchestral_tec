@@ -474,6 +474,100 @@ function calculateTotalMusicians(orchestre) {
   return total;
 }
 
+// ── Calculate mobilier (furniture) from orchestre + percus ──
+function calculateMobilier(orchestre, percus) {
+  if (!orchestre) return null;
+
+  const boisItems = orchestre.bois || [];
+  const cuivresItems = orchestre.cuivres || [];
+  const cordesItems = orchestre.cordes || [];
+
+  // ── Parse cordes counts ──
+  const cordesCounts = { v1: 0, v2: 0, alto: 0, vlc: 0, cb: 0 };
+  for (const item of cordesItems) {
+    const str = typeof item === "string" ? item : "";
+    const num = extractNumberFromItem(str);
+    if (/violons?\s*I(?:\b|$)/i.test(str)) cordesCounts.v1 = num;
+    else if (/violons?\s*II/i.test(str)) cordesCounts.v2 = num;
+    else if (/altos?/i.test(str)) cordesCounts.alto = num;
+    else if (/violoncelles?|vlc|vc\b/i.test(str)) cordesCounts.vlc = num;
+    else if (/contrebasses?|cb\b/i.test(str)) cordesCounts.cb = num;
+  }
+
+  // ── Parse bois items → stands ──
+  const boisStands = [];
+  for (const item of boisItems) {
+    const str = typeof item === "string" ? item : "";
+    const num = extractNumberFromItem(str);
+    // Extract instrument name (remove leading number)
+    const name = str.replace(/^\d+\s*/, "").trim() || str;
+    boisStands.push({ type: `Stands pour ${name.toLowerCase()}`, qty: num });
+  }
+
+  // ── Parse cuivres items → stands ──
+  const cuivresStands = [];
+  for (const item of cuivresItems) {
+    const str = typeof item === "string" ? item : "";
+    const num = extractNumberFromItem(str);
+    const name = str.replace(/^\d+\s*/, "").trim() || str;
+    cuivresStands.push({ type: `Stands pour ${name.toLowerCase()}`, qty: num });
+  }
+
+  // ── Percussions ──
+  const nbPercus = percus ? percus.length : 0;
+  const percusStands = [
+    { type: "Tabourets", qty: nbPercus },
+  ];
+
+  // ── Autres (fixed) ──
+  const autresStands = [
+    { type: "Podium chef", qty: 1 },
+    { type: "Pupitre chef", qty: 1 },
+  ];
+
+  // ── Cordes stands ──
+  const cordesStands = [];
+  if (cordesCounts.cb > 0) {
+    cordesStands.push({ type: "Stands de contrebasse", qty: cordesCounts.cb });
+    cordesStands.push({ type: "Planches à pic CB", qty: cordesCounts.cb });
+  }
+  if (cordesCounts.vlc > 0) {
+    cordesStands.push({ type: "Planches à pic Vlc", qty: cordesCounts.vlc });
+  }
+
+  // ── General counts ──
+  // Pupitres: cordes share 2 per pupitre, bois/cuivres 1 stand each (already counted above)
+  const pupiCordes = Math.ceil(cordesCounts.v1 / 2) + Math.ceil(cordesCounts.v2 / 2) +
+    Math.ceil(cordesCounts.alto / 2) + Math.ceil(cordesCounts.vlc / 2);
+  const pupiBois = boisItems.length; // one pupitre per line in bois
+  const pupiCuivres = cuivresItems.length;
+  const pupitres = pupiCordes + pupiBois + pupiCuivres + (nbPercus > 0 ? nbPercus : 0) + 1; // +1 for chef
+
+  // Chaises normales = all musicians EXCEPT CB
+  const totalBois = boisItems.reduce((sum, it) => sum + extractNumberFromItem(it), 0);
+  const totalCuivres = cuivresItems.reduce((sum, it) => sum + extractNumberFromItem(it), 0);
+  const chaisesNormales = cordesCounts.v1 + cordesCounts.v2 + cordesCounts.alto + cordesCounts.vlc +
+    totalBois + totalCuivres + nbPercus;
+
+  const chaisesHautes = cordesCounts.cb;
+
+  return {
+    general: {
+      pupitres,
+      chaisesNormales,
+      chaisesHautes,
+      chaisesSpeciales: 0,
+    },
+    stands: {
+      cordes: cordesStands,
+      bois: boisStands,
+      cuivres: cuivresStands,
+      percus: percusStands,
+      autres: autresStands,
+    },
+  };
+}
+
 export default function App() {
   const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }]);
   const [screen, setScreen] = useState("concerts");
@@ -647,10 +741,23 @@ export default function App() {
     return newCordes;
   }
 
-  // ── Helper: recalculate Daniels notation for a piece ──
+  // ── Helper: recalculate Daniels notation + mobilier for a piece ──
   function recalcDaniels(p) {
     const notation = calculateDanielsNotation(p.orchestre, p.percus);
-    return notation ? { ...p, effectif: notation } : p;
+    const mobilier = calculateMobilier(p.orchestre, p.percus);
+    const updated = notation ? { ...p, effectif: notation } : { ...p };
+    if (mobilier) {
+      // Preserve manually edited chaisesSpeciales and autresStands
+      const prev = p.mobilier || {};
+      if (prev.general && typeof prev.general.chaisesSpeciales === "number") {
+        mobilier.general.chaisesSpeciales = prev.general.chaisesSpeciales;
+      }
+      if (prev.stands && prev.stands.autresCustom) {
+        mobilier.stands.autresCustom = prev.stands.autresCustom;
+      }
+      updated.mobilier = mobilier;
+    }
+    return updated;
   }
 
   // ── Orchestre mutations ──
@@ -727,6 +834,13 @@ export default function App() {
       try {
         const localData = await extractFromFile(file);
         const data = await enrichWithAi(localData);
+        const percusList = data.percus.length > 0
+            ? data.percus.map((p, i) => ({
+                id: `p${i + 1}`,
+                nom: p.nom,
+                items: p.items,
+              }))
+            : [{ id: "p1", nom: "Percu 1", items: [] }];
         const newPiece = {
           id: uid(),
           titre: data.titre || file.name.replace(/\.(pdf|jpe?g|png|txt)$/i, ""),
@@ -738,16 +852,11 @@ export default function App() {
           effectif: data.effectif || "",
           effectifDetail: data.effectifDetail || null,
           orchestre: data.orchestre || null,
+          mobilier: data.orchestre ? calculateMobilier(data.orchestre, percusList) : null,
           planDataUrl: data.planDataUrl || null,
           plans: data.planDataUrls?.length > 0 ? data.planDataUrls : (data.planDataUrl ? [data.planDataUrl] : []),
           couleur: "blanc",
-          percus: data.percus.length > 0
-            ? data.percus.map((p, i) => ({
-                id: `p${i + 1}`,
-                nom: p.nom,
-                items: p.items,
-              }))
-            : [{ id: "p1", nom: "Percu 1", items: [] }],
+          percus: percusList,
         };
         setPieces((prev) => [...prev, newPiece]);
         setPieceId(newPiece.id);
@@ -1801,6 +1910,131 @@ export default function App() {
               </div>
             )}
           </div>
+
+          {/* ── 📦 Mobilier section ── */}
+          {piece.orchestre && (() => {
+            const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus);
+            if (!mob) return null;
+            const isMobOpen = percuId === "mobilier";
+            return (
+              <div style={{ marginTop: 14, marginBottom: 10 }}>
+                <div
+                  onClick={() => setPercuId(isMobOpen ? null : "mobilier")}
+                  style={{
+                    background: isMobOpen ? col.bg : "#FAFAF9",
+                    border: `1px solid ${isMobOpen ? col.hex + "44" : "#E7E5E4"}`,
+                    borderRadius: 10, padding: "12px 14px", cursor: "pointer",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>📦 Mobilier</div>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: col.hex, background: col.bg, padding: "1px 8px", borderRadius: 10 }}>
+                          {mob.general.pupitres} pup. · {mob.general.chaisesNormales + mob.general.chaisesHautes} ch.
+                        </span>
+                      </div>
+                    </div>
+                    <span style={{ color: "#A8A29E" }}>{isMobOpen ? "▾" : "▸"}</span>
+                  </div>
+                </div>
+                {isMobOpen && (
+                  <div style={{ padding: "10px 4px 4px" }}>
+                    {/* MOBILIER GÉNÉRAL */}
+                    <div style={{
+                      background: col.bg, border: `1px solid ${col.hex}33`, borderRadius: 8,
+                      padding: "10px 12px", marginBottom: 10,
+                    }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>📦 Mobilier Général</div>
+                      <div style={{ fontSize: 13, color: "#1C1917", lineHeight: 1.8 }}>
+                        <div>• Pupitres : <strong>{mob.general.pupitres}</strong></div>
+                        <div>• Chaises normales : <strong>{mob.general.chaisesNormales}</strong></div>
+                        <div>• Chaises hautes : <strong>{mob.general.chaisesHautes}</strong> (CB)</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          • Chaises spéciales :
+                          <input
+                            type="number"
+                            min="0"
+                            value={mob.general.chaisesSpeciales || 0}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10) || 0;
+                              updatePiece(piece.id, (p) => {
+                                const m = { ...(p.mobilier || mob) };
+                                m.general = { ...m.general, chaisesSpeciales: val };
+                                return { ...p, mobilier: m };
+                              });
+                            }}
+                            style={{ width: 50, fontSize: 13, fontWeight: 700, padding: "2px 6px", border: `1px solid ${col.hex}44`, borderRadius: 6, textAlign: "center" }}
+                          />
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updatePiece(piece.id, (p) => recalcDaniels(p));
+                        }}
+                        style={{ fontSize: 12, marginTop: 6, background: col.hex + "15", border: `1px solid ${col.hex}33`, borderRadius: 6, cursor: "pointer", padding: "4px 10px", fontWeight: 600, color: col.hex }}
+                      >🔄 Recalculer</button>
+                    </div>
+
+                    {/* STANDS PAR SECTION */}
+                    {[
+                      { key: "cordes", label: "🎻 Cordes", items: mob.stands.cordes },
+                      { key: "bois", label: "🎵 Bois", items: mob.stands.bois },
+                      { key: "cuivres", label: "🎺 Cuivres", items: mob.stands.cuivres },
+                      { key: "percus", label: "🥁 Percussions", items: mob.stands.percus },
+                      { key: "autres", label: "➕ Autres", items: mob.stands.autres },
+                    ].map(section => (
+                      <div key={section.key} style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: col.hex, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{section.label}</div>
+                        {section.items.map((stand, idx) => (
+                          <div key={idx} style={{ fontSize: 13, color: "#44403C", paddingLeft: 8, lineHeight: 1.7 }}>
+                            • {stand.type} : <strong>{stand.qty}</strong>
+                          </div>
+                        ))}
+                        {section.items.length === 0 && (
+                          <div style={{ fontSize: 12, color: "#A8A29E", paddingLeft: 8, fontStyle: "italic" }}>Aucun</div>
+                        )}
+                      </div>
+                    ))}
+
+                    {/* Custom autres stands */}
+                    {(mob.stands.autresCustom || []).map((item, idx) => (
+                      <div key={`custom-${idx}`} style={{ fontSize: 13, color: "#44403C", paddingLeft: 8, lineHeight: 1.7, display: "flex", alignItems: "center", gap: 6 }}>
+                        • {item.type} : <strong>{item.qty}</strong>
+                        <button
+                          onClick={() => updatePiece(piece.id, (p) => {
+                            const m = { ...(p.mobilier || mob) };
+                            const s = { ...m.stands };
+                            s.autresCustom = (s.autresCustom || []).filter((_, i) => i !== idx);
+                            m.stands = s;
+                            return { ...p, mobilier: m };
+                          })}
+                          style={{ background: "none", border: "none", fontSize: 12, color: "#A8A29E", cursor: "pointer", padding: "0 4px" }}
+                        >✕</button>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => {
+                        const name = prompt("Nom du stand/mobilier :");
+                        if (!name || !name.trim()) return;
+                        const qty = parseInt(prompt("Quantité :", "1"), 10) || 1;
+                        updatePiece(piece.id, (p) => {
+                          const m = { ...(p.mobilier || mob) };
+                          const s = { ...m.stands };
+                          s.autresCustom = [...(s.autresCustom || []), { type: name.trim(), qty }];
+                          m.stands = s;
+                          return { ...p, mobilier: m };
+                        });
+                      }}
+                      style={{ fontSize: 11, color: col.hex, background: "none", border: "none", cursor: "pointer", padding: "4px 0", fontWeight: 600, marginTop: 4 }}
+                    >+ Ajouter un élément</button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Notes */}
           <textarea
