@@ -679,7 +679,7 @@ export default function App() {
     if (mobilier) {
       // Preserve manually edited chaisesSpeciales and autresStands
       const prev = p.mobilier || {};
-      if (prev.general && Array.isArray(prev.general.chaisesSpeciales)) {
+      if (prev.general && typeof prev.general.chaisesSpeciales === "number") {
         mobilier.general.chaisesSpeciales = prev.general.chaisesSpeciales;
       }
       if (prev.stands && prev.stands.autresCustom) {
@@ -1924,13 +1924,7 @@ export default function App() {
                         <div>• Pupitres : <strong>{mob.general.pupitres}</strong></div>
                         <div>• Chaises normales : <strong>{mob.general.chaisesNormales}</strong></div>
                         <div>• Chaises hautes : <strong>{mob.general.chaisesHautesDetail || mob.general.chaisesHautes}</strong></div>
-                        {(Array.isArray(mob.general.chaisesSpeciales) && mob.general.chaisesSpeciales.filter(s => s.qty > 0).length > 0) ? (
-                          <div>• Chaises spéciales : {mob.general.chaisesSpeciales.filter(s => s.qty > 0).map((s, i, arr) => (
-                            <span key={i}><strong>{s.type} ({s.qty})</strong>{i < arr.length - 1 ? ', ' : ''}</span>
-                          ))}</div>
-                        ) : (typeof mob.general.chaisesSpeciales === 'number' && mob.general.chaisesSpeciales > 0) ? (
-                          <div>• Chaises timbalier : <strong>{mob.general.chaisesSpeciales}</strong></div>
-                        ) : null}
+                        <div>• Chaises timbalier : <strong>{mob.general.chaisesSpeciales || 0}</strong></div>
                       </div>
                       <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
                         <button
@@ -2016,6 +2010,7 @@ export default function App() {
                           { key: "pupitres", label: "Pupitres" },
                           { key: "chaisesNormales", label: "Chaises normales" },
                           { key: "chaisesHautes", label: "Chaises hautes" },
+                          { key: "chaisesSpeciales", label: "Chaises timbalier" },
                         ].map(field => (
                           <div key={field.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
                             <span style={{ fontSize: 12, color: "#44403C" }}>{field.label}</span>
@@ -2050,68 +2045,6 @@ export default function App() {
                             }}
                           />
                         </div>
-                      </div>
-
-                      {/* Chaises spéciales (editable list) */}
-                      <div style={{
-                        background: "#fff", border: "1px solid #E7E5E4", borderRadius: 8,
-                        padding: "10px 12px", marginBottom: 8,
-                      }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase", letterSpacing: 1 }}>🪑 Chaises spéciales</div>
-                          <button
-                            onClick={() => updateMob(m => {
-                              if (!Array.isArray(m.general.chaisesSpeciales)) m.general.chaisesSpeciales = [];
-                              m.general.chaisesSpeciales = [...m.general.chaisesSpeciales, { type: "Nouveau type", qty: 1 }];
-                            })}
-                            style={{ fontSize: 16, fontWeight: 700, background: col.hex + "15", border: `1px solid ${col.hex}33`, borderRadius: 6, cursor: "pointer", padding: "2px 8px", color: col.hex, lineHeight: 1 }}
-                          >+</button>
-                        </div>
-                        {(() => {
-                          const items = Array.isArray(editMob.general.chaisesSpeciales) ? editMob.general.chaisesSpeciales : [];
-                          if (items.length === 0) return (
-                            <div style={{ fontSize: 11, color: "#A8A29E", fontStyle: "italic", padding: "4px 0" }}>Aucune chaise spéciale — ajoutez des types (Tabouret piano, Chaise australienne, Chaise timbalier...)</div>
-                          );
-                          return items.map((item, idx) => (
-                            <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                              <input
-                                type="text"
-                                value={item.type}
-                                onChange={(e) => updateMob(m => {
-                                  if (!Array.isArray(m.general.chaisesSpeciales)) return;
-                                  m.general.chaisesSpeciales[idx].type = e.target.value;
-                                })}
-                                style={{
-                                  flex: 1, fontSize: 12, padding: "4px 8px",
-                                  border: `1px solid ${col.hex}22`, borderRadius: 6,
-                                  background: "#FAFAF9", color: "#1C1917", outline: "none",
-                                }}
-                              />
-                              <span style={{ fontSize: 11, color: "#A8A29E" }}>×</span>
-                              <input
-                                type="number"
-                                min="0"
-                                value={item.qty}
-                                onChange={(e) => updateMob(m => {
-                                  if (!Array.isArray(m.general.chaisesSpeciales)) return;
-                                  m.general.chaisesSpeciales[idx].qty = parseInt(e.target.value, 10) || 0;
-                                })}
-                                style={{
-                                  width: 55, fontSize: 13, fontWeight: 600, padding: "4px 6px",
-                                  border: `1px solid ${col.hex}44`, borderRadius: 6, textAlign: "center",
-                                  background: "#fff", color: "#1C1917", outline: "none",
-                                }}
-                              />
-                              <button
-                                onClick={() => updateMob(m => {
-                                  if (!Array.isArray(m.general.chaisesSpeciales)) return;
-                                  m.general.chaisesSpeciales = m.general.chaisesSpeciales.filter((_, i) => i !== idx);
-                                })}
-                                style={{ background: "none", border: "none", fontSize: 14, color: "#EF4444", cursor: "pointer", padding: "2px 4px" }}
-                              >✕</button>
-                            </div>
-                          ));
-                        })()}
                       </div>
 
                       {/* STANDS PAR SECTION (editable) */}
