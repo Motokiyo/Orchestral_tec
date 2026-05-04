@@ -1924,7 +1924,7 @@ export default function App() {
                         <div>• Pupitres : <strong>{mob.general.pupitres}</strong></div>
                         <div>• Chaises normales : <strong>{mob.general.chaisesNormales}</strong></div>
                         <div>• Chaises hautes : <strong>{mob.general.chaisesHautesDetail || mob.general.chaisesHautes}</strong></div>
-                        <div>• Chaises spéciales : <strong>{mob.general.chaisesSpeciales || 0}</strong></div>
+                        <div>• Chaises timbalier : <strong>{mob.general.chaisesSpeciales || 0}</strong></div>
                       </div>
                       <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
                         <button
@@ -2010,7 +2010,7 @@ export default function App() {
                           { key: "pupitres", label: "Pupitres" },
                           { key: "chaisesNormales", label: "Chaises normales" },
                           { key: "chaisesHautes", label: "Chaises hautes" },
-                          { key: "chaisesSpeciales", label: "Chaises spéciales" },
+                          { key: "chaisesSpeciales", label: "Chaises timbalier" },
                         ].map(field => (
                           <div key={field.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
                             <span style={{ fontSize: 12, color: "#44403C" }}>{field.label}</span>
@@ -2050,8 +2050,8 @@ export default function App() {
                       {/* STANDS PAR SECTION (editable) */}
                       {standSections.map(section => {
                         const items = editMob.stands[section.key] || [];
-                        // Show all items (even qty=0) in edit mode
-                        const allItems = items.length > 0 ? items : (section.key === "autres" ? [{ type: "Podium chef", qty: 1 }, { type: "Pupitre chef", qty: 1 }] : []);
+                        // Show all items (even qty=0) in edit mode — no fallback: user can delete everything
+                        const allItems = items;
                         return (
                           <div key={section.key} style={{
                             background: "#fff", border: "1px solid #E7E5E4", borderRadius: 8,

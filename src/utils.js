@@ -207,7 +207,7 @@ function generateMobilierText(mob) {
     lines.push("• Pupitres : " + (mob.general.pupitres || 0));
     lines.push("• Chaises normales : " + (mob.general.chaisesNormales || 0));
     lines.push("• Chaises hautes : " + (mob.general.chaisesHautesDetail || mob.general.chaisesHautes || 0));
-    lines.push("• Chaises spéciales : " + (mob.general.chaisesSpeciales || 0));
+    lines.push("• Chaises timbalier : " + (mob.general.chaisesSpeciales || 0));
   }
   lines.push("");
 
