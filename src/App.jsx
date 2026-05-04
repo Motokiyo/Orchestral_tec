@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
-import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, calculateMobilier } from "./utils.js";
+import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini } from "./pdfParser.js";
 import { useConcerts, usePhotos } from "./useStorage.js";
 import { S } from "./styles.js";
@@ -491,6 +491,8 @@ export default function App() {
   const [archiveModal, setArchiveModal] = useState(null);
   const [mergeData, setMergeData] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [mobilierEditing, setMobilierEditing] = useState(null); // pieceId currently editing mob
+  const [mobilierBackup, setMobilierBackup] = useState(null);
 
   const concert = concerts.find((c) => c.id === concertId);
   const pieces = concert ? concert.pieces : [];
@@ -666,6 +668,12 @@ export default function App() {
   // ── Helper: recalculate Daniels notation + mobilier + percusGlobalText for a piece ──
   function recalcDaniels(p) {
     const notation = calculateDanielsNotation(p.orchestre, p.percus);
+    // ── If mobilier was manually edited, preserve it ──
+    if (p.mobilier && p.mobilier._edited === true) {
+      const updated = notation ? { ...p, effectif: notation } : { ...p };
+      updated.percusGlobalText = generatePercusGlobalText(updated.percus || []);
+      return updated;
+    }
     const mobilier = calculateMobilier(p.orchestre, p.percus);
     const updated = notation ? { ...p, effectif: notation } : { ...p };
     if (mobilier) {
@@ -1848,20 +1856,52 @@ export default function App() {
             const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus);
             if (!mob) return null;
             const isMobOpen = percuId === "mobilier";
+            const isEditing = mobilierEditing === piece.id;
+
+            // ── Helper: update mobilier from editor ──
+            function updateMob(updater) {
+              updatePiece(piece.id, (p) => {
+                const m = ensureMobilierStructure(p.mobilier || calculateMobilier(p.orchestre, p.percus));
+                updater(m);
+                return { ...p, mobilier: m };
+              });
+            }
+
+            // ── Helper: live mobilier text for preview ──
+            function getLiveMob() {
+              const p = pieces.find(pp => pp.id === piece.id);
+              if (!p) return "";
+              const m = p.mobilier || calculateMobilier(p.orchestre, p.percus);
+              return m ? generateMobilierStandaloneText({ ...p, mobilier: m }) : "";
+            }
+
+            // ── Stand sections config ──
+            const standSections = [
+              { key: "cordes", label: "🎻 Cordes" },
+              { key: "bois", label: "🎵 Bois" },
+              { key: "cuivres", label: "🎺 Cuivres" },
+              { key: "percus", label: "🥁 Percussions" },
+              { key: "autres", label: "➕ Autres" },
+            ];
+
             return (
               <div style={{ marginTop: 14, marginBottom: 10 }}>
+                {/* ── Header toggle card ── */}
                 <div
-                  onClick={() => setPercuId(isMobOpen ? null : "mobilier")}
+                  onClick={() => { if (!isEditing) setPercuId(isMobOpen ? null : "mobilier"); }}
                   style={{
                     background: isMobOpen ? col.bg : "#FAFAF9",
                     border: `1px solid ${isMobOpen ? col.hex + "44" : "#E7E5E4"}`,
-                    borderRadius: 10, padding: "12px 14px", cursor: "pointer",
+                    borderRadius: 10, padding: "12px 14px", cursor: isEditing ? "default" : "pointer",
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>📦 Mobilier</div>
+                        {mob._edited && (
+                          <span style={{ fontSize: 9, fontWeight: 700, color: "#D97706", background: "#FFFBEB", border: "1px solid #FCD34D", padding: "1px 6px", borderRadius: 8 }}>✎</span>
+                        )}
                         <span style={{ fontSize: 11, fontWeight: 600, color: col.hex, background: col.bg, padding: "1px 8px", borderRadius: 10 }}>
                           {mob.general.pupitres} pup. · {mob.general.chaisesNormales + mob.general.chaisesHautes} ch.
                         </span>
@@ -1870,7 +1910,9 @@ export default function App() {
                     <span style={{ color: "#A8A29E" }}>{isMobOpen ? "▾" : "▸"}</span>
                   </div>
                 </div>
-                {isMobOpen && (
+
+                {/* ── VIEW MODE (read-only) ── */}
+                {isMobOpen && !isEditing && (
                   <div style={{ padding: "10px 4px 4px" }}>
                     {/* MOBILIER GÉNÉRAL */}
                     <div style={{
@@ -1882,88 +1924,284 @@ export default function App() {
                         <div>• Pupitres : <strong>{mob.general.pupitres}</strong></div>
                         <div>• Chaises normales : <strong>{mob.general.chaisesNormales}</strong></div>
                         <div>• Chaises hautes : <strong>{mob.general.chaisesHautesDetail || mob.general.chaisesHautes}</strong></div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          • Chaises spéciales :
-                          <input
-                            type="number"
-                            min="0"
-                            value={mob.general.chaisesSpeciales || 0}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value, 10) || 0;
-                              updatePiece(piece.id, (p) => {
-                                const m = { ...(p.mobilier || mob) };
-                                m.general = { ...m.general, chaisesSpeciales: val };
-                                return { ...p, mobilier: m };
-                              });
-                            }}
-                            style={{ width: 50, fontSize: 13, fontWeight: 700, padding: "2px 6px", border: `1px solid ${col.hex}44`, borderRadius: 6, textAlign: "center" }}
-                          />
-                        </div>
+                        <div>• Chaises spéciales : <strong>{mob.general.chaisesSpeciales || 0}</strong></div>
                       </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          updatePiece(piece.id, (p) => recalcDaniels(p));
-                        }}
-                        style={{ fontSize: 12, marginTop: 6, background: col.hex + "15", border: `1px solid ${col.hex}33`, borderRadius: 6, cursor: "pointer", padding: "4px 10px", fontWeight: 600, color: col.hex }}
-                      >🔄 Recalculer</button>
+                      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const backup = JSON.parse(JSON.stringify(mob));
+                            setMobilierBackup(backup);
+                            setMobilierEditing(piece.id);
+                          }}
+                          style={{ fontSize: 11, background: col.hex + "20", border: `1px solid ${col.hex}44`, borderRadius: 6, cursor: "pointer", padding: "4px 12px", fontWeight: 600, color: col.hex }}
+                        >✎ Modifier</button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updatePiece(piece.id, (p) => recalcDaniels({ ...p, mobilier: { ...p.mobilier, _edited: false } }));
+                          }}
+                          style={{ fontSize: 11, background: col.hex + "10", border: `1px solid ${col.hex}33`, borderRadius: 6, cursor: "pointer", padding: "4px 10px", fontWeight: 600, color: col.hex }}
+                        >🔄 Recalculer</button>
+                      </div>
                     </div>
 
                     {/* STANDS PAR SECTION */}
-                    {[
-                      { key: "cordes", label: "🎻 Cordes", items: mob.stands.cordes },
-                      { key: "bois", label: "🎵 Bois", items: mob.stands.bois },
-                      { key: "cuivres", label: "🎺 Cuivres", items: mob.stands.cuivres },
-                      { key: "percus", label: "🥁 Percussions", items: mob.stands.percus },
-                      { key: "autres", label: "➕ Autres", items: mob.stands.autres },
-                    ].map(section => (
-                      <div key={section.key} style={{ marginBottom: 8 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: col.hex, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{section.label}</div>
-                        {section.items.map((stand, idx) => (
-                          <div key={idx} style={{ fontSize: 13, color: "#44403C", paddingLeft: 8, lineHeight: 1.7 }}>
-                            • {stand.type} : <strong>{stand.qty}</strong>
-                          </div>
-                        ))}
-                        {section.items.length === 0 && (
-                          <div style={{ fontSize: 12, color: "#A8A29E", paddingLeft: 8, fontStyle: "italic" }}>Aucun</div>
-                        )}
-                      </div>
-                    ))}
+                    {standSections.map(section => {
+                      const items = mob.stands[section.key] || [];
+                      return (
+                        <div key={section.key} style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: col.hex, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{section.label}</div>
+                          {items.filter(s => s.qty > 0).map((stand, idx) => (
+                            <div key={idx} style={{ fontSize: 13, color: "#44403C", paddingLeft: 8, lineHeight: 1.7 }}>
+                              • {stand.type} : <strong>{stand.qty}</strong>
+                            </div>
+                          ))}
+                          {items.filter(s => s.qty > 0).length === 0 && (
+                            <div style={{ fontSize: 12, color: "#A8A29E", paddingLeft: 8, fontStyle: "italic" }}>Aucun</div>
+                          )}
+                        </div>
+                      );
+                    })}
 
                     {/* Custom autres stands */}
-                    {(mob.stands.autresCustom || []).map((item, idx) => (
-                      <div key={`custom-${idx}`} style={{ fontSize: 13, color: "#44403C", paddingLeft: 8, lineHeight: 1.7, display: "flex", alignItems: "center", gap: 6 }}>
-                        • {item.type} : <strong>{item.qty}</strong>
-                        <button
-                          onClick={() => updatePiece(piece.id, (p) => {
-                            const m = { ...(p.mobilier || mob) };
-                            const s = { ...m.stands };
-                            s.autresCustom = (s.autresCustom || []).filter((_, i) => i !== idx);
-                            m.stands = s;
-                            return { ...p, mobilier: m };
-                          })}
-                          style={{ background: "none", border: "none", fontSize: 12, color: "#A8A29E", cursor: "pointer", padding: "0 4px" }}
-                        >✕</button>
+                    {(mob.stands.autresCustom || []).filter(s => s.qty > 0).length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: col.hex, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>🔧 Personnalisé</div>
+                        {(mob.stands.autresCustom || []).filter(s => s.qty > 0).map((item, idx) => (
+                          <div key={`custom-v-${idx}`} style={{ fontSize: 13, color: "#44403C", paddingLeft: 8, lineHeight: 1.7, display: "flex", alignItems: "center", gap: 6 }}>
+                            • {item.type} : <strong>{item.qty}</strong>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                    <button
-                      onClick={() => {
-                        const name = prompt("Nom du stand/mobilier :");
-                        if (!name || !name.trim()) return;
-                        const qty = parseInt(prompt("Quantité :", "1"), 10) || 1;
-                        updatePiece(piece.id, (p) => {
-                          const m = { ...(p.mobilier || mob) };
-                          const s = { ...m.stands };
-                          s.autresCustom = [...(s.autresCustom || []), { type: name.trim(), qty }];
-                          m.stands = s;
-                          return { ...p, mobilier: m };
-                        });
-                      }}
-                      style={{ fontSize: 11, color: col.hex, background: "none", border: "none", cursor: "pointer", padding: "4px 0", fontWeight: 600, marginTop: 4 }}
-                    >+ Ajouter un élément</button>
+                    )}
                   </div>
                 )}
+
+                {/* ── EDIT MODE ── */}
+                {isMobOpen && isEditing && (() => {
+                  const editMob = piece.mobilier || ensureMobilierStructure(calculateMobilier(piece.orchestre, piece.percus));
+                  const liveText = generateMobilierStandaloneText({ ...piece, mobilier: editMob });
+
+                  return (
+                    <div style={{
+                      padding: "10px 4px 4px",
+                      background: "#FFFBEB",
+                      border: `2px solid #FCD34D`,
+                      borderRadius: 10,
+                      marginTop: 6,
+                    }}>
+                      {/* Warning banner */}
+                      <div style={{
+                        fontSize: 11, fontWeight: 600, color: "#92400E",
+                        background: "#FEF3C7", borderRadius: 6, padding: "6px 10px",
+                        marginBottom: 10, display: "flex", alignItems: "center", gap: 6,
+                      }}>
+                        ✏️ Édition manuelle — ces valeurs ne seront plus recalculées automatiquement
+                      </div>
+
+                      {/* GENERAL */}
+                      <div style={{
+                        background: "#fff", border: "1px solid #E7E5E4", borderRadius: 8,
+                        padding: "10px 12px", marginBottom: 8,
+                      }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📦 Général</div>
+                        {[
+                          { key: "pupitres", label: "Pupitres" },
+                          { key: "chaisesNormales", label: "Chaises normales" },
+                          { key: "chaisesHautes", label: "Chaises hautes" },
+                          { key: "chaisesSpeciales", label: "Chaises spéciales" },
+                        ].map(field => (
+                          <div key={field.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                            <span style={{ fontSize: 12, color: "#44403C" }}>{field.label}</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={editMob.general[field.key] || 0}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10) || 0;
+                                updateMob(m => { m.general[field.key] = val; });
+                              }}
+                              style={{
+                                width: 70, fontSize: 13, fontWeight: 600, padding: "4px 8px",
+                                border: `1px solid ${col.hex}44`, borderRadius: 6, textAlign: "center",
+                                background: "#fff", color: "#1C1917", outline: "none",
+                              }}
+                            />
+                          </div>
+                        ))}
+                        {/* Chaises hautes detail (text) */}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+                          <span style={{ fontSize: 11, color: "#A8A29E" }}>Détail chaises hautes</span>
+                          <input
+                            type="text"
+                            value={editMob.general.chaisesHautesDetail || ""}
+                            onChange={(e) => updateMob(m => { m.general.chaisesHautesDetail = e.target.value; })}
+                            placeholder="ex: 3 (CB) + 1 (chef) + 2 (percus) = 6"
+                            style={{
+                              width: 180, fontSize: 11, padding: "3px 6px",
+                              border: `1px solid ${col.hex}22`, borderRadius: 4,
+                              background: "#FAFAF9", color: "#78716C", outline: "none",
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* STANDS PAR SECTION (editable) */}
+                      {standSections.map(section => {
+                        const items = editMob.stands[section.key] || [];
+                        // Show all items (even qty=0) in edit mode
+                        const allItems = items.length > 0 ? items : (section.key === "autres" ? [{ type: "Podium chef", qty: 1 }, { type: "Pupitre chef", qty: 1 }] : []);
+                        return (
+                          <div key={section.key} style={{
+                            background: "#fff", border: "1px solid #E7E5E4", borderRadius: 8,
+                            padding: "10px 12px", marginBottom: 8,
+                          }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: col.hex, textTransform: "uppercase", letterSpacing: 1 }}>{section.label}</div>
+                              <button
+                                onClick={() => updateMob(m => {
+                                  m.stands[section.key] = [...(m.stands[section.key] || []), { type: "Nouveau stand", qty: 1 }];
+                                })}
+                                style={{ fontSize: 16, fontWeight: 700, background: col.hex + "15", border: `1px solid ${col.hex}33`, borderRadius: 6, cursor: "pointer", padding: "2px 8px", color: col.hex, lineHeight: 1 }}
+                              >+</button>
+                            </div>
+                            {allItems.map((stand, idx) => (
+                              <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                                <input
+                                  type="text"
+                                  value={stand.type}
+                                  onChange={(e) => updateMob(m => { m.stands[section.key][idx].type = e.target.value; })}
+                                  style={{
+                                    flex: 1, fontSize: 12, padding: "4px 8px",
+                                    border: `1px solid ${col.hex}22`, borderRadius: 6,
+                                    background: "#FAFAF9", color: "#1C1917", outline: "none",
+                                  }}
+                                />
+                                <span style={{ fontSize: 11, color: "#A8A29E" }}>×</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={stand.qty}
+                                  onChange={(e) => updateMob(m => { m.stands[section.key][idx].qty = parseInt(e.target.value, 10) || 0; })}
+                                  style={{
+                                    width: 55, fontSize: 13, fontWeight: 600, padding: "4px 6px",
+                                    border: `1px solid ${col.hex}44`, borderRadius: 6, textAlign: "center",
+                                    background: "#fff", color: "#1C1917", outline: "none",
+                                  }}
+                                />
+                                <button
+                                  onClick={() => updateMob(m => {
+                                    m.stands[section.key] = m.stands[section.key].filter((_, i) => i !== idx);
+                                  })}
+                                  style={{ background: "none", border: "none", fontSize: 14, color: "#EF4444", cursor: "pointer", padding: "2px 4px" }}
+                                >✕</button>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+
+                      {/* Custom autres */}
+                      <div style={{
+                        background: "#fff", border: "1px solid #E7E5E4", borderRadius: 8,
+                        padding: "10px 12px", marginBottom: 8,
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: col.hex, textTransform: "uppercase", letterSpacing: 1 }}>🔧 Personnalisé</div>
+                          <button
+                            onClick={() => updateMob(m => {
+                              m.stands.autresCustom = [...(m.stands.autresCustom || []), { type: "Élément", qty: 1 }];
+                            })}
+                            style={{ fontSize: 16, fontWeight: 700, background: col.hex + "15", border: `1px solid ${col.hex}33`, borderRadius: 6, cursor: "pointer", padding: "2px 8px", color: col.hex, lineHeight: 1 }}
+                          >+</button>
+                        </div>
+                        {(editMob.stands.autresCustom || []).map((item, idx) => (
+                          <div key={`custom-e-${idx}`} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                            <input
+                              type="text"
+                              value={item.type}
+                              onChange={(e) => updateMob(m => { m.stands.autresCustom[idx].type = e.target.value; })}
+                              style={{
+                                flex: 1, fontSize: 12, padding: "4px 8px",
+                                border: `1px solid ${col.hex}22`, borderRadius: 6,
+                                background: "#FAFAF9", color: "#1C1917", outline: "none",
+                              }}
+                            />
+                            <span style={{ fontSize: 11, color: "#A8A29E" }}>×</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={item.qty}
+                              onChange={(e) => updateMob(m => { m.stands.autresCustom[idx].qty = parseInt(e.target.value, 10) || 0; })}
+                              style={{
+                                width: 55, fontSize: 13, fontWeight: 600, padding: "4px 6px",
+                                border: `1px solid ${col.hex}44`, borderRadius: 6, textAlign: "center",
+                                background: "#fff", color: "#1C1917", outline: "none",
+                              }}
+                            />
+                            <button
+                              onClick={() => updateMob(m => {
+                                m.stands.autresCustom = m.stands.autresCustom.filter((_, i) => i !== idx);
+                              })}
+                              style={{ background: "none", border: "none", fontSize: 14, color: "#EF4444", cursor: "pointer", padding: "2px 4px" }}
+                            >✕</button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* LIVE PREVIEW */}
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>👁 Aperçu TXT</div>
+                        <pre style={{
+                          fontSize: 10, color: "#44403C", background: "#fff",
+                          border: "1px solid #E7E5E4", borderRadius: 8, padding: 8,
+                          whiteSpace: "pre-wrap", wordBreak: "break-word",
+                          fontFamily: "'DM Mono', 'Courier New', monospace", lineHeight: 1.4,
+                          maxHeight: 120, overflowY: "auto", margin: 0,
+                        }}>
+                          {liveText}
+                        </pre>
+                      </div>
+
+                      {/* ACTION BAR */}
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <button
+                          onClick={() => {
+                            updateMob(m => { m._edited = true; });
+                            setMobilierEditing(null);
+                            setMobilierBackup(null);
+                          }}
+                          style={{ flex: 1, minWidth: 90, fontSize: 12, fontWeight: 600, padding: "8px 12px", borderRadius: 8, background: "#16A34A", color: "#fff", border: "none", cursor: "pointer" }}
+                        >✅ Enregistrer</button>
+                        <button
+                          onClick={() => {
+                            // Force recalc: remove _edited, recalculate mobilier
+                            updatePiece(piece.id, (p) => {
+                              const newMob = calculateMobilier(p.orchestre, p.percus);
+                              if (newMob) newMob._edited = false;
+                              return { ...p, mobilier: newMob };
+                            });
+                            setMobilierEditing(null);
+                            setMobilierBackup(null);
+                          }}
+                          style={{ flex: 1, minWidth: 90, fontSize: 12, fontWeight: 600, padding: "8px 12px", borderRadius: 8, background: col.hex + "20", color: col.hex, border: `1px solid ${col.hex}44`, cursor: "pointer" }}
+                        >🔄 Recalculer</button>
+                        <button
+                          onClick={() => {
+                            // Restore backup
+                            if (mobilierBackup) {
+                              updatePiece(piece.id, (p) => ({ ...p, mobilier: mobilierBackup }));
+                            }
+                            setMobilierEditing(null);
+                            setMobilierBackup(null);
+                          }}
+                          style={{ flex: 1, minWidth: 90, fontSize: 12, fontWeight: 600, padding: "8px 12px", borderRadius: 8, background: "#fff", color: "#78716C", border: "1px solid #D6D3D1", cursor: "pointer" }}
+                        >❌ Annuler</button>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
@@ -1982,6 +2220,7 @@ export default function App() {
             <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
               <button onClick={() => copyToClipboard(generatePieceText(piece))} style={{ ...S.btnSecondary, flex: 1, fontSize: 11 }}>📋 Copier texte</button>
               <button onClick={() => downloadTxt(piece)} style={{ ...S.btnSecondary, flex: 1, fontSize: 11 }}>↓ Télécharger TXT</button>
+              <button onClick={() => downloadMobilierTxt(piece)} style={{ ...S.btnSecondary, flex: 1, fontSize: 11 }}>📦 Mobilier seul</button>
             </div>
           </div>
 

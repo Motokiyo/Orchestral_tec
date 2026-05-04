@@ -1,5 +1,43 @@
 import { BARNIER } from './data.js';
 
+// ── Deep merge helper (plain objects only, no arrays) ──
+function deepMerge(target, source) {
+  const out = { ...target };
+  for (const key of Object.keys(source)) {
+    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+      out[key] = deepMerge(target[key] || {}, source[key]);
+    } else {
+      out[key] = source[key];
+    }
+  }
+  return out;
+}
+
+// ── Default mobilier structure ──
+export const DEFAULT_MOBILIER = {
+  general: {
+    pupitres: 0,
+    chaisesNormales: 0,
+    chaisesHautes: 0,
+    chaisesHautesDetail: "",
+    chaisesSpeciales: 0,
+  },
+  stands: {
+    cordes: [],
+    bois: [],
+    cuivres: [],
+    percus: [],
+    autres: [{ type: "Podium chef", qty: 1 }, { type: "Pupitre chef", qty: 1 }],
+    autresCustom: [],
+  },
+  _edited: false,
+};
+
+// ── Ensure mobilier has all fields, merging existing data ──
+export function ensureMobilierStructure(mob) {
+  return deepMerge(DEFAULT_MOBILIER, mob || {});
+}
+
 export function uid() {
   return Math.random().toString(36).slice(2, 8);
 }
@@ -160,6 +198,9 @@ function generateMobilierText(mob) {
   if (!mob) return "[Aucun mobilier]\n";
   const lines = [];
 
+  if (mob._edited) {
+    lines.push("⚠ MODIFIÉ MANUELLEMENT");
+  }
   lines.push("DÉCOMPTE GÉNÉRAL");
   lines.push("─".repeat(16));
   if (mob.general) {
@@ -206,6 +247,34 @@ function generateMobilierText(mob) {
   }
 
   return lines.join("\n");
+}
+
+// ── Generate standalone mobilier text (title + separator + content) ──
+export function generateMobilierStandaloneText(piece) {
+  if (!piece) return "";
+  const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus);
+  let text = "";
+  text += "═".repeat(35) + "\n";
+  text += "📦 MOBILIER — " + (piece.titre || "Sans titre") + "\n";
+  if (piece.compositeur) text += "    " + piece.compositeur + "\n";
+  text += "═".repeat(35) + "\n\n";
+  text += generateMobilierText(mob);
+  return text;
+}
+
+// ── Download mobilier-only TXT file ──
+export function downloadMobilierTxt(piece) {
+  if (!piece) return;
+  const txt = generateMobilierStandaloneText(piece);
+  const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = (piece.titre || "Sans_titre").replace(/\s+/g, "_") + "_mobilier.txt";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ── Generate orchestre text section ──
