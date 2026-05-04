@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
-import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt } from "./utils.js";
+import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini } from "./pdfParser.js";
 import { useConcerts, usePhotos } from "./useStorage.js";
 import { S } from "./styles.js";
