@@ -1,0 +1,196 @@
+{
+  "_meta": {
+    "version": "1.0",
+    "date": "2026-03-27",
+    "usage": "Lookup direct par l'agent IA. Clé = nom normalisé instrument. Embarqué dans le system prompt ou chargé en RAG.",
+    "sources": ["Kolberg Tonumfangtabelle", "Adams", "Bergerault", "Yamaha", "Paiste"]
+  },
+
+  "CLAVIERS": {
+    "marimba": {
+      "tessitures": {
+        "3_oct":   { "range": "C4–C7", "note": "Étudiant" },
+        "4_oct":   { "range": "C3–C7", "note": "Standard" },
+        "4.3_oct": { "range": "A2–C7", "note": "Adams, Bergerault standard" },
+        "4.5_oct": { "range": "F2–C7", "note": "Bergerault Campus Bass" },
+        "5_oct":   { "range": "C2–C7", "note": "Concert standard" }
+      },
+      "transposition": "son réel",
+      "support": "aucun (pieds intégrés)",
+      "encombrement": "L"
+    },
+    "vibraphone": {
+      "tessitures": {
+        "3_oct":   { "range": "F3–F6", "note": "Standard orchestral" },
+        "3.5_oct": { "range": "C3–F6", "note": "Adams Alpha" },
+        "4_oct":   { "range": "C3–C7", "note": "Rare" }
+      },
+      "transposition": "son réel",
+      "support": "aucun (pieds intégrés)",
+      "encombrement": "L"
+    },
+    "xylophone": {
+      "tessitures": {
+        "3.5_oct": { "range": "F4–C8", "note": "Standard (sonne écrit)" },
+        "4_oct":   { "range": "C4–C8", "note": "Grand" },
+        "2.5_oct": { "range": "C5–F7", "note": "Étudiant" }
+      },
+      "transposition": "sonne 1 oct au-dessus de l'écrit",
+      "support": "aucun (pieds intégrés)",
+      "encombrement": "M"
+    },
+    "xylorimba": {
+      "tessitures": { "5_oct": { "range": "C3–C8", "note": "Hybride xylo+marimba" } },
+      "transposition": "son réel",
+      "support": "aucun",
+      "encombrement": "L"
+    },
+    "glockenspiel_pedale": {
+      "tessitures": {
+        "3_oct_concert": { "range": "F5–E8", "note": "Kolberg Concert" },
+        "3_oct_opera":   { "range": "C5–F8", "note": "Kolberg Opera" }
+      },
+      "transposition": "sonne 2 oct au-dessus de l'écrit",
+      "support": "aucun (sur pied intégré)",
+      "encombrement": "M"
+    },
+    "glockenspiel_valise": {
+      "tessitures": { "2.5_oct": { "range": "F5–C8", "note": "Portable" } },
+      "transposition": "sonne 2 oct au-dessus de l'écrit",
+      "support": "1 stand en X ou plateau mousse",
+      "encombrement": "S"
+    },
+    "glockenspiel_clavier": {
+      "tessitures": { "3_oct": { "range": "C5–C8", "note": "Kolberg 2470" } },
+      "transposition": "sonne 2 oct au-dessus de l'écrit",
+      "support": "aucun (sur pied intégré)",
+      "encombrement": "M"
+    },
+    "celesta": {
+      "tessitures": { "4_oct": { "range": "C4–C8", "note": "Schiedmayer, Yamaha" } },
+      "transposition": "sonne 1 oct au-dessus de l'écrit",
+      "support": "1 banquette piano",
+      "encombrement": "L"
+    }
+  },
+
+  "CLOCHES": {
+    "cloches_tubes": {
+      "tessitures": {
+        "1.5_oct_18": { "range": "C4–F5", "note": "Standard 18 tubes" },
+        "2_oct_25":   { "range": "F3–F5", "note": "25 tubes étendu" }
+      },
+      "transposition": "son réel",
+      "support": "1 cadre cloches tubes (intégré ou stand 110H-RGD)",
+      "encombrement": "L"
+    },
+    "crotales": {
+      "tessitures": {
+        "1_oct_grave": { "range": "C6–C7", "note": "13 notes" },
+        "1_oct_aigu":  { "range": "C7–C8", "note": "13 notes" },
+        "2_oct":       { "range": "C6–C8", "note": "25 notes" }
+      },
+      "transposition": "son réel",
+      "support": "1 châssis crotales (CHS 6011/6012 ou Kolberg 2370KST)",
+      "encombrement": "S"
+    },
+    "almglocken": {
+      "tessitures": {
+        "1_oct": { "range": "~C6–C7", "note": "13 notes chromatiques" },
+        "4_oct": { "range": "F3–F7", "note": "Set complet" }
+      },
+      "transposition": "son réel",
+      "support": "1 châssis ou stand modulaire",
+      "encombrement": "M"
+    },
+    "cloche_eglise": {
+      "tessitures": { "ind": { "range": "C2–C7", "note": "Sur commande" } },
+      "transposition": "son réel",
+      "support": "1 portique ou au sol",
+      "encombrement": "XL"
+    },
+    "cup_bell": {
+      "tessitures": { "std": { "range": "F5–F9", "note": "Kolberg Tonumfangtabelle" } },
+      "transposition": "son réel",
+      "support": "1 attache ou tablette",
+      "encombrement": "XS"
+    },
+    "cowbell": {
+      "tessitures": { "std": { "range": "indéterminé", "note": "Hauteur relative" } },
+      "transposition": "N/A",
+      "support": "1 attache cloche mambo (ATT 3020 26)",
+      "encombrement": "XS"
+    },
+    "enclume": {
+      "tessitures": { "std": { "range": "D5–C9", "note": "Kolberg Tonumfangtabelle" } },
+      "transposition": "son réel",
+      "support": "1 stand enclume (Kolberg 1130A)",
+      "encombrement": "M"
+    }
+  },
+
+  "TIMBALES": {
+    "timbales": {
+      "tessitures_par_taille": {
+        "20\"": "F3–C4",
+        "23\"": "D3–A3",
+        "25\"": "Bb2–F3",
+        "26\"": "A2–E3",
+        "28\"": "F2–C3",
+        "29\"": "F2–C3",
+        "30\"": "E2–B2",
+        "32\"": "D2–A2"
+      },
+      "jeu_standard_4": { "tailles": "32\"+29\"+26\"+23\"", "range": "D2–A3" },
+      "jeu_etendu_5": { "tailles": "+20\"", "range": "D2–C4" },
+      "support": "aucun (pieds intégrés)",
+      "chaise": "1 chaise timbalier tournante (Kolberg 3110 ou R&S SIE 5510NTI)",
+      "encombrement": "XL"
+    }
+  },
+
+  "PEAUX": {
+    "grosse_caisse": { "tessiture": "indéterminé", "support": "1 support grosse caisse", "encombrement": "L" },
+    "caisse_claire": { "tessiture": "indéterminé", "support": "1 pied CC (PIE 3500)", "encombrement": "S" },
+    "tambour_militaire": { "tessiture": "indéterminé", "support": "1 pied CC", "encombrement": "S" },
+    "tom": { "tessiture": "indéterminé", "support": "1 stand tom (Kolberg 510-516 ou PIE 4665)", "encombrement": "M" },
+    "rototom": { "tessiture": "C3–G5 (3 tailles)", "support": "1 stand rototom (PIE 4312)", "encombrement": "M" },
+    "bongos": { "tessiture": "semi-accordé", "support": "1 support bongos (PIE 4020) ou sur table", "encombrement": "S" },
+    "congas": { "tessiture": "semi-accordé", "support": "1 support par conga (PIE 4005)", "encombrement": "M" },
+    "tambourin_basque": { "tessiture": "indéterminé", "support": "1 attache tambourin (ATT 3000 26) ou tenu", "encombrement": "XS" },
+    "boobam": { "tessiture": "C2–C7", "support": "1 stand boobam (PIE 4622R06)", "encombrement": "L" }
+  },
+
+  "METAUX": {
+    "triangle": { "tessiture": "indéterminé", "support": "1 pince triangle (ATT 2500) + 1 pied ou col cygne", "encombrement": "XS" },
+    "cymbale_suspendue": { "tessiture": "indéterminé", "support": "1 pied cymbale (PIE 1322) OU 1 col de cygne", "encombrement": "S" },
+    "cymbales_frappees": { "tessiture": "indéterminé", "support": "1 stand cymbales frappées OU tenues main", "encombrement": "S" },
+    "gong": { "tessiture": "C2–C7 (accordé)", "support": "1 portique gong (PRT 1212/1214) — partagé si même poste", "encombrement": "XL" },
+    "tam_tam": { "tessiture": "indéterminé", "support": "1 portique tam-tam (PRT 1216) — partagé si même poste", "encombrement": "XL" },
+    "plaque_tonnerre": { "tessiture": "indéterminé", "support": "1 stand tôle tonnerre (Kolberg 1325K)", "encombrement": "L" }
+  },
+
+  "BOIS": {
+    "wood_block": { "tessiture": "C6–G8", "support": "1 support barre + 1 pied OU sur tablette", "encombrement": "S" },
+    "temple_block": { "tessiture": "A5–F7", "support": "1 stand temple blocks (Kolberg 2050K)", "encombrement": "M" },
+    "castagnettes": { "tessiture": "indéterminé", "support": "1 stand castagnettes (Kolberg 1505K) ou machine", "encombrement": "XS" },
+    "guiro": { "tessiture": "indéterminé", "support": "tenu ou sur tablette", "encombrement": "XS" },
+    "claves": { "tessiture": "indéterminé", "support": "sur tablette", "encombrement": "XS" },
+    "maracas": { "tessiture": "indéterminé", "support": "sur tablette", "encombrement": "XS" }
+  },
+
+  "EFFETS": {
+    "klaxon_taxi": { "tessiture": "C5–C7", "support": "1 stand klaxons (Kolberg 2320)", "encombrement": "S" },
+    "machine_a_vent": { "tessiture": "indéterminé", "support": "au sol", "encombrement": "L" },
+    "lion_roar": { "tessiture": "indéterminé", "support": "au sol ou sur pied", "encombrement": "M" },
+    "fouet": { "tessiture": "indéterminé", "support": "tenu", "encombrement": "XS" },
+    "bell_tree": { "tessiture": "indéterminé", "support": "1 pied cymbale", "encombrement": "S" },
+    "mark_tree": { "tessiture": "indéterminé", "support": "1 pied ou attache portique", "encombrement": "S" },
+    "spring_drum": { "tessiture": "indéterminé", "support": "tenu ou sur tablette", "encombrement": "XS" }
+  },
+
+  "ACCESSOIRES_PETITS": {
+    "_rule": "Tout accessoire petit (< 30cm) va sur une TABLETTE partagée par poste. Ne pas compter un support individuel.",
+    "exemples": ["sand blocks", "finger cymbals", "cabasa", "shaker", "vibraslap", "sifflet", "flexatone"]
+  }
+}

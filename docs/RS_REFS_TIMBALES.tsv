@@ -1,0 +1,260 @@
+id	ref	cat3	slug
+5258	TAC 0026 05	accessoires	housse-pour-timbale-adams-26-pouces
+5262	TAC 0032 05	accessoires	housse-pour-timbale-adams-32-pouces
+5263	TAC 0120 05	accessoires	housse-renforcee-pour-timbale-adams-20-pouces
+5264	TAC 0123 05	accessoires	housse-renforcee-pour-timbale-adams-23-pouces
+5265	TAC 0126 05	accessoires	housse-renforcee-pour-timbale-adams-26-pouces
+5266	TAC 0129 05	accessoires	housse-renforcee-pour-timbale-adams-29-pouces
+5267	TAC 0132 05	accessoires	housse-renforcee-pour-timbale-adams-32-pouces
+5268	TAC 0201 63	accessoires	plateau-de-protection-pour-timbale-adams-32-pouces
+5271	TAC 0204 63	accessoires	plateau-de-protection-pour-timbale-adams-23-pouces
+5272	TAC 0205 63	accessoires	plateau-de-protection-pour-timbale-adams-20-pouces
+5274	TAC 0212 63	accessoires	plateau-de-protection-pour-timbale-premier-elite-30-pouces
+5275	TAC 0213 63	accessoires	plateau-de-protection-pour-timbale-premier-elite-28-pouces
+5278	TAC 0221 63	accessoires	plateau-de-protection-pour-timbale-premier-32-pouces-concert-ou-pro-symphonic
+5279	TAC 0222 63	accessoires	plateau-de-protection-pour-timbale-premier-30-pouces-concert-ou-pro-symphonic
+5280	TAC 0223 63	accessoires	plateau-de-protection-pour-timbale-premier-28-pouces-concert-ou-pro-symphonic
+5298	TAC 0626 05	accessoires	sac-de-transport-timbale-adams-universal-26pouces
+5299	TAC 0629 05	accessoires	sac-de-transport-timbale-adams-universal-29pouces
+5529	TMG C123 05	classiques	timbale-majestic-grand-symphonic-martele-23-pouces-
+5543	TMH F020 05	classiques	timbale-majestic-harmonic-fibre-de-verre-20-pouces-
+5544	TMH F023 05	classiques	timbale-majestic-harmonic-fibre-de-verre-23-pouces-
+5545	TMH F026 05	classiques	timbale-majestic-harmonic-fibre-de-verre-26-pouces-
+5546	TMH F029 05	classiques	timbale-majestic-harmonic-fibre-de-verre-29-pouces-
+5547	TMH F032 05	classiques	timbale-majestic-harmonic-fibre-de-verre-32-pouces-
+5558	TMS C120 05	classiques	timbale-majestic-symphonic-cuivre-martele-20-pouces-
+5560	TMS C126 05	classiques	timbale-majestic-symphonic-cuivre-martele-26-pouces-
+5561	TMS C129 05	classiques	timbale-majestic-symphonic-cuivre-martele-29-pouces-
+5562	TMS C132 05	classiques	timbale-majestic-symphonic-cuivre-martele-32-pouces-
+5620	TPC 0120 05	classiques	timbale-adams-professionel-martele-parabolique-20-pouces-
+5621	TPC 0123 05	classiques	timbale-adams-professionel-martele-parabolique-23-pouces-
+5622	TPC 0126 05	classiques	timbale-adams-professionel-martele-parabolique-26-pouces-
+5623	TPC 0129 05	classiques	timbale-adams-professionel-martele-parabolique-29-pouces-
+5624	TPC 0132 05	classiques	timbale-adams-professionel-martele-parabolique-32-pouces-
+5625	TPC 0220 05	classiques	timbale-adams-professionnel-fut-lisse-parabolique-20-pouces-
+5626	TPC 0223 05	classiques	timbale-adams-professionnel-fut-lisse-parabolique-23-pouces-
+5627	TPC 0226 05	classiques	timbale-adams-professionnel-fut-lisse-parabolique-26-pouces-
+5628	TPC 0229 05	classiques	timbale-adams-professionnel-fut-lisse-parabolique-29-pouces-
+5629	TPC 0232 05	classiques	timbale-adams-professionnel-fut-lisse-parabolique-32-pouces-
+5630	TPE 0022 05	classiques	premier-elite-22-5-pouces-cuivre-lisse-parabolique
+5631	TPE 0025 05	classiques	timbale-premier-elite-cuivre-lisse-25-pouces
+5632	TPE 0028 05	classiques	premier-elite-28-pouces-cuivre-lisse-parabolique
+5633	TPE 0030 05	classiques	premier-elite-30-pouces-cuivre-lisse-parabolique
+5634	TPE 0032 05	classiques	premier-elite-32-pouces-cuivre-lisse-parabolique
+5636	TPF 0120 05	classiques	timbale-adams-professionnel-fibre-de-verre-20-pouces-
+5637	TPF 0123 05	classiques	timbale-adams-professionnel-fibre-de-verre-23-pouces-
+5638	TPF 0126 05	classiques	timbale-adams-professionnel-fibre-de-verre-26-pouces-
+5639	TPF 0129 05	classiques	timbale-adams-professionnel-fibre-de-verre-29-pouces-
+5642	TPS 0022 05	classiques	premier-concert-22-5-pouces-cuivre-lisse-parabolique
+5644	TPS 0025 05	classiques	premier-concert-25-pouces-cuivre-lisse-parabolique
+5646	TPS 0028 05	classiques	premier-concert-28-pouces-cuivre-lisse-parabolique
+5648	TPS 0030 05	classiques	premier-concert-30-pouces-cuivre-lisse-parabolique
+5649	TPS 0032 05	classiques	premier-concert-32-pouces-cuivre-lisse-parabolique
+5650	TPS 0322 05	classiques	premier-pro-symphonic-22-5-pouces-cuivre-lisse-parabolique
+5651	TPS 0325 05	classiques	premier-pro-symphonic-25-pouces-cuivre-lisse-parabolique
+5652	TPS 0328 05	classiques	premier-pro-symphonic-28-pouces-cuivre-lisse-parabolique
+5653	TPS 0330 05	classiques	premier-pro-symphonic-30-pouces-cuivre-lisse-parabolique
+5654	TPS 0332 05	classiques	premier-pro-symphonic-32-pouces-cuivre-lisse-parabolique
+5686	TSC 0120 05	classiques	timbale-adams-symphonic-cuivre-profond-20-pouces-
+5690	TSC 0126 05	classiques	timbale-adams-symphonic-cuivre-profond-26-pouces-
+5694	TSC 0132 05	classiques	timbale-adams-symphonic-cuivre-profond-32-pouces-
+5695	TSC 0220 05	classiques	timbale-adams-symphonic-martele-parabolique-20-pouces
+5696	TSC 0223 05	classiques	timbale-adams-symphonic-martele-parabolique-23-pouces
+5697	TSC 0226 05	classiques	timbale-adams-symphonic-martele-parabolique-26-pouces
+5698	TSC 0229 05	classiques	timbale-adams-symphonic-martele-parabolique-29-pouces
+5699	TSC 0232 05	classiques	timbale-adams-symphonic-martele-parabolique-32-pouces
+5700	TSC 0320 05	classiques	timbale-adams-symphonic-fut-lisse-parabolique-20-pouces
+5701	TSC 0323 05	classiques	timbale-adams-symphonic-fut-lisse-parabolique-23-pouces
+5702	TSC 0326 05	classiques	timbale-adams-symphonic-fut-lisse-parabolique-26-pouces
+5703	TSC 0329 05	classiques	timbale-adams-symphonic-fut-lisse-parabolique-29-pouces
+5704	TSC 0332 05	classiques	timbale-adams-symphonic-fut-lisse-parabolique-32-pouces
+5721	TAUN CL 23R	classiques	adams-universel-23-pouces-cuivre-lisse-parabolique
+5722	TAUN CL 26R	classiques	adams-universel-26-pouces-cuivre-lisse-parabolique
+5723	TAUN CL 29R	classiques	adams-universel-29-pouces-cuivre-lisse-parabolique
+5724	TAUN CL 32R	classiques	adams-universel-32-pouces-cuivre-lisse-parabolique
+5725	TAUN CM 20R	classiques	adams-universel-20-pouces-cuivre-martele-parabolique
+5726	TAUN CM 23R	classiques	adams-universel-23-pouces-cuivre-martele-parabolique
+5727	TAUN CM 26R	classiques	adams-universel-26-pouces-cuivre-martele-parabolique
+5728	TAUN CM 29R	classiques	adams-universel-29-pouces-cuivre-martele-parabolique
+5729	TAUN CM 32R	classiques	adams-universel-32-pouces-cuivre-martele-parabolique
+5730	TAUN FV 20R	classiques	timbale-adams-universel-20pouces-fibre-de-verre-parabolique
+5731	TAUN FV 23R	classiques	timbale-adams-universel-23pouces-fibre-de-verre-parabolique
+5732	TAUN FV 26R	classiques	timbale-adams-universel-26pouces-fibre-de-verre-parabolique
+5733	TAUN FV 29R	classiques	timbale-adams-universel-29pouces-fibre-de-verre-parabolique
+5734	TAUN FV 32R	classiques	timbale-adams-universel-32pouces-fibre-de-verre-parabolique
+7264	TAPR CP 32R	classiques	adams-professionnel-generation-ii-32-pouces-cuivre-martele-profond
+7265	TAPR CP 29R	classiques	adams-professionnel-generation-ii-29-pouces-cuivre-martele-profond
+7266	TAPR CP 26R	classiques	adams-professionnel-generation-ii-26-pouces-cuivre-martele-profond
+7267	TAPR CP 23R	classiques	adams-professionnel-generation-ii-23-pouces-cuivre-martele-profond
+7268	TAPR CP 20R	classiques	adams-professionnel-generation-ii-20-pouces-cuivre-martele-profond
+7436	LAC VG04 06	accessoires	bombe-lubrifiante-teflon-pour-timbale
+7493	TARE FV 32R	classiques	adams-revolution-32-pouces-fibre-de-verre
+7494	TARE FV 29R	classiques	adams-revolution-29-pouces-fibre-de-verre
+7495	TARE FV 26R	classiques	adams-revolution-26-pouces-fibre-de-verre
+7497	TARE FV 20R	classiques	timbale-adams-revolution-fibre-verre-parabolique-20-pouces
+7498	TARE CM 32R	classiques	adams-revolution-32-pouces-cuivre-martele-parabolique
+7499	TARE CM 29R	classiques	adams-revolution-29-pouces-cuivre-martele-parabolique
+7500	TARE CM 26R	classiques	adams-revolution-26-pouces-cuivre-martele-parabolique
+7501	TARE CM 23R	classiques	adams-revolution-23-pouces-cuivre-martele-parabolique
+7502	TARE CM 20R	classiques	adams-revolution-20-pouces-cuivre-martele-parabolique
+7688	ACC TT20 06	accessoires	accordeur-electronique
+7751	TAC 0632 05	accessoires	sac-de-transport-timbale-adams-universal-32pouces
+7752	TAC 0623 05	accessoires	sac-de-transport-timbale-adams-universal-23pouces
+7819	TSC 03-J2	classiques	jeu-de-2-timbales-adams-symphonic
+7820	TPC 02-J2	classiques	lot-de-2-timbales-adams-professionel
+7821	TAUN FV-J2	classiques	jeu-de-2-timbales-adams-universel-29-pouces-26-pouces
+7909	TAC 0620 05	accessoires	sac-de-transport-timbale-adams-universal-20pouces
+8007	TAUN FV-J2+H	classiques	jeu-de-2-timbales-adams-universel-29-pouces-26-pouces-housse
+8008	TSC 03-J2+H	classiques	jeu-de-2-timbales-adams-symphonic-housse
+8137	LO TPE0030	classiques	premier-elite-30pouces-cuivre-lisse-parabolique
+8204	TY31 3132EA	classiques	yamaha-serie-3100-32-pouces-aluminium
+8205	TY31 3129EA	classiques	yamaha-serie-3100-29-pouces-aluminium
+8206	TY31 3126EA	classiques	yamaha-serie-3100-26-pouces-aluminium
+8207	TY31 3123EA	classiques	yamaha-serie-3100-23-pouces-aluminium
+8214	TAPR CM 32R	classiques	adams-professionnel-generation-ii-32-pouces-cuivre-martele-parabolique
+8215	TAPR CM 29R	classiques	adams-professionnel-generation-ii-29-pouces-cuivre-martele-parabolique
+8216	TAPR CM 26R	classiques	adams-professionnel-generation-ii-26-pouces-cuivre-martele-parabolique
+8217	TAPR CM 23R	classiques	adams-professionnel-generation-ii-23-pouces-cuivre-martele-parabolique
+8218	TAPR CM 20R	classiques	adams-professionnel-generation-ii-20-pouces-cuivre-martele-parabolique
+8219	TAPR CL 32R	classiques	adams-professionnel-generation-ii-32-pouces-cuivre-lisse-parabolique
+8220	TAPR CL 29R	classiques	adams-professionnel-generation-ii-29-pouces-cuivre-lisse-parabolique
+8221	TAPR CL 26R	classiques	adams-professionnel-generation-ii-26-pouces-cuivre-lisse-parabolique
+8222	TAPR CL 23R	classiques	adams-professionnel-generation-ii-23-pouces-cuivre-lisse-parabolique
+8223	TAPR CL 20R	classiques	adams-professionnel-generation-ii-20-pouces-cuivre-lisse-parabolique
+8224	TAPR FV 32R	classiques	adams-professionnel-generation-ii-32-pouces-fibre-de-verre
+8225	TAPR FV 29R	classiques	adams-professionnel-generation-ii-29-pouces-fibre-de-verre
+8226	TAPR FV 26R	classiques	adams-professionnel-generation-ii-26-pouces-fibre-de-verre
+8227	TAPR FV 23R	classiques	adams-professionnel-generation-ii-23-pouces-fibre-de-verre
+8228	TAPR FV 20R	classiques	adams-professionnel-generation-ii-20-pouces-fibre-de-verre
+8282	TARE CM-J2R	classiques	lot-de-2-timbales-adams-revolution-cuivre-martele-parabolique-26-et-29-pouces
+8525	TASY CL 32R	classiques	adams-symphonic-ii-32-pouces-cuivre-lisse-parabolique
+8526	TASY CL 29R	classiques	adams-symphonic-ii-29-pouces-cuivre-lisse-parabolique
+8527	TASY CL 26R	classiques	adams-symphonic-ii-26-pouces-cuivre-lisse-parabolique
+8528	TASY CL 23R	classiques	adams-symphonic-ii-23-pouces-cuivre-lisse-parabolique
+8529	TASY CL 20R	classiques	adams-symphonic-ii-20-pouces-cuivre-lisse-parabolique
+8530	TASY CM 32R	classiques	adams-symphonic-ii-32-pouces-cuivre-martele-parabolique
+8531	TASY CM 29R	classiques	adams-symphonic-ii-29-pouces-cuivre-martele-parabolique
+8532	TASY CM 26R	classiques	adams-symphonic-ii-26-pouces-cuivre-martele-parabolique
+8533	TASY CM 23R	classiques	adams-symphonic-ii-23-pouces-cuivre-martele-parabolique
+8534	TASY CM 20R	classiques	adams-symphonic-ii-20-pouces-cuivre-martele-parabolique
+8535	TASY CP 32R	classiques	adams-symphonic-ii-32-pouces-cuivre-martele-profond
+8536	TASY CP 29R	classiques	adams-symphonic-ii-29-pouces-cuivre-martele-profond
+8537	TASY CP 26R	classiques	adams-symphonic-ii-26-pouces-cuivre-martele-profond
+8538	TASY CP 23R	classiques	adams-symphonic-ii-23-pouces-cuivre-martele-profond
+8539	TASY CP 20R	classiques	adams-symphonic-ii-20-pouces-cuivre-martele-profond
+8573	TARE CL 32R	classiques	adams-revolution-32-pouces-cuivre-lisse-parabolique
+8574	TARE CL 29R	classiques	adams-revolution-29-pouces-cuivre-lisse-parabolique
+8575	TARE CL 26R	classiques	adams-revolution-26-pouces-cuivre-lisse-parabolique
+8576	TARE CL 23R	classiques	adams-revolution-23-pouces-cuivre-lisse-parabolique
+8577	TARE CL 20R	classiques	adams-revolution-20-pouces-cuivre-lisse-parabolique
+9174	TASY CL-J2	classiques	jeu-de-2-timbales-adams-symphonic-ii-cuivre-lisse-parabolique-29-pouces-26-pouces
+9175	TASY CL-J2+FC	classiques	jeu-de-2-timbales-adams-symphonic-ii-cuivre-lisse-parabolique-29-pouces-26-pouces-2-flight-cases
+9176	TAUN FV-J2+ET	classiques	jeu-de-2-timbales-adams-universel-29-pouces-26-pouces-etuis-de-transport
+9410	TY33 3329EA	classiques	yamaha-timbale-serie-3300-29pouces-aluminium
+9411	TY33 3326EA	classiques	yamaha-timbale-serie-3300-26pouces-aluminium
+9538	TAPR CP 32RFT	classiques	adams-professionnel-generation-ii-32pouces-cuivre-martele-profond-manette-accord-fin
+9539	TAPR CP 29RFT	classiques	adams-professionnel-generation-ii-29pouces-cuivre-martele-profond-manette-accord-fin
+9540	TAPR CP 26RFT	classiques	adams-professionnel-generation-ii-26pouces-cuivre-martele-profond-manette-accord-fin
+9541	TAPR CP 23RFT	classiques	adams-professionnel-generation-ii-23pouces-cuivre-martele-profond-manette-accord-fin
+9886	TAPR CM 29RFT	classiques	adams-professionnel-generation-ii-29pouces-cuivre-martele-parabolique-manette-accord-fin
+9887	TAPR CM 26RFT	classiques	adams-professionnel-generation-ii-26pouces-cuivre-martele-parabolique-manette-accord-fin
+9915	TAPP CPP 32RFT	classiques	adams-professionnel-philharmonique-32pouces-cuivre-martele-profond
+9916	TAPP CPP 29RFT	classiques	adams-professionnel-philharmonique-29pouces-cuivre-martele-profond
+9917	TAPP CPP 26RFT	classiques	adams-professionnel-philharmonique-26pouces-cuivre-martele-profond
+9918	TAPP CPP 23RFT	classiques	adams-professionnel-philharmonique-23pouces-cuivre-martele-profond
+9919	TAPP CPP 20RFT	classiques	adams-professionnel-philharmonique-20pouces-cuivre-martele-profond
+10237	TASY CL 32R+H	classiques	adams-symphonic-ii-32pouces-cuivre-lisse-parabolique-housse
+10238	TASY CL 29R+H	classiques	adams-symphonic-ii-29pouces-cuivre-lisse-parabolique-housse
+10239	TASY CL 26R+H	classiques	adams-symphonic-ii-26pouces-cuivre-lisse-parabolique-housse
+10240	TASY CL 23R+H	classiques	adams-symphonic-ii-23pouces-cuivre-lisse-parabolique-housse
+10241	TASY CL 20R+H	classiques	adams-symphonic-ii-20pouces-cuivre-lisse-parabolique-housse
+10242	TARE CL 32R+H	classiques	timbale-adams-revolution-cuivre-lisse-parabolique-32-pouces-housse
+10243	TARE CL 29R+H	classiques	adams-revolution-29-pouces-cuivre-lisse-parabolique-housse
+10244	TARE CL 26R+H	classiques	adams-revolution-26-pouces-cuivre-lisse-parabolique-housse
+10245	TARE CL 23R+H	classiques	adams-revolution-23-pouces-cuivre-lisse-parabolique-housse
+10247	TARE CL 20R+H	classiques	adams-revolution-20-pouces-cuivre-lisse-parabolique-housse
+10252	TMS C0-J2	classiques	jeu-de-2-timbales-majestic-symphonic-cuivre-lisse-profond-29-pouces-26-pouces
+10336	TAC 0201	accessoires	plateau-de-protection-pour-timbale-adams-32-pouces
+10338	TAC 0203	accessoires	plateau-de-protection-pour-timbale-adams-26-pouces
+10339	TAC 0204	accessoires	plateau-de-protection-pour-timbale-adams-23-pouces
+10340	TAC 0205	accessoires	plateau-de-protection-pour-timbale-adams-20-pouces
+10341	TAC 0211	accessoires	plateau-de-protection-pour-timbale-premier-elite-32-pouces
+10342	TAC 0212	accessoires	plateau-de-protection-pour-timbale-premier-elite-30-pouces
+10343	TAC 0213	accessoires	plateau-de-protection-pour-timbale-premier-elite-28-pouces
+10344	TAC 0214	accessoires	plateau-de-protection-pour-timbale-premier-elite-25-pouces
+10345	TAC 0215	accessoires	plateau-de-protection-pour-timbale-premier-elite-22-5-pouces
+10346	TAC 0221	accessoires	plateau-de-protection-pour-timbale-premier-32-pouces-concert-ou-pro-symphonic
+10347	TAC 0222	accessoires	plateau-de-protection-pour-timbale-premier-30-pouces-concert-ou-pro-symphonic
+10348	TAC 0223	accessoires	plateau-de-protection-pour-timbale-premier-28-pouces-concert-ou-pro-symphonic
+5254	TAC 0020 05	accessoires	housse-pour-timbale-adams-20-pouces
+5256	TAC 0023 05	accessoires	housse-pour-timbale-adams-23-pouces
+5260	TAC 0029 05	accessoires	housse-pour-timbale-adams-29-pouces
+5269	TAC 0202 63	accessoires	plateau-de-protection-pour-timbale-adams-29-pouces
+5270	TAC 0203 63	accessoires	plateau-de-protection-pour-timbale-adams-26-pouces
+5273	TAC 0211 63	accessoires	plateau-de-protection-pour-timbale-premier-elite-32-pouces
+5276	TAC 0214 63	accessoires	plateau-de-protection-pour-timbale-premier-elite-25-pouces
+5277	TAC 0215 63	accessoires	plateau-de-protection-pour-timbale-premier-elite-22-5-pouces
+5281	TAC 0224 63	accessoires	plateau-de-protection-pour-timbale-premier-25-pouces-concert-ou-pro-symphonic
+5282	TAC 0225 63	accessoires	plateau-de-protection-pour-timbale-premier-22-5-pouces-concert-ou-pro-symphonic
+5283	TAC 0320 05	accessoires	housse-pour-timbale-majestic
+5528	TMG C120 05	classiques	timbale-majestic-grand-symphonic-martele-20-pouces-
+5530	TMG C126 05	classiques	timbale-majestic-grand-symphonic-martele-26-pouces-
+5531	TMG C129 05	classiques	timbale-majestic-grand-symphonic-martele-29-pouces-
+5532	TMG C132 05	classiques	timbale-majestic-grand-symphonic-martele-32-pouces-
+5559	TMS C123 05	classiques	timbale-majestic-symphonic-cuivre-martele-23-pouces-
+5640	TPF 0132 05	classiques	timbale-adams-professionnel-fibre-de-verre-32-pouces-
+5688	TSC 0123 05	classiques	timbale-adams-symphonic-cuivre-profond-23-pouces-
+5692	TSC 0129 05	classiques	timbale-adams-symphonic-cuivre-profond-29-pouces-
+5720	TAUN CL 20R	classiques	adams-universel-20-pouces-cuivre-lisse-parabolique
+7496	TARE FV 23R	classiques	adams-revolution-23-pouces-fibre-de-verre
+10349	TAC 0224	accessoires	plateau-de-protection-pour-timbale-premier-25-pouces-concert-ou-pro-symphonic
+10655	TAPR CM 32RFT	classiques	adams-professionnel-generation-ii-32pouces-cuivre-martele-parabolique-manette-accord-fin
+10656	TAPR CM 23RFT	classiques	adams-professionnel-generation-ii-23pouces-cuivre-martele-parabolique-manette-accord-fin
+10657	TAPR CM 20RFT	classiques	adams-professionnel-generation-ii-20pouces-cuivre-martele-parabolique-manette-accord-fin
+10755	TPS CL-J4	classiques	jeu-de-4-timbales-premier-pro-symphonic-cuivre-lisse-parabolique
+11224	SLD 0010	accessoires	slidtune-gauge-electronique-timbalier
+11230	TY33 3323EA	classiques	yamaha-serie-3300-23pouces-aluminium
+11283	TPE CL-J2	classiques	jeu-de-2-timbales-premier-elite-28-30pouces-cuivre-lisse-parabolique
+11291	TY33 33-J3	classiques	lot-de-timbales-yamaha-serie-3300-23-26-29pouces
+11495	TAUN FV 20R+H	classiques	adams-universel-20pouces-fibre-de-verre-parabolique-housse
+11497	TAUN FV 26R+H	classiques	adams-universel-26pouces-fibre-de-verre-parabolique-housse
+11498	TAUN FV 29R+H	classiques	adams-universel-29pouces-fibre-de-verre-parabolique-housse
+11499	TAUN FV 32R+H	classiques	adams-universel-32pouces-fibre-de-verre-parabolique
+11861	TASY CL 32R+H+C	classiques	adams-symphonic-ii-32pouces-cuivre-lisse-parabolique-housse-controleur-de-peau
+11862	TASY CL 29R+H+C	classiques	adams-symphonic-ii-29pouces-cuivre-lisse-parabolique-housse-controleur-de-peau
+11863	TASY CL 26R+H+C	classiques	adams-symphonic-ii-26pouces-cuivre-lisse-parabolique-housse-controleur-de-peau
+11864	TASY CL 23R+H+C	classiques	adams-symphonic-ii-23pouces-cuivre-lisse-parabolique-housse-controleur-de-peau
+11867	TAUN FV 32R+H+C	classiques	adams-universel-32pouces-fibre-de-verre-parabolique-housse-controleur-de-peau
+11868	TAUN FV 26R+H+C	classiques	adams-universel-26pouces-fibre-de-verre-parabolique-housse-controleur-de-peau
+12289	TPE 0032 G2	classiques	timbale-premier-elite-nouvelle-generation-32pouces-cuivre-lisse-parabolique
+12290	TPE 0029 G2	classiques	timbale-premier-elite-nouvelle-generation-29pouces-cuivre-lisse-parabolique
+12291	TPE 0026 G2	classiques	timbale-premier-elite-nouvelle-generation-26pouces-cuivre-lisse-parabolique
+12292	TPE 0023 G2	classiques	timbale-premier-elite-nouvelle-generation-23pouces-cuivre-lisse-parabolique
+12293	TPE 0020 G2	classiques	timbale-premier-elite-nouvelle-generation-20pouces-cuivre-lisse-parabolique
+1	ACC CT10 06	accessoires	controleur-de-tension-de-peau
+10337	TAC 0202	accessoires	plateau-de-protection-pour-timbale-adams-29-pouces
+10350	TAC 0225	accessoires	plateau-de-protection-pour-timbale-premier-22-5-pouces-concert-ou-pro-symphonic
+11496	TAUN FV 23R+H	classiques	adams-universel-23pouces-fibre-de-verre-parabolique-housse
+11869	TAUN FV 23R+H+C	classiques	adams-universel-23pouces-fibre-de-verre-parabolique-housse-controleur-de-peau
+11870	TAUN FV 20R+H+C	classiques	adams-universel-20pouces-fibre-de-verre-parabolique-housse-controleur-de-peau
+12189	TPS 0020 G2	classiques	timbale-premier-concert-nouvelle-generation-20pouces-cuivre-lisse-parabolique
+12351	TPS 0029 G2	classiques	timbale-premier-concert-29pouces-cuivre-lisse-parabolique-nouvelle-generation
+12379	TPS 0032 G2	classiques	timbale-premier-concert-32pouces-cuivre-lisse-parabolique-nouvelle-generation
+12380	TPS 0026 G2	classiques	timbale-premier-concert-26pouces-cuivre-lisse-parabolique-nouvelle-generation
+12381	TPS 0023 G2	classiques	timbale-premier-concert-23pouces-cuivre-lisse-parabolique-nouvelle-generation
+12491	TPS 1032 G2	classiques	timbale-premier-concert-nouvelle-generation-32pouces-fibre-de-verre-parabolique
+12492	TPS 1026 G2	classiques	timbale-premier-concert-nouvelle-generation-26pouces-fibre-de-verre-parabolique
+12493	TPS 1029 G2	classiques	timbale-premier-concert-nouvelle-generation-29pouces-fibre-de-verre-parabolique
+12494	TPS 1023 G2	classiques	timbale-premier-concert-nouvelle-generation-23pouces-fibre-de-verre-parabolique
+12495	TPS 1020 G2	classiques	timbale-premier-concert-nouvelle-generation-20pouces-fibre-de-verre-parabolique
+12574	TAPR CP-J4	classiques	jeu-de-4-timbales-adams-professionnel-generation-ii-23-26pouces-29-32pouces-cuivre-martele-parabolique
+12575	TAUN CL-J3	classiques	jeu-de-3-timbales-adams-universel-26-29pouces-32pouces-cuivre-lisse-parabolique
+12577	TMH F0-J2	classiques	jeu-de-3-timbales-majestic-harmonic-fibre-de-verre-20pouces
+12580	LO TPE-CL-J4	classiques	jeu-de-4-timbales-premier-elite-25-28pouces-30-32pouces-cuivre-lisse-parabolique
+12997	TY33 3332EA	classiques	yamaha-timbale-serie-3300-32pouces-aluminium
+14092	TAC 0720	accessoires	adams-4trtnpasrv20-sac-de-transport-timbale-adams-revolution-20pouces
+14094	TAC 0726	accessoires	adams-4trtnpasrv26-sac-de-transport-timbale-adams-revolution-26pouces
+14096	TAC 0729	accessoires	adams-4trtnpasrv29-sac-de-transport-timbale-adams-revolution-29pouces
+14097	TAC 0732	accessoires	adams-4trtnpasrv32-sac-de-transport-timbale-adams-revolution-32pouces
+14123	TASY CP-J4	classiques	lot-de-4-timbales-adams-symphonic-ii-23-26pouces-29-32pouces-cuivre-martele-profond
+14124	TARE FV-J2	classiques	lot-de-2-timbales-adams-revolution-26-29pouces-fibre-de-verre-parabolique

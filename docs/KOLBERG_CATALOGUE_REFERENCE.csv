@@ -1,0 +1,188 @@
+Reference,Nom_Produit,Categorie,Sous_Categorie,Specs,Poids_kg,Type_OrkMap
+3106,Chaise orchestre standard,Chaises,Orchestre,"H48/50/52cm empilable x6",6,chaise_standard
+3107,Chaise orchestre sync adjustment,Chaises,Orchestre,"Inclinaison sync jusqu'à 15°",6.5,chaise_standard
+3100,Chaise orchestre comfort,Chaises,Orchestre,"Inclinaison 20° empilable x8",8.5,chaise_standard
+3100H,Chaise orchestre comfort réglable hauteur,Chaises,Orchestre,"H46-52cm réglable",9,chaise_standard
+3109,Chaise orchestre bois (hêtre),Chaises,Orchestre,"Cadre bois hêtre empilable x5",5,chaise_standard
+3105,Chaise orchestre/harpe comfort line,Chaises,Comfort line,"H42-55cm ou H50-70cm 5 pieds",9,chaise_comfort
+3105T,Chaise tuba comfort line,Chaises,Comfort line,"Assise large tuba",10,chaise_tuba
+3111,Chaise cuivres comfort line,Chaises,Comfort line,"H50-70cm repose-pieds triangulaire",11,chaise_cuivres
+3106P,Chaise orchestre plateforme 20cm,Chaises,Plateforme,"H48/50/52cm + plateforme empilable x5",11,chaise_plateforme
+3100HP,Chaise comfort plateforme,Chaises,Plateforme,"Comfort + plateforme",14,chaise_plateforme
+3114,Chaise comfort line plateforme,Chaises,Plateforme,"Comfort line + plateforme",16,chaise_plateforme
+3113,Tabouret piano/célesta rond,Chaises,Piano/Célesta,"Ø38cm H42-55cm pivotant",6,tabouret_piano
+3113D,Tabouret piano/célesta non-pivotant,Chaises,Piano/Célesta,"Ø38cm H42-55cm fixe",6,tabouret_piano
+3090,Chaise contrebasse comfort F-shape,Chaises,Contrebasse,"H68-81cm 2 repose-pieds forme F",12,chaise_CB
+3090RS,Chaise contrebasse assise ronde,Chaises,Contrebasse,"H68-81cm assise ronde",12,chaise_CB
+3110RS,Chaise contrebasse repose-pieds triangulaire,Chaises,Contrebasse,"H60-86cm repose-pieds triangulaire",11,chaise_CB
+3110RSF,Chaise contrebasse repose-pieds spéciaux,Chaises,Contrebasse,"H60-86cm repose-pieds spéciaux",13,chaise_CB
+3092,Tabouret contrebasse voyage,Chaises,CB voyage,"H68-81cm pliant",8.5,tabouret_CB_voyage
+3093,Tabouret contrebasse voyage repose-pieds étages,Chaises,CB voyage,"H72-85cm repose-pieds étagé",7.5,tabouret_CB_voyage
+3093_2F,Tabouret contrebasse 2 repose-pieds réglables,Chaises,CB voyage,"H72-85cm 2 repose-pieds réglables",8.5,tabouret_CB_voyage
+3094,Tabouret contrebasse démontable,Chaises,CB voyage,"H62-86cm démontable",4.8,tabouret_CB_voyage
+3095,Tabouret contrebasse pneumatique,Chaises,CB voyage,"H60-86cm pneumatique",6,tabouret_CB_voyage
+3095SL,Tabouret contrebasse comfort voyage,Chaises,CB voyage,"H60-86cm comfort",10,tabouret_CB_voyage
+3110,Chaise timbalier/percu pivotante,Chaises,Timbalier/Percu,"H58-84cm 5 pieds pivotante",11,chaise_timbalier
+3110TR,Chaise timbalier/percu roulettes,Chaises,Timbalier/Percu,"H57-77cm roulettes",12,chaise_timbalier
+3112,Tabouret percu/timbalier,Chaises,Timbalier/Percu,"H58-84cm tabouret",7,tabouret_percu
+3110D,Chaise chef d'orchestre pivotante,Chaises,Chef,"H58-84cm pivotante",11,chaise_chef
+3106D,Chaise chef d'orchestre standard,Chaises,Chef,"Sur base 3106",6,chaise_chef
+3114D,Chaise chef comfort line,Chaises,Chef,"Comfort line chef",16,chaise_chef
+3110R,Chaise directeur,Chaises,Directeur,"Pivotante avec accoudoirs",12,chaise_directeur
+3110RR,Chaise directeur renforcée,Chaises,Directeur,"Pivotante renforcée accoudoirs",13,chaise_directeur
+3116C,Tabouret violoncelle voyage,Chaises,Violoncelle,"Pliant voyage",5,tabouret_vlc
+100G,Base 3 pieds caoutchouc,Stands,Bases,"3 pieds Ø20mm caoutchouc",3.72,base_stand
+100R,Base 3 pieds roulettes,Stands,Bases,"3 pieds roulettes",4,base_stand
+100V,Base télescopique,Stands,Bases,"Télescopique",4,base_stand
+110R,Base 3 pieds roulettes Ø25mm,Stands,Bases,"3 pieds Ø25mm roulettes",5,base_stand
+110H,Base 4 pieds roulettes,Stands,Bases,"4 pieds roulettes",8.4,base_stand
+120,Support chariot,Stands,Bases,"Chariot",8,base_chariot
+120S,Support chariot court,Stands,Bases,"Chariot court",7,base_chariot
+130,Tube insert Ø25x500mm,Stands,Bases,"Ø25x500mm",1,tube_insert
+130K,Tube insert Ø25x500mm courbé,Stands,Bases,"Ø25x500mm courbé",1,tube_insert
+130R,Tube insert Ø25x500mm roulettes,Stands,Bases,"Ø25x500mm roulettes",1.5,tube_insert
+130KR,Tube insert Ø25x500mm courbé roulettes,Stands,Bases,"Ø25x500mm courbé roulettes",1.5,tube_insert
+160-169,Tubes insert Ø16mm (100-1100mm),Stands,Tubes insert,"Ø16mm longueurs 100-1100mm",0.5,tube_insert
+200-209,Tubes insert Ø20mm (200-1100mm),Stands,Tubes insert,"Ø20mm longueurs 200-1100mm",0.7,tube_insert
+122,Tube transversal Ø20x1100mm,Stands,Tubes transversaux,"Ø20x1100mm",1,tube_transversal
+122S,Tube transversal Ø20x1100mm court,Stands,Tubes transversaux,"Ø20x1100mm court",0.8,tube_transversal
+125,Tube transversal Ø25x1100mm,Stands,Tubes transversaux,"Ø25x1100mm",1.2,tube_transversal
+125S,Tube transversal Ø25x1100mm court,Stands,Tubes transversaux,"Ø25x1100mm court",1,tube_transversal
+223-229M4,Tubes transversaux carrés (300-2000mm),Stands,Tubes transversaux,"Carrés 300-2000mm",1.5,tube_transversal
+115,Anneau de réglage clip-bolt Ø20mm,Stands,Anneaux/Crochets,"Clip-bolt Ø20mm",0.1,anneau
+115D,Anneau de réglage double Ø20mm,Stands,Anneaux/Crochets,"Double Ø20mm",0.15,anneau
+115L,Anneau de réglage long Ø20mm,Stands,Anneaux/Crochets,"Long Ø20mm",0.12,anneau
+115R,Anneau de réglage Ø20mm rotatif,Stands,Anneaux/Crochets,"Ø20mm rotatif",0.12,anneau
+115S,Anneau de réglage Ø20mm court,Stands,Anneaux/Crochets,"Ø20mm court",0.08,anneau
+116,Anneau de réglage clip-bolt Ø25mm,Stands,Anneaux/Crochets,"Clip-bolt Ø25mm",0.12,anneau
+116D,Anneau de réglage double Ø25mm,Stands,Anneaux/Crochets,"Double Ø25mm",0.18,anneau
+116S,Anneau de réglage Ø25mm court,Stands,Anneaux/Crochets,"Ø25mm court",0.1,anneau
+116UL,Anneau de réglage Ø25mm universel long,Stands,Anneaux/Crochets,"Ø25mm universel long",0.15,anneau
+117,Anneau jumeau 20mm,Stands,Anneaux jumeaux,"Double 20mm",0.2,anneau_jumeau
+117W,Anneau jumeau 25mm,Stands,Anneaux jumeaux,"Double 25mm",0.25,anneau_jumeau
+113S,Anneau jumeau 30mm,Stands,Anneaux jumeaux,"Double 30mm",0.3,anneau_jumeau
+200U,Adaptateur universel,Stands,Adaptateurs,"Universel",0.1,adaptateur
+115US,Adaptateur US,Stands,Adaptateurs,"Standard US",0.1,adaptateur
+222SO,Adaptateur tube carré,Stands,Adaptateurs,"Pour tube carré",0.15,adaptateur
+251,Adaptateur standard,Stands,Adaptateurs,"Standard",0.1,adaptateur
+252,Adaptateur renforcé,Stands,Adaptateurs,"Renforcé",0.12,adaptateur
+260-268,Supports coulissants (Ø10-20mm),Stands,Supports coulissants,"Pour crotales/lithophon Ø10-20mm",0.2,support_coulissant
+249,Support de triangle,Stands,Supports jeu,"Triangle col de cygne",0.3,support_triangle
+249C,Support de crotales,Stands,Supports jeu,"Crotales",0.3,support_crotales
+249CB,Support de cowbell,Stands,Supports jeu,"Cowbell/cencerro",0.3,support_cowbell
+249CW,Support doigts de cymbale (finger cymbals),Stands,Supports jeu,"Finger cymbals",0.2,support_cymbale
+249Z,Support doigts de cymbale variante,Stands,Supports jeu,"Finger cymbals variante",0.2,support_cymbale
+230P,Tablette trap étroite 40x12cm,Stands,Tablettes trap,"40x12cm",1,tablette_trap
+230PSW,Tablette trap étroite 40x12cm variante,Stands,Tablettes trap,"40x12cm variante",1,tablette_trap
+230,Tablette trap bois 40x40cm,Stands,Tablettes trap,"40x40cm bois",2,tablette_trap
+230G3,Tablette trap grande sur 110H,Stands,Tablettes trap,"Grande sur base 110H",5,tablette_trap_grande
+230G80,Tablette trap 80cm sur 110H,Stands,Tablettes trap,"80cm sur base 110H",6,tablette_trap_grande
+230G100,Tablette trap 100cm sur 110H,Stands,Tablettes trap,"100cm sur base 110H",7,tablette_trap_grande
+134-1,Stand Basic 1,Stands,Stands de base,"Basic 1",4,stand_basic
+136-1,Stand Basic 2,Stands,Stands de base,"Basic 2",5,stand_basic
+130-1,Stand base large,Stands,Stands de base,"Base large",5,stand_basic
+134-292,Stand pour 2 tambours,Stands,Stands de base,"2 drums",6,stand_drums
+134-292S,Stand pour 2 tambours court,Stands,Stands de base,"2 drums court",5,stand_drums
+MSSTARTER,Kit starter multi-stands,Stands,Stands de base,"Kit démarrage",8,kit_starter
+X,Stand combiné gibbet 1 niveau,Stands,Portiques combinés,"1 niveau",14.6,portique_combine
+XI,Stand combiné gibbet 2 niveaux,Stands,Portiques combinés,"2 niveaux",16.2,portique_combine
+XII,Stand combiné gibbet multifonction,Stands,Portiques combinés,"Multifonction",21,portique_combine
+1325K,Stand tôle tonnerre (thundersheet),Stands,Portiques combinés,"Thundersheet",15.1,portique_tonnerre
+MSX,Stand tam-tam basic,Stands,Portiques combinés,"Tam-tam basic",11.9,portique_tamtam
+130-5,Stand arbre 5 cymbales,Stands,Stands cymbales,"Tree 5 cymbales",5,stand_cymbale
+134-1,Stand cymbale offset,Stands,Stands cymbales,"Offset basique",4,stand_cymbale
+134-3,Stand cymbale offset 3,Stands,Stands cymbales,"Offset 3",4.5,stand_cymbale
+134-5,Stand cymbale offset 5,Stands,Stands cymbales,"Offset 5",5,stand_cymbale
+136-1,Stand cymbale tilter,Stands,Stands cymbales,"Tilter basique",4,stand_cymbale
+136-S,Stand cymbale tilter court,Stands,Stands cymbales,"Tilter court",3.5,stand_cymbale
+2110KS,Stand cymbale concert,Stands,Stands cymbales,"Concert",5,stand_cymbale_concert
+100R-G2,Stand mobile 2 paires cymbales,Stands,Stands cymbales,"Mobile 2 paires roulettes",12,stand_cymbale_mobile
+110H-G4,Stand mobile 4 paires cymbales,Stands,Stands cymbales,"Mobile 4 paires roulettes",18,stand_cymbale_mobile
+130G1,Stand cymbales concert pied simple,Stands,Stands cymbales concert,"Pied simple",5,stand_cymbale_concert
+130KRG1,Stand cymbales concert pied courbé roulettes,Stands,Stands cymbales concert,"Courbé roulettes",6,stand_cymbale_concert
+134G1,Stand cymbales concert offset,Stands,Stands cymbales concert,"Offset",5,stand_cymbale_concert
+134RG1,Stand cymbales concert offset roulettes,Stands,Stands cymbales concert,"Offset roulettes",6,stand_cymbale_concert
+2370KST,Stand combiné crotales,Stands,Stands crotales,"Combiné",8,stand_crotales
+2375KST,Stand combiné crotales moyen,Stands,Stands crotales,"Combiné moyen",9,stand_crotales
+2380KST1,Stand combiné crotales grand,Stands,Stands crotales,"Combiné grand",10,stand_crotales
+2370SD,Stand crotales avec pédale damper,Stands,Stands crotales,"Pédale damper",10,stand_crotales_damper
+2375SD,Stand crotales moyen pédale damper,Stands,Stands crotales,"Moyen pédale damper",11,stand_crotales_damper
+2380SD,Stand crotales grand pédale damper,Stands,Stands crotales,"Grand pédale damper",12,stand_crotales_damper
+CBSTF0-H0,Stand cloches/cencerros F0-H0,Stands,Stands cloches,"F0-H0",3,stand_cloches
+1300K,Set de 5 stands cloches,Stands,Stands cloches,"Set 5 pièces",12,stand_cloches_set
+1470,Stand 4-8 wood/poly blocks clavier,Stands,Stands bois,"4-8 blocks arrangement clavier",6,stand_woodblocks
+2050K,Stand temple blocks,Stands,Stands bois,"Temple blocks",5,stand_templeblocks
+2050CH,Stand temple blocks avec pédale,Stands,Stands bois,"Temple blocks + pédale",6,stand_templeblocks
+225XR10,Stand Xenakis Rebonds 10 pièces,Stands,Stands bois,"Xenakis Rebonds 10",8,stand_xenakis
+225XR16,Stand Xenakis Rebonds 16 pièces,Stands,Stands bois,"Xenakis Rebonds 16",10,stand_xenakis
+1130A,Stand enclumes (anvils),Stands,Stands spéciaux,"Enclumes",8,stand_enclume
+1190K,Stand klaxons voiture (Gershwin),Stands,Stands spéciaux,"Klaxons Gershwin",5,stand_klaxons
+1211K,Stand carillon bambou (wind-chimes),Stands,Stands spéciaux,"Bambou wind-chimes",3,stand_windchimes
+1321K,Stand tôle tonnerre petit,Stands,Stands spéciaux,"Thundersheet petit",8,stand_tonnerre
+1325K,Stand tôle tonnerre grand,Stands,Stands spéciaux,"Thundersheet grand",15.1,stand_tonnerre
+1505K,Stand castagnettes,Stands,Stands spéciaux,"Castagnettes",2,stand_castagnettes
+1652K,Stand carillon métal (wind-chimes),Stands,Stands spéciaux,"Métal wind-chimes",3,stand_windchimes
+1380K,Stand carillon verre (glass chimes),Stands,Stands spéciaux,"Glass chimes",3,stand_glasschimes
+510-516,Stands toms concert 10-16 pouces,Stands,Stands toms,"Toms concert 10-16 pouces",5,stand_tom
+2320,Stand klaxons taxi,Stands,Stands spéciaux,"Taxi horns",4,stand_taxi
+2412,Stand bouteilles accordées,Stands,Stands spéciaux,"Tuned bottles",5,stand_bouteilles
+2437,Stand lithophon/mokushos,Stands,Stands spéciaux,"Lithophon/mokushos",6,stand_lithophon
+110H-RGD,Stand cloches tubes 8 cloches,Stands,Stands cloches tubes,"8 cloches",16.7,stand_cloches_tubes
+224RGD,Stand cloches tubes 4 cloches,Stands,Stands cloches tubes,"4 cloches",5.8,stand_cloches_tubes
+2458,Stand cloches tubes 7 cloches,Stands,Stands cloches tubes,"7 cloches",12,stand_cloches_tubes
+2458S,Stand cloches tubes 7 cloches compact,Stands,Stands cloches tubes,"7 cloches compact",11,stand_cloches_tubes
+2455,Stand cloches tubes 7 cloches variante,Stands,Stands cloches tubes,"7 cloches variante",12,stand_cloches_tubes
+280,Stand baguettes 6 paires,Stands,Stands baguettes,"6 paires",2,stand_baguettes
+280E,Stand baguettes 8 paires,Stands,Stands baguettes,"8 paires",2.5,stand_baguettes
+280K,Stand baguettes compact,Stands,Stands baguettes,"Compact",2,stand_baguettes
+280K1,Stand baguettes compact 1,Stands,Stands baguettes,"Compact variante 1",2,stand_baguettes
+280K2,Stand baguettes compact 2,Stands,Stands baguettes,"Compact variante 2",2,stand_baguettes
+281I,Stand baguettes 10 paires,Stands,Stands baguettes,"10 paires",3,stand_baguettes
+253,Stand tambourin,Stands,Stands tambourin,"Tambourin standard",2,stand_tambourin
+253T,Stand tambourin avec tilter,Stands,Stands tambourin,"Tambourin tilter",2.5,stand_tambourin
+270,Stand tambourin série 270,Stands,Stands tambourin,"Série 270",2,stand_tambourin
+2025K,Stand tambourin série 2025,Stands,Stands tambourin,"Série 2025",3,stand_tambourin
+170,Stand triangle col de cygne,Stands,Stands triangle,"Col de cygne",1.5,stand_triangle
+240-247,Stands triangle série 240,Stands,Stands triangle,"Série 240",2,stand_triangle
+242FS,Stand triangle Free Suspended,Stands,Stands triangle,"Free Suspended",3,stand_triangle_FS
+247FS,Stand triangle Free Suspended variante,Stands,Stands triangle,"Free Suspended variante",3,stand_triangle_FS
+2110K1,Stand triangle concert K1,Stands,Stands triangle,"Concert K1",3,stand_triangle_concert
+2110KM,Stand triangle concert KM,Stands,Stands triangle,"Concert KM",3.5,stand_triangle_concert
+2110KS,Stand triangle concert KS,Stands,Stands triangle,"Concert KS",3.5,stand_triangle_concert
+2110K2,Stand triangle concert K2,Stands,Stands triangle,"Concert K2",4,stand_triangle_concert
+132-140,Stand caisse claire 12-14 pouces,Stands,Stands caisse claire,"12-14 pouces standard",4,stand_CC
+133-140,Stand caisse claire 12-14 pouces variante,Stands,Stands caisse claire,"12-14 pouces variante",4,stand_CC
+134-140,Stand caisse claire 12-14 pouces offset,Stands,Stands caisse claire,"12-14 pouces offset",4.5,stand_CC
+133-140FS,Stand caisse claire Free Suspended,Stands,Stands caisse claire,"Free Suspended",5,stand_CC_FS
+134-140FS,Stand caisse claire Free Suspended offset,Stands,Stands caisse claire,"Free Suspended offset",5.5,stand_CC_FS
+Glockenspiel,Glockenspiel (Concert/Opera/Soloist),Tessiture,Claviers,"f²–c⁵/e⁵/f⁵ (sonne 1-2 oct au-dessus)",,tessiture
+Glockenspiel_clavier,Glockenspiel à clavier,Tessiture,Claviers,"c²–c⁵/e⁵ (sonne 1-2 oct au-dessus)",,tessiture
+Celesta,Célesta,Tessiture,Claviers,"c–f⁵ (sonne 1 oct au-dessus)",,tessiture
+Vibraphone,Vibraphone,Tessiture,Claviers,"c/f–f³/c⁴ (son réel)",,tessiture
+Xylophone,Xylophone,Tessiture,Claviers,"f³–c⁵ (sonne 1 oct au-dessus de l'écrit)",,tessiture
+Xylorimba,Xylorimba,Tessiture,Claviers,"C–c⁵",,tessiture
+Marimba,Marimba,Tessiture,Claviers,"C/E/F/A–c⁵ (selon taille)",,tessiture
+Piano,Piano,Tessiture,Claviers,"A₂–c⁵",,tessiture
+Pauken,Timbales (Pauken),Tessiture,Peaux,"D–d¹",,tessiture
+Roehrenglocke,Cloches tubes (Röhrenglocke),Tessiture,Cloches,"c² (souvent noté 1 oct plus bas)–f⁵",,tessiture
+Kirchenglocke,Cloche église (Kirchenglocke/Campana),Tessiture,Cloches,"C–c⁵",,tessiture
+Plattenglocke,Cloche plaque (Plattenglocke/Bell Plate),Tessiture,Cloches,"Gamme étendue",,tessiture
+Schalenglocke,Cloche coupe (Cup Bell/Schalenglocke),Tessiture,Cloches,"f¹–f⁵",,tessiture
+Kuhglocke,Cencerro/Cowbell (Kuhglocke),Tessiture,Cloches,"Gamme large",,tessiture
+Swiss_Bell,Cloche suisse (Swiss Bell),Tessiture,Cloches,"f–c⁵",,tessiture
+Handglocke,Cloche à main (Handglocke),Tessiture,Cloches,"c²–c⁵",,tessiture
+Cymbales_antiques,Crotales (Cymbales antiques),Tessiture,Métaux,"c² (noté 2 oct plus bas)–f⁶",,tessiture
+Amboss,Enclume (Amboss/Anvil),Tessiture,Métaux,"d¹–c⁵",,tessiture
+Boobam,Boobam,Tessiture,Peaux,"C–c³",,tessiture
+Burma_Gong,Gong birman/thaï (Burma/Thai Gong),Tessiture,Gongs,"C–c³",,tessiture
+Steelpan,Steelpan,Tessiture,Métaux,"G–e⁵",,tessiture
+Lithophon,Lithophon (Steinspiel),Tessiture,Bois/Pierre,"e² (noté 1-2 oct plus bas)–e⁵",,tessiture
+Flaschenspiel,Bouteilles accordées (Flaschenspiel),Tessiture,Divers,"c²–d³",,tessiture
+Autohupe,Klaxon taxi (Autohupe/Taxi Horn),Tessiture,Divers,"c¹–c³",,tessiture
+Angklung,Angklung,Tessiture,Bois/Bambou,"g–c⁴",,tessiture
+Mokusho,Mokusho,Tessiture,Bois/Bambou,"c²–g⁴",,tessiture
+Poly_Block,Poly Block,Tessiture,Bois,"c²–c⁴",,tessiture
+Holzblocktrommel,Wood Block (Holzblocktrommel),Tessiture,Bois,"c²–g⁴",,tessiture
+Temple_Block,Temple Block,Tessiture,Bois,"a¹–f³",,tessiture
+Schlitztrommel,Tambour à fente (Schlitztrommel/Slit Drum),Tessiture,Bois,"f–f³",,tessiture
+Log_Drum,Log Drum,Tessiture,Bois,"c–f#³",,tessiture

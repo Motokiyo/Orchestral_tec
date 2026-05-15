@@ -10,3 +10,9 @@ CLAUDE_CODE_PROMPT.md
 CONVERSATION_RESUME.md
 PROMPTS_VISION_TEST.md
 BENCHMARK_VISION_IA.md
+.vercel
+
+# Secrets
+.env
+.env.local
+.env.*.local

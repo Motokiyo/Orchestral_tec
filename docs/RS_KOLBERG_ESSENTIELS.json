@@ -1,0 +1,219 @@
+{
+  "_meta": {
+    "version": "1.0",
+    "date": "2026-03-27",
+    "usage": "Refs constructeurs les plus courantes en régie orchestre. Chargé en RAG uniquement quand l'IA doit identifier une marque/modèle. ~200 entrées = ~4k tokens.",
+    "sources": ["r-sons.com (scraped mars 2026)", "Kolberg catalogs 2024"]
+  },
+
+  "CHAISES": {
+    "kolberg": {
+      "3106":  "Orchestre standard H48-52cm empilable",
+      "3107":  "Orchestre sync adjust 15°",
+      "3100":  "Comfort inclin 20° empilable",
+      "3100H": "Comfort réglable H46-52cm",
+      "3109":  "Bois hêtre empilable",
+      "3105":  "Comfort line H42-55cm 5 pieds",
+      "3105T": "Tuba assise large",
+      "3111":  "Cuivres H50-70cm repose-pieds triang",
+      "3113":  "Tabouret piano/célesta Ø38cm pivotant",
+      "3090":  "CB comfort F-shape H68-81cm",
+      "3110RS": "CB repose-pieds triang H60-86cm",
+      "3110":  "Timbalier/percu pivotante H58-84cm",
+      "3110TR": "Timbalier roulettes H57-77cm",
+      "3112":  "Tabouret percu H58-84cm",
+      "3110D": "Chef pivotante",
+      "3106D": "Chef standard"
+    },
+    "rs": {
+      "SIE 1345N":   "Orchestra H45cm",
+      "SIE 1347N":   "Orchestra H47cm",
+      "SIE 1147N":   "Compacte H47cm",
+      "SIE 1445N":   "4 pieds empilable H45cm",
+      "SIE 5510N":   "Multi-réglable ronde percu",
+      "SIE 5510NPE": "Multi-réglable carrée percu",
+      "SIE 5520N":   "Percu tournante avec dossier",
+      "SIE 3010N":   "Haute fixe percu",
+      "SIE 3010NCB": "Haute fixe CB",
+      "SIE 3510N":   "CB réglable",
+      "SIE 5510NTI": "Timbalier tournante ronde",
+      "SIE 5520NTI": "Timbalier tournante + dossier",
+      "SIE 7865":    "Haute fixe chef",
+      "SIE 7868":    "Haute multifonctions chef",
+      "SIE 2210N":   "AGIL pliante",
+      "SIE 14015":   "ELISE® UP multi-réglable"
+    }
+  },
+
+  "PUPITRES": {
+    "rs_manhasset": {
+      "PUP 0301 06": "Symphony Manhasset 48 (LE standard)",
+      "PUP 0302 06": "Orchestral Manhasset",
+      "PUP 0401 06": "Harmony Manhasset",
+      "PUP 0350":    "Tromboniste Manhasset"
+    },
+    "rs_chef": {
+      "PUP 0501N": "Chef éclairage intégré R&S",
+      "PUP 0502N": "Chef 70×50 embase plate R&S",
+      "PUP 0503N": "Chef 70×50 embase pliante R&S"
+    },
+    "rs_km": {
+      "PUP 0101N": "Pliant compact noir K&M",
+      "PUP 0101G": "Pliant compact gris K&M"
+    }
+  },
+
+  "PODIUMS": {
+    "rs": {
+      "POD 0220 63": "Direction hêtre verni",
+      "POD 0224 63": "Direction contreplaqué noir",
+      "POD 0300 63": "HECTOR pliant contreplaqué noir"
+    }
+  },
+
+  "TABLETTES_TRAP": {
+    "rs": {
+      "PIE 5303":  "Petite 365×305mm",
+      "PIE 5301":  "Grande 365×590mm",
+      "PIE 5302":  "Grande + compartiments baguettes"
+    },
+    "kolberg": {
+      "230P":    "Étroite 40×12cm",
+      "230":     "Bois 40×40cm",
+      "230G80":  "Grande 80cm sur base 110H",
+      "230G100": "Grande 100cm sur base 110H"
+    }
+  },
+
+  "PIEDS_CYMBALE": {
+    "rs": {
+      "PIE 1322 06": "Droit léger",
+      "PIE 1342 06": "Double embase",
+      "PIE 1910 06": "Double embase Yamaha",
+      "PIE 1650 06": "Simple embase Yamaha léger",
+      "PIE 2745 06": "Perche Yamaha standard",
+      "PIE 2965 06": "Perche Yamaha",
+      "PIE 1012 06": "Arbre Zildjian 12 cymbales"
+    }
+  },
+
+  "PIEDS_CAISSE_CLAIRE": {
+    "rs": {
+      "PIE 3500 06": "Double embase standard",
+      "PIE 3940 06": "Yamaha Pro double à rotule",
+      "PIE 3600 06": "Mapex standard",
+      "PIE 3100 06": "Mapex Falcon"
+    },
+    "kolberg": {
+      "132-140": "Standard 12-14\"",
+      "133-140FS": "Free Suspended",
+      "134-140FS": "Free Suspended offset"
+    }
+  },
+
+  "PORTIQUES_GONGS_TAMTAMS": {
+    "rs": {
+      "PRT 1212 26": "Petit gongs/tam-tams",
+      "PRT 1214 26": "Grand gongs/tam-tams",
+      "PRT 1216 26": "Extra large tam-tam",
+      "PRT 1250 26": "Mobile sur roulettes"
+    },
+    "kolberg": {
+      "MSX": "Tam-tam basic 11.9kg",
+      "X":   "Combiné gibbet 1 niveau 14.6kg",
+      "XI":  "Combiné gibbet 2 niveaux 16.2kg",
+      "XII": "Multifonction 21kg"
+    }
+  },
+
+  "STANDS_TRIANGLE": {
+    "kolberg": {
+      "170": "Col de cygne",
+      "242FS": "Free Suspended",
+      "2110KS": "Concert KS"
+    },
+    "rs": {
+      "ATT 2500 26": "Attache pied individuel",
+      "ATT 2510 26": "Attache standard"
+    }
+  },
+
+  "CHASSIS_CROTALES": {
+    "zildjian_rs": {
+      "CHS 6011 06": "1 octave grave chromé",
+      "CHS 6012 06": "1 octave aigu chromé",
+      "CHS 6011N":   "1 octave grave noir luxe",
+      "CHS 6012N":   "1 octave aigu noir luxe"
+    },
+    "kolberg": {
+      "2370KST": "Combiné",
+      "2375KST": "Combiné moyen",
+      "2370SD":  "Avec pédale damper"
+    }
+  },
+
+  "STANDS_SPECIAUX": {
+    "kolberg": {
+      "1130A":  "Enclumes",
+      "1190K":  "Klaxons voiture (Gershwin)",
+      "1325K":  "Tôle tonnerre",
+      "1505K":  "Castagnettes",
+      "2050K":  "Temple blocks",
+      "1470":   "Wood/poly blocks (4-8, clavier)",
+      "2320":   "Klaxons taxi",
+      "2412":   "Bouteilles accordées",
+      "2437":   "Lithophon/mokushos",
+      "225XR10": "Xenakis Rebonds 10"
+    }
+  },
+
+  "SUPPORTS_INSTRUMENTS": {
+    "rs": {
+      "PIE 4005":    "Conga individuel Toca",
+      "PIE 4020":    "Bongo LP",
+      "PIE 4202 06": "Glockenspiel en X",
+      "PIE 4205 26": "Plateau mousse glockenspiel R&S",
+      "PIE 4312 06": "Rototom 1-3 Remo",
+      "PIE 4622R06": "2 boo-bams R&S",
+      "PIE 4665 06": "2 toms concert Yamaha",
+      "PIE 4710":    "Chimes Meinl"
+    }
+  },
+
+  "ATTACHES": {
+    "rs": {
+      "ATT 1010 26": "Crochet polyblocks",
+      "ATT 2500 26": "Triangle pied indiv",
+      "ATT 2510 26": "Triangle standard",
+      "ATT 3000 26": "Tambourin pied indiv",
+      "ATT 3010 26": "Tambourin standard",
+      "ATT 3020 26": "Cloche mambo/cowbell",
+      "ATT 3030 26": "Piccolo wood block",
+      "ATT 3040 26": "Pince multifonctions",
+      "ATT 3050 06": "Pince multifonctions Yamaha"
+    }
+  },
+
+  "CELESTAS_GLOCKENSPIELS_CLAVIER": {
+    "rs": {
+      "CEL 1051 04": "Schiedmayer 5 oct (ancien)",
+      "CEL 1054 04": "Schiedmayer Compact 5½ oct",
+      "CEL 1055 04": "Schiedmayer Studio 5½ oct",
+      "CEL 2055 04": "Yamaha 5½ oct",
+      "CEL SM2035":  "Glock clavier Schiedmayer Papageno 3½ oct",
+      "GLO 30BERF":  "Glock Bergerault Radio France 3 oct",
+      "GLO 30BERFR": "Glock Bergerault RF 3 oct réglable"
+    }
+  },
+
+  "CHARIOTS": {
+    "rs": {
+      "CHR 5110 22": "Chariot 22 chaises orchestre",
+      "CHR 7118 02": "Chariot chaises hautes"
+    }
+  },
+
+  "ACOUSTIQUE": {
+    "rs_refs_communes": ["PAR (pare-sons)", "BOU (boucliers acoustiques)"]
+  }
+}

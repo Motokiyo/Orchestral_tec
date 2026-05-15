@@ -1,0 +1,117 @@
+{
+  "_meta": {
+    "version": "1.0",
+    "date": "2026-03-27",
+    "usage": "Règles de comptage automatique du mobilier. L'agent IA applique ces règles APRÈS avoir identifié l'effectif. Embarqué dans le system prompt."
+  },
+
+  "regles_pupitres": {
+    "harmonie": {
+      "ratio": "1:1",
+      "detail": "1 pupitre par musicien (bois + cuivres)",
+      "familles": ["flutes", "hautbois", "clarinettes", "clarBasse", "bassons", "contrebasson", "cors", "trompettes", "trombones", "tuba"]
+    },
+    "cordes": {
+      "ratio": "2:1",
+      "detail": "1 pupitre pour 2 musiciens",
+      "familles": ["violons1", "violons2", "altos", "violoncelles", "contrebasses"],
+      "arrondi": "ceil (3 musiciens = 2 pupitres)"
+    },
+    "solistes": {
+      "ratio": "1:1",
+      "detail": "1 pupitre chacun",
+      "familles": ["harpe", "piano", "celesta"]
+    },
+    "percussions": {
+      "ratio": "0",
+      "detail": "PAS de pupitres standards — tablettes percu à la place"
+    }
+  },
+
+  "regles_chaises": {
+    "standards": {
+      "qui": "Cordes (sauf CB et Vlc si chaises spécifiques), bois, cuivres",
+      "comptage": "= nombre de musiciens concernés"
+    },
+    "hautes_CB": {
+      "qui": "Contrebassistes",
+      "comptage": "= nombre de contrebassistes",
+      "warning": "Type (R&S ou Kolberg) VARIE par orchestre — NE JAMAIS SUPPOSER"
+    },
+    "specifiques_vlc": {
+      "qui": "Violoncellistes (certains orchestres seulement)",
+      "comptage": "= nombre de violoncellistes SI l'orchestre utilise des chaises spécifiques",
+      "warning": "Souvent les mêmes chaises que le reste des cordes"
+    },
+    "timbalier": {
+      "qui": "Timbalier",
+      "comptage": "0 ou 1",
+      "detail": "Chaise tournante pivotante. VA DANS LA PAGE PERCU, pas mobilier.",
+      "refs": { "kolberg": "3110", "rs": "SIE 5510NTI" }
+    },
+    "percu": {
+      "qui": "Percussionnistes (hors timbalier)",
+      "comptage": "= nombre de postes percu",
+      "detail": "Chaises hautes ou tabourets. VA DANS LA PAGE PERCU.",
+      "refs": { "kolberg": "3112", "rs": "SIE 3010N" }
+    },
+    "banquettes": {
+      "qui": "Piano, Célesta, parfois Harpe",
+      "comptage": "1 par instrument concerné",
+      "refs": { "kolberg": "3113", "rs": "SIE BAN01" }
+    },
+    "chef_repetition": {
+      "qui": "Chef d'orchestre en répétition (pas en concert)",
+      "comptage": "1 (toujours)",
+      "detail": "Chaise haute. VA DANS MOBILIER.",
+      "refs": { "kolberg": "3110D", "rs": "SIE 7865" }
+    }
+  },
+
+  "regles_stands_instruments": {
+    "_rule": "1 stand par famille SI au moins 1 musicien présent",
+    "familles_avec_stand": [
+      "flutes", "hautbois", "clarinettes", "clarBasse", "bassons",
+      "contrebasson", "cors", "trompettes", "trombones", "tuba", "contrebasses"
+    ],
+    "exceptions": ["harpe (pas de stand)", "piano (pas de stand)", "percussions (tablettes, pas stands)"]
+  },
+
+  "regles_tablettes_harmonie": {
+    "_rule": "Petites tablettes pour poser partitions/accessoires des bois et cuivres",
+    "comptage": "variable — souvent 0 (les pupitres suffisent), parfois 1-2 pour bois"
+  },
+
+  "mobilier_fixe": {
+    "podium_chef": { "comptage": 1, "condition": "toujours (sauf très petit ensemble)" },
+    "planches_a_pic": { "comptage": "= nombre de contrebasses", "detail": "Pieds antidérapants contrebasses" },
+    "pare_sons": { "comptage": "variable", "detail": "Écrans acoustiques, souvent 0-4" },
+    "rateau": { "comptage": "0 ou 1", "detail": "Porte-partitions collectif, rare" },
+    "mallette_cordes_harpe": { "comptage": "0 ou 1", "condition": "si harpe présente" }
+  },
+
+  "supports_percu_implicites": {
+    "_rule": "Quand l'IA identifie un instrument percu, elle DOIT compter aussi le support. Voir LOOKUP_INSTRUMENTS.json pour le mapping instrument → support.",
+    "tablette_par_poste": {
+      "_rule": "1 tablette d'accessoires par poste percu (partagée pour tous les petits accessoires)",
+      "refs": { "petite": "R&S PIE 5303 (365×305mm)", "grande": "R&S PIE 5301 (365×590mm)", "kolberg": "230 (40×40cm)" }
+    }
+  },
+
+  "page_PERCU_vs_MOBILIER": {
+    "dans_percu": [
+      "chaise timbalier", "chaises/tabourets percu",
+      "tablettes percu", "pieds de cymbale", "pieds de caisse claire",
+      "cols de cygne", "portiques tam-tam/gong",
+      "racks/pinces/supports", "châssis crotales/wood-blocks",
+      "stands triangle", "tout support d'instrument percu"
+    ],
+    "dans_mobilier": [
+      "chaises standards orchestre", "chaises CB", "chaises Vlc",
+      "banquettes piano/célesta", "chaise chef répétition",
+      "pupitres", "stands instruments (flûtes, hautbois, etc.)",
+      "podium chef", "planches à pic", "pare-sons",
+      "râteau", "mallette cordes harpe", "éclairages pupitres"
+    ]
+  }
+}
