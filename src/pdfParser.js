@@ -153,6 +153,8 @@ export async function extractFromPdf(file) {
 
   if (format === "radiofrance") {
     parseRadioFrance(lines, result);
+  } else if (format === "dcm") {
+    parseDcm(lines, result);
   } else if (format === "eic") {
     parseEic(lines, result);
   } else if (format === "lamoureux") {
@@ -285,6 +287,15 @@ function detectFormat(lines) {
     return "radiofrance";
   }
 
+  // DCM Radio France: "RÉGIE GÉNÉRALE | DEMANDE TECHNIQUE" is the signature header
+  if (/R[ÉE]GIE\s*G[ÉE]N[ÉE]RALE/i.test(joined) && /DEMANDE\s*TECHNIQUE/i.test(joined)) {
+    return "dcm";
+  }
+  // Alternative DCM detection: "VALIDÉ" + "DCM" as production type
+  if (/\bVALID[ÉE]\b/i.test(joined) && /\bDCM\b/i.test(joined) && /PRODUCTION/i.test(joined)) {
+    return "dcm";
+  }
+
   return "generic";
 }
 
@@ -329,7 +340,13 @@ function parseRadioFrance(lines, result) {
 
   // Direction: "Direction : Name" — stop before the programme composer pattern
   const dirMatch = all.match(/Direction\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][A-Za-zà-ü]+)*?)(?=\s+[A-Z]\.?\s+[A-Z]{2,}\s*[-–]|\s+(?:Nomenclature|Programme|Concert|Objet|Lieu|Effectué|Créé)\s*:)/i);
-  if (dirMatch) result.chef = dirMatch[1].trim();
+  if (dirMatch) {
+    const chefName = dirMatch[1].trim();
+    // Filter out crew roles: "Chef d'équipe", "Chef de plateau" are not music directors
+    if (!/\b(?:[ée]quipe|plateau|sc[èe]ne|salle|accueil|bureau|maintenance|machiniste|technique|production|administration|communication|s[ée]curit[ée])\b/i.test(chefName)) {
+      result.chef = chefName;
+    }
+  }
 
   // ── Percussion sections: P1:, P2:, P3:, P4: ──
   parsePercuSectionsFlexible(lines, result);
@@ -338,6 +355,195 @@ function parseRadioFrance(lines, result) {
   if (!result.orchestre) {
     result.orchestre = extractOrchestreFromLabels(lines);
   }
+}
+
+// ══════════════════════════════════════════
+// DCM RADIO FRANCE FORMAT
+// ══════════════════════════════════════════
+// A DCM (Demande de Concert/Mounting) is a technical production document.
+// Header: "RÉGIE GÉNÉRALE | DEMANDE TECHNIQUE" + "VALIDÉ"
+// Production type: "DCM"
+// Unlike stage plans, DCMs have no Daniels notation, no chef, and no percussion
+// sections. The ensemble info is in free text ("pupitres", "chaises", artist list).
+
+function parseDcm(lines, result) {
+  const all = lines.join(" ");
+  const textLower = all.toLowerCase();
+
+  // ── Title: After "TITRE" label, before "TYPE" ──
+  let titreFound = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (/^TITRE$/i.test(line)) {
+      titreFound = true;
+      continue;
+    }
+    if (titreFound) {
+      if (!line || /^TYPE$/i.test(line)) {
+        if (/^TYPE$/i.test(line)) titreFound = false;
+        continue;
+      }
+      if (/^(DCM|CONCERT|OPERA|BALLET|R[ÉE]CITAL|SPECTACLE|PRODUCTION)$/i.test(line)) continue;
+      result.titre = line;
+      titreFound = false;
+      break;
+    }
+  }
+
+  // Fallback title search
+  if (!result.titre) {
+    const titreIdx = lines.findIndex(l => /^TITRE$/i.test(l.trim()));
+    if (titreIdx >= 0) {
+      for (let j = titreIdx + 1; j < Math.min(titreIdx + 5, lines.length); j++) {
+        const cand = lines[j].trim();
+        if (cand && !/^(TYPE|DCM|CONCERT|DATE|LIEU|DEBUT|FIN|PRODUCTION|VALID[ÉE]|R[ÉE]GIE|BESOINS|CONFIGURATION)/i.test(cand) && cand.length > 5) {
+          result.titre = cand;
+          break;
+        }
+      }
+    }
+  }
+
+  // ── Venue: after "CONFIGURATION DE LA SALLE" ──
+  const salleCfgIdx = lines.findIndex(l => /CONFIGURATION\s*DE\s*LA\s*SALLE/i.test(l));
+  if (salleCfgIdx >= 0) {
+    const afterCfg = lines[salleCfgIdx].replace(/CONFIGURATION\s*DE\s*LA\s*SALLE/i, "").trim();
+    if (afterCfg && /[A-Z]/.test(afterCfg) && afterCfg.length > 2) {
+      result.salle = afterCfg;
+    } else {
+      for (let j = salleCfgIdx + 1; j < Math.min(salleCfgIdx + 4, lines.length); j++) {
+        const cand = lines[j].trim();
+        if (cand && !/^(Parterre|RA|EP|R\+\d|N[°º]|BESOINS|PROGRAMME|PLANNING)/i.test(cand) && cand.length > 2) {
+          const m = cand.match(/^([A-Z]{2,}\s+)?(?:Studio\s+)?(Auditorium\s*\d*|Studio\s*\d+|[A-Z][a-zà-ü]+\s+[A-Z][a-zà-ü]+)/i);
+          if (m) {
+            result.salle = m[0].trim();
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Fallback: "GS Auditorium" or "Auditorium" anywhere
+  if (!result.salle) {
+    const audMatch = all.match(/\b(GS\s+)?Auditorium\b/i);
+    if (audMatch) result.salle = audMatch[0].trim();
+  }
+
+  // Also try "Lieu :" label
+  if (!result.salle) {
+    const lieu2 = all.match(/Lieu\s*:\s*(.+?)(?=\s+N[°º]|\s+$|\n)/i);
+    if (lieu2) result.salle = lieu2[1].trim();
+  }
+
+  // ── Date: French date format ──
+  const dateMatch = all.match(/(\d{1,2}\s+(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)\s+\d{4})/i);
+  if (dateMatch) result.date = dateMatch[1];
+
+  // ── Composer(s): from PROGRAMME section (DCM-specific) ──
+  // Strategy: extract all "FirstName LastName :" patterns from programme lines
+  const dcmComposers = new Set();
+  for (const line of lines) {
+    // Match: "Henry Purcell :" or "Orlando Gibbons :" — composer name before colon
+    // Only match lines that look like programme entries (not "TITRE :" or "Lieu :")
+    const compMatch = line.match(/^([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+)+)\s*:/);
+    if (compMatch) {
+      const name = compMatch[1].trim();
+      // Filter out non-composer labels
+      if (/^(?:TITRE|TYPE|DATE|DEBUT|FIN|LIEU|CONFIGURATION|BESOINS|PROGRAMME|TIMING|PLANNING|FONCTION|PRENOM|CONTACTS|OBSERVATIONS|SONORISATION|LUMIERES|MACHINERIE|CAPTATION|LOGES|ACCUEIL|SECURIT[ÉE]|PROPRET[ÉE]|COMPLEMENT|D[ÉE]L[ÉE]GATION|DESCRIPTION|N[°º]|OU|QUI|ACTIONS|INTERVENANT|DEMANDE|R[ÉE]GIE|R[ÉE]ALISATION|CHEF|ECLAIRAGE|POINTS|CONSORT|ENSEMBLE|ORCHESTRE|CHOEUR|SOLISTE|BALLET|DANSEUR|COM[ÉE]DIEN|R[ÉE]CITANT|NARRATEUR)\b/i.test(name)) continue;
+      // Check if this is a known composer OR looks like a proper name (FirstName LastName)
+      if (KNOWN_COMPOSERS_SET.has(name.toLowerCase()) || /^[A-Z][a-zà-ü]+\s+[A-Z][a-zà-ü]+/.test(name)) {
+        dcmComposers.add(name);
+      }
+    }
+  }
+
+  // Also use findKnownComposer as fallback
+  const knownFound = findKnownComposer(all);
+  if (knownFound && ![...dcmComposers].some(c => c.toLowerCase().includes(knownFound.toLowerCase()))) {
+    dcmComposers.add(knownFound);
+  }
+
+  if (dcmComposers.size === 1) {
+    result.compositeur = [...dcmComposers][0];
+  } else if (dcmComposers.size > 1) {
+    const arr = [...dcmComposers];
+    result.compositeur = arr.slice(0, 4).join(", ");
+    if (arr.length > 4) result.compositeur += "...";
+  }
+
+  // ── Duration: multiple formats in DCM ──
+  // Format 1: "Durée totale : 1h45" (complement de production)
+  let dureeMatch = all.match(/Dur[ée]e\s*tot(?:ale)?\s*:?\s*(\d+h\d{2})\b/i);
+  if (dureeMatch) {
+    result.duree = dureeMatch[1];
+  }
+  // Format 2: "Durée tot" followed by "01:45:00" somewhere nearby
+  if (!result.duree) {
+    dureeMatch = all.match(/Dur[ée]e\s*tot\b.{0,50}?(\d{1,2}:\d{2}(?::\d{2})?)/i);
+    if (dureeMatch) {
+      result.duree = dureeMatch[1];
+    }
+  }
+  // Format 3: isolated HH:MM:SS that looks like a total duration (numeric only)
+  if (!result.duree) {
+    const isoMatch = all.match(/(?:^|\s)(\d{2}:\d{2}:\d{2})(?:\s|$)/);
+    if (isoMatch) result.duree = isoMatch[1];
+  }
+
+  // ── EFFECTIF: from "pupitres" / "chaises" / artist list ──
+  const effParts = [];
+
+  const pupitreMatch = textLower.match(/(\d+)\s*(?:petits?\s+)?pupitres?\s+(?:pliants?|musiciens?)?/i);
+  const chaiseMatch = textLower.match(/(\d+)\s*chaises?\s+(?:d['o]rchestres?|stables?)?/i);
+  let musicianCount = 0;
+  if (pupitreMatch) musicianCount = parseInt(pupitreMatch[1]);
+  if (!musicianCount && chaiseMatch) musicianCount = parseInt(chaiseMatch[1]);
+
+  // Detect instruments from artist line — use word boundaries to avoid false positives
+  // "cor" must not match inside "corbeille", "corps", etc.
+  const instrumentMatch = all.match(/\b(?:violes?\s*de\s*gambe|violoncelles?|violons?|altos?|contrebasses?|fl[ûu]tes?|hautbois|clarinettes?|bassons?|trompettes?|trombones?|tuba|harpe|piano|clavecin|orgue|luth|th[ée]orbe)\b/gi);
+  // Only add "cors?" if it's a standalone word (not part of "corbeille", "record", etc.)
+  const corMatch = all.match(/\bcors?\b/gi);
+  const rawInstruments = instrumentMatch ? [...instrumentMatch] : [];
+  if (corMatch && corMatch.some(m => /^cors?$/i.test(m))) {
+    rawInstruments.push("cors");
+  }
+  const instruments = [...new Set(rawInstruments.map(s => s.trim().toLowerCase()))];
+
+  // Count artists explicitly listed
+  const artistMatch = all.match(/Consort\s+Les\s+Lucioles\s*:?\s*(.+?)(?:violes?\s*de\s*gambe|$)/i);
+  let artistCount = 0;
+  if (artistMatch) {
+    const artistNames = artistMatch[1].match(/[A-Z][a-zà-ü]+\s+[A-Z][a-zà-ü]+/g);
+    if (artistNames) artistCount = artistNames.length;
+  }
+
+  const count = musicianCount || artistCount || 0;
+
+  if (count > 0) {
+    effParts.push(`${count} musicien${count > 1 ? "s" : ""}`);
+  }
+  if (instruments.length > 0) {
+    effParts.push(instruments.join(", "));
+  }
+
+  if (effParts.length > 0) {
+    result.effectif = effParts.join(", ");
+  }
+
+  // ── Chef: explicitly NONE for DCM (consorts, chamber music have no conductor) ──
+  // "Chef d'équipe" in contacts is a technical crew role, not a music director
+  result.chef = "";
+
+  // ── Orchestre: build from detected instruments/count ──
+  if (instruments.length > 0 && count > 0) {
+    result.orchestre = { bois: [], cuivres: [], cordes: [instruments.join(", ")], autres: [] };
+  } else if (count > 0) {
+    result.orchestre = { bois: [], cuivres: [], cordes: [`${count} musicien${count > 1 ? "s" : ""}`], autres: [] };
+  }
+
+  console.log("[OrkMap] DCM parse: ensemble count:", count, "instruments:", instruments);
 }
 
 // ══════════════════════════════════════════
@@ -394,7 +600,12 @@ function parseEic(lines, result) {
 
   // Conductor
   const chefMatch = all.match(/Dir\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)+)/i);
-  if (chefMatch) result.chef = chefMatch[1].trim();
+  if (chefMatch) {
+    const chefName = chefMatch[1].trim();
+    if (!/\b(?:[ée]quipe|plateau|sc[èe]ne|salle|accueil|bureau|maintenance|machiniste)\b/i.test(chefName)) {
+      result.chef = chefName;
+    }
+  }
 
   // Venue
   const salleMatch = all.match(/(?:Salle des concerts|CMPP|SdC)(?:\s*,\s*\w+)*/i);
@@ -466,7 +677,8 @@ function parseGeneric(lines, result) {
   const dureeMatch = all.match(/(\d{1,3})\s*['''′]/);
   if (dureeMatch) result.duree = dureeMatch[1] + "'";
 
-  // Chef patterns — expanded for free-form text
+  // Chef patterns — expanded for free-form text (with crew-role guard)
+  const isCrewRole = (name) => /\b(?:[ée]quipe|plateau|sc[èe]ne|salle|accueil|bureau|maintenance|machiniste|technique|production|administration|communication|s[ée]curit[ée])\b/i.test(name);
   const chefPatterns = [
     /Dir(?:ection)?(?:\s*musicale)?\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)+)/i,
     /dirig[ée]e?s?\s*(?:par)?\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)+)/i,
@@ -476,7 +688,7 @@ function parseGeneric(lines, result) {
   ];
   for (const re of chefPatterns) {
     const m = all.match(re);
-    if (m) { result.chef = m[1].trim(); break; }
+    if (m && !isCrewRole(m[1].trim())) { result.chef = m[1].trim(); break; }
   }
 
   // French date
@@ -1376,6 +1588,8 @@ function parseExtractedText(text, result) {
 
   if (format === "radiofrance") {
     parseRadioFrance(lines, result);
+  } else if (format === "dcm") {
+    parseDcm(lines, result);
   } else if (format === "eic") {
     parseEic(lines, result);
   } else if (format === "lamoureux") {
