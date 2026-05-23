@@ -429,6 +429,7 @@ function parseEic(lines, result) {
 
 function parseLamoureux(lines, result) {
   const all = lines.join(" ");
+  const allLower = all.toLowerCase();
 
   // Concert title
   const concertMatch = all.match(/CONCERT\s+(?:DE\s+)?(.+?)(?=\s+(?:LA\s+GRANDE|SALLE|CMPP|RIFFX|\d{1,2}\s+\w+\s+\d{4}|Effectif|$))/i);
@@ -446,6 +447,9 @@ function parseLamoureux(lines, result) {
   const dateMatch = all.match(/(\d{1,2}\s+(?:JAN(?:VIER)?|F[EÉ]V(?:RIER)?|MARS?|AVR(?:IL)?|MAI|JUIN|JUIL(?:LET)?|AO[UÛ]T|SEPT(?:EMBRE)?|OCT(?:OBRE)?|NOV(?:EMBRE)?|D[EÉ]C(?:EMBRE)?)\s+\d{4})/i);
   if (dateMatch) result.date = dateMatch[1].trim();
 
+  // Fill in remaining fields with free-form parser
+  parseFreeForm(lines, result, all, allLower);
+
   // No instrument lists in text for Lamoureux — instruments are only visual
   // Create empty percu slots from effectif if possible
 }
@@ -456,13 +460,24 @@ function parseLamoureux(lines, result) {
 
 function parseGeneric(lines, result) {
   const all = lines.join(" ");
+  const allLower = all.toLowerCase();
 
   // Try common patterns
   const dureeMatch = all.match(/(\d{1,3})\s*['''′]/);
   if (dureeMatch) result.duree = dureeMatch[1] + "'";
 
-  const chefMatch = all.match(/Dir(?:ection)?\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)+)/i);
-  if (chefMatch) result.chef = chefMatch[1].trim();
+  // Chef patterns — expanded for free-form text
+  const chefPatterns = [
+    /Dir(?:ection)?(?:\s*musicale)?\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)+)/i,
+    /dirig[ée]e?s?\s*(?:par)?\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)+)/i,
+    /sous\s+la\s+direction\s+(?:de\s+)?([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)+)/i,
+    /chef\s*(?:d'orchestre)?\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)+)/i,
+    /([A-ZÀ-Ü][a-zà-ü]+\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)\s*,\s*direction/i,
+  ];
+  for (const re of chefPatterns) {
+    const m = all.match(re);
+    if (m) { result.chef = m[1].trim(); break; }
+  }
 
   // French date
   const dateMatch = all.match(/(\d{1,2}\s+(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)\s+\d{4})/i);
@@ -472,6 +487,12 @@ function parseGeneric(lines, result) {
   if (!result.date) {
     const dateSlash = all.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
     if (dateSlash) result.date = dateSlash[1];
+  }
+
+  // Also try ISO date format
+  if (!result.date) {
+    const isoDate = all.match(/(\d{4}-\d{2}-\d{2})/);
+    if (isoDate) result.date = isoDate[1];
   }
 
   // Daniels notation — flexible regex supporting mixed slash/dash/cordes format
@@ -488,10 +509,50 @@ function parseGeneric(lines, result) {
     if (nomMatch) result.effectif = nomMatch[1].trim();
   }
 
+  // Try effectif with timb/perc/hp annotations
+  if (!result.effectif) {
+    const annMatch = all.match(/([\d]+(?:\.[\d]+)*\s*[-–]\s*[\d]+(?:\.[\d]+)*\s*[-–]\s*(?:timb\.?\s*)?[\d]+(?:perc)?\.?(?:[\d]*)?(?:perc|timb)?\.?\s*(?:[-–]\s*(?:hp|cel|pno|clav)\s*)?[-–]\s*[\d]+(?:\.[\d]+)*(?:\s*[-–]\s*[\d]+(?:\.[\d]+)*)*)/i);
+    if (annMatch) result.effectif = annMatch[1].trim();
+  }
+
   // Known composer search
   if (!result.compositeur) {
     const found = findKnownComposer(all);
     if (found) result.compositeur = found;
+  }
+
+  // Title detection from first lines
+  if (!result.titre && lines.length > 0) {
+    for (let i = 0; i < Math.min(5, lines.length); i++) {
+      const line = lines[i];
+      // Check for "Composer Title" pattern
+      const knownComp = findKnownComposer(line);
+      if (knownComp) {
+        result.compositeur = result.compositeur || knownComp;
+        const titlePart = line.substring(line.indexOf(knownComp) + knownComp.length).trim();
+        if (titlePart && titlePart.length > 1) {
+          result.titre = titlePart.replace(/^[,\-–:|]\s*/, "").trim();
+        }
+        break;
+      }
+      // Fallback: first non-metadata line as title
+      if (!result.titre && line.length > 3 && line.length < 120 &&
+          !/^(?:objet|lieu|concert|direction|effectif|nomenclature|programme|date|chef|orchestre|ensemble|philhar|avec le|et le|\d)/i.test(line)) {
+        result.titre = line;
+      }
+    }
+  }
+
+  // Salle / lieu detection
+  if (!result.salle) {
+    const lieuPatterns = [
+      /(?:Philharmonie|Auditorium|Th[ée][âa]tre|Op[ée]ra|Salle|Maison de la Radio)\s+([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+)*)/i,
+      /(?:à|au)\s+(?:la\s+)?(Philharmonie|Auditorium|Maison de la Radio|Th[ée][âa]tre|Salle)\s+([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+)*)/i,
+    ];
+    for (const re of lieuPatterns) {
+      const m = all.match(re);
+      if (m) { result.salle = m[0].trim(); break; }
+    }
   }
 
   // Try to find any perc sections
@@ -508,8 +569,16 @@ function parseGeneric(lines, result) {
 // ══════════════════════════════════════════
 
 function parseOrchDeParis(lines, result) {
-  // Reuses Radio France logic — similar cartouche layout
+  const all = lines.join(" ");
+  const allLower = all.toLowerCase();
+
+  // Try Radio France cartouche first (some ODP plans have similar layout)
   parseRadioFrance(lines, result);
+
+  // If fields are still empty, apply free-form patterns
+  if (!result.titre || !result.compositeur || !result.chef) {
+    parseFreeForm(lines, result, all, allLower);
+  }
 }
 
 // ══════════════════════════════════════════
@@ -517,8 +586,12 @@ function parseOrchDeParis(lines, result) {
 // ══════════════════════════════════════════
 
 function parseCnsm(lines, result) {
+  const all = lines.join(" ");
+  const allLower = all.toLowerCase();
   // Similar to generic but with CNSM-specific patterns
   parseGeneric(lines, result);
+  // Fill in remaining fields
+  parseFreeForm(lines, result, all, allLower);
 }
 
 // ══════════════════════════════════════════
@@ -1293,10 +1366,11 @@ export async function extractFromFile(file) {
 function parseExtractedText(text, result) {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const all = lines.join(" ");
+  const allLower = all.toLowerCase();
 
   console.log("[OrkMap] Parsing text, lines:", lines.length);
 
-  // Detect format and use existing parsers
+  // ── 1. Detect format and try specialized parsers first ──
   const format = detectFormat(lines);
   console.log("[OrkMap] Text format detected:", format);
 
@@ -1314,41 +1388,286 @@ function parseExtractedText(text, result) {
     parseGeneric(lines, result);
   }
 
-  // Additional patterns specific to free-form text
+  // ── 2. Free-form text enhancements ──
+  // These run AFTER the format-specific parsers and fill in what was missed
+  parseFreeForm(lines, result, all, allLower);
+}
 
-  // Try to find a title on the first non-empty lines (common in TXT files)
-  if (!result.titre && lines.length > 0) {
-    // First line is often the title if it's not a metadata field
-    const firstLine = lines[0];
-    if (firstLine.length > 3 && firstLine.length < 100 &&
-        !/^(objet|lieu|concert|direction|effectif|nomenclature|programme|date|chef)/i.test(firstLine)) {
-      result.titre = firstLine;
+/**
+ * Enhanced free-form text parser — handles text files and OCR output
+ * that don't match structured PDF formats.
+ */
+function parseFreeForm(lines, result, all, allLower) {
+  // ═══ ORCHESTRE DETECTION (in free text) ═══
+  if (!result.orchestre || !result.orchestreNom) {
+    const orchPatterns = [
+      /orchestre\s*(?:national|philharmonique|symphonique|de chambre)?\s*(?:de|d'|du)?\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+)?)/i,
+      /(?:orchestre|ensemble|philhar)\.?\s*(?:national\s*)?(?:de\s*)?([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+)?)/i,
+    ];
+    for (const re of orchPatterns) {
+      const m = all.match(re);
+      if (m) {
+        result.orchestre = result.orchestre || { bois: [], cuivres: [], cordes: [], autres: [] };
+        result.orchestreNom = m[0].trim();
+        // Try to extract full name including de/d'
+        const extendedMatch = all.match(/(?:Orchestre|Ensemble|Philhar)\.?\s*(?:National\s*)?(?:de\s*(?:l'|la\s+|le\s+)?)?((?:[A-ZÀ-Ü][a-zà-ü]+\s*)+)/i);
+        if (extendedMatch) {
+          result.orchestreNom = extendedMatch[0].trim();
+        }
+        break;
+      }
     }
   }
 
-  // Try to find composer if not yet found — look for "Compositeur:" or similar label
-  if (!result.compositeur) {
-    const compMatch = all.match(/Compositeur\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Titre|Durée|Effectif|Chef|Lieu|Date)\s*:|\n|$)/i);
-    if (compMatch) result.compositeur = compMatch[1].trim();
+  // ═══ TITLE & COMPOSER DETECTION (first lines) ═══
+  // Strategy: scan first ~5 meaningful lines for composer+title patterns
+  const candidateLines = lines.slice(0, Math.min(8, lines.length));
+  
+  // Pattern: "COMPOSER TITLE" (composer name then title on same line)
+  for (const line of candidateLines) {
+    if (line.length < 5 || line.length > 150) continue;
+    // Skip metadata lines
+    if (/^(?:objet|lieu|concert|direction|effectif|nomenclature|programme|date|chef|orchestre|ensemble|philhar)/i.test(line)) continue;
+    
+    // Try to find a known composer at the start of the line
+    const found = findKnownComposer(line);
+    if (found) {
+      result.compositeur = result.compositeur || found;
+      // The rest of the line is likely the title
+      const titlePart = line.substring(line.indexOf(found) + found.length).trim();
+      if (titlePart && titlePart.length > 1) {
+        // Don't overwrite if already found from a structured parser
+        if (!result.titre) {
+          result.titre = titlePart.replace(/^[,\-–:|]\s*/, "").trim();
+        }
+      }
+      break;
+    }
   }
 
-  // Try labeled fields common in text files
+  // If no composer+title on same line, try line-by-line patterns
+  if (!result.compositeur) {
+    // Line before a title-only line is often the composer
+    for (let i = 1; i < candidateLines.length; i++) {
+      const prevLine = candidateLines[i - 1];
+      const foundPrev = findKnownComposer(prevLine);
+      if (foundPrev && candidateLines[i].length > 3 && candidateLines[i].length < 120) {
+        result.compositeur = foundPrev;
+        if (!result.titre) result.titre = candidateLines[i];
+        break;
+      }
+    }
+  }
+
+  // Title fallback: first non-metadata, non-composer, non-orchestre line
+  if (!result.titre && lines.length > 0) {
+    for (const line of candidateLines) {
+      if (line.length > 3 && line.length < 120 &&
+          !/^(?:objet|lieu|concert|direction|effectif|nomenclature|programme|date|chef|orchestre|ensemble|philhar|avec le|et le|samedi|dimanche|lundi|mardi|mercredi|jeudi|vendredi|\d)/i.test(line) &&
+          !findKnownComposer(line)) {
+        result.titre = line;
+        break;
+      }
+    }
+  }
+
+  // ═══ CHEF DETECTION ═══
+  if (!result.chef) {
+    const chefPatterns = [
+      // "Direction musicale : Nom"
+      /direction\s*(?:musicale)?\s*:\s*([A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+){1,3})/i,
+      // "dirigé par Nom"
+      /dirig[ée]e?s?\s*(?:par)?\s*:\s*([A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+){1,3})/i,
+      // "sous la direction de Nom"
+      /sous\s+la\s+direction\s+(?:de\s+)?([A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+){1,3})/i,
+      // "chef d'orchestre : Nom"
+      /chef\s*(?:d'orchestre)?\s*:\s*([A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+){1,3})/i,
+      // "Dir. : Nom"
+      /dir\.\s*:\s*([A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+){1,3})/i,
+      // "Conductor: Nom"
+      /conductor\s*:\s*([A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+(?:\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+){1,3})/i,
+    ];
+    for (const re of chefPatterns) {
+      const m = all.match(re);
+      if (m) { result.chef = m[1].trim(); break; }
+    }
+    // Fallback: look for "Nom, direction" pattern (common in French concert programs)
+    if (!result.chef) {
+      const dirCommaMatch = all.match(/([A-ZÀ-Ü][a-zà-ü]+\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)\s*,\s*direction/i);
+      if (dirCommaMatch) result.chef = dirCommaMatch[1].trim();
+    }
+  }
+
+  // ═══ SOLISTE DETECTION ═══
+  const solistePatterns = [
+    /(?:piano|pianiste)\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+){1,2})/i,
+    /(?:violon(?:iste)?)\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+){1,2})/i,
+    /(?:violoncelle|violoncelliste)\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+){1,2})/i,
+    /(?:soprano|mezzo-soprano|t[ée]nor|baryton|basse|contralto)\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+){1,2})/i,
+    /(?:fl[ûu]te|clarinette|hautbois|basson|trompette|cor|trombone|harpe)\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+){1,2})/i,
+    /soliste\s*:\s*([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+){1,2})/i,
+    // "Nom, piano" or "Nom, violon"
+    /([A-ZÀ-Ü][a-zà-ü]+\s+[A-ZÀ-Ü][A-ZÀ-Üa-zà-ü]+)\s*,\s*(?:piano|violon|violoncelle|soprano|alto|t[ée]nor)/i,
+  ];
+  for (const re of solistePatterns) {
+    const m = all.match(re);
+    if (m && !result.soliste) {
+      result.soliste = `${m[1].trim()} (${m[0].match(/piano|violon|violoncelle|soprano|mezzo|t[ée]nor|baryton|basse|contralto|fl[ûu]te|clarinette|hautbois|basson|trompette|cor|trombone|harpe/i)?.[0] || "soliste"})`;
+      break;
+    }
+  }
+
+  // ═══ DATE DETECTION ═══
+  if (!result.date) {
+    // French dates with day of week
+    const datePatterns = [
+      /(?:samedi|dimanche|lundi|mardi|mercredi|jeudi|vendredi)\s+(\d{1,2})\s+(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)\s+(\d{4})/i,
+      /(\d{1,2})\s+(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)\s+(\d{4})/i,
+      /(\d{1,2})\/(\d{1,2})\/(\d{4})/,
+      /(\d{4})-(\d{2})-(\d{2})/,
+    ];
+    for (const re of datePatterns) {
+      const m = all.match(re);
+      if (m) {
+        if (m[0].match(/^\d{1,2}\/\d{1,2}\/\d{4}/) || m[0].match(/^\d{4}-\d{2}-\d{2}/)) {
+          result.date = m[0];
+        } else if (m[3]) {
+          result.date = `${m[1]} ${m[2]} ${m[3]}`;
+        } else {
+          result.date = `${m[1]} ${m[2]} ${m[3] || m[3]}`;
+        }
+        break;
+      }
+    }
+  }
+
+  // ═══ LIEU / SALLE DETECTION ═══
+  if (!result.salle) {
+    const lieuPatterns = [
+      /(?:lieu|salle)\s*:\s*(.+?)(?=\s*[-–|]\s*|\s+(?:Compositeur|Titre|Durée|Effectif|Chef|Date|Direction)\s*:|\n|$)/i,
+      /(?:Philharmonie|Auditorium|Th[ée][âa]tre|Op[ée]ra|Salle)\s+([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+)*)/i,
+      /(?:à|au)\s+(?:la\s+)?(?:Philharmonie|Auditorium|Maison de la Radio|Th[ée][âa]tre|Salle)\s+([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+)*)/i,
+    ];
+    for (const re of lieuPatterns) {
+      const m = all.match(re);
+      if (m) { result.salle = m[1] ? m[1].trim() : m[0].trim(); break; }
+    }
+    // "— Philharmonie de Paris" at end of line
+    if (!result.salle) {
+      for (const line of lines) {
+        const pm = line.match(/(?:—|–|-)\s*(Philharmonie|Auditorium|Th[ée][âa]tre|Salle|Op[ée]ra)\s+.+/i);
+        if (pm) { result.salle = pm[0].replace(/^[-–—]\s*/, "").trim(); break; }
+      }
+    }
+  }
+
+  // ═══ EFFECTIF — enhanced Daniels detection ═══
+  if (!result.effectif) {
+    // More flexible: handles "timb." prefix, "hp", "cel" annotations
+    const effectifPatterns = [
+      // Standard: 3.3.3.3 - 4.3.3.1 - 2perc.1hp - 14.12.10.8.6
+      /([\d]+(?:\.[\d]+)*\s*[-–]\s*[\d]+(?:\.[\d]+)*\s*[-–]\s*(?:[\d]+(?:perc|timb|hp|cel|pno|clav)\.?[\d]*(?:perc|timb|hp|cel|pno|clav)?\.?\s*[-–]\s*)?[\d]+(?:\.[\d]+)*\s*[-–]\s*[\d]+(?:\.[\d]+)*(?:\s*[-–]\s*[\d]+(?:\.[\d]+)*)*)/i,
+      // Flexible: any sequence containing at least one "." with numbers
+      /([\d]+(?:\.[\d]+){2,}(?:\s*[-–]\s*[\d]+(?:\.[\d]+){2,}(?:\s*\[[^\]]*\])?)+)/,
+      // With timb/perc annotations: 3.3.3.3 - 4.3.3.1 - timb.3perc - hp - 14.12.10.8.6
+      /([\d]+(?:\.[\d]+)*\s*[-–]\s*[\d]+(?:\.[\d]+)*\s*[-–]\s*(?:timb\.?\s*)?[\d]+(?:perc)?\.?(?:[\d]*)?(?:perc|timb)?\.?\s*(?:[-–]\s*(?:hp|cel|pno|clav)\s*)?[-–]\s*[\d]+(?:\.[\d]+)*(?:\s*[-–]\s*[\d]+(?:\.[\d]+)*)*)/i,
+    ];
+    for (const re of effectifPatterns) {
+      const m = all.match(re);
+      if (m) { result.effectif = m[1].trim(); break; }
+    }
+  }
+
+  // ═══ PERCUSSION — free-form text sections ═══
+  // Try standard P1: P2: headers first (parsePercuSections handles these)
+  const existingPercuCount = result.percus.length;
+
+  // If no percussion sections were found, try free-form patterns
+  if (existingPercuCount === 0) {
+    // "Percussion : instrument1, instrument2, instrument3"
+    const percMatch = all.match(/(?:percussions?|perc)\s*:\s*(.+?)(?=\s*[-–|]\s*|\s+(?:Direction|Chef|Effectif|Lieu|Date|Titre|Compositeur|Orchestre|\d+[\.:])\s*|$)/i);
+    if (percMatch) {
+      const percText = percMatch[1].trim();
+      const items = percText.split(/[,;]/).map(s => s.trim()).filter(Boolean);
+      if (items.length > 0) {
+        const categorizedItems = items.map(nom => {
+          const cat = categorizeInstrument(nom);
+          return { cat, nom };
+        });
+        result.percus.push({ nom: "Percussion", items: categorizedItems });
+      }
+    }
+
+    // Look for "Timbales : ..." and "Percussion : ..." on separate lines
+    if (result.percus.length === 0) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const timbMatch = line.match(/timbales?\s*:\s*(.+)/i);
+        if (timbMatch) {
+          const items = timbMatch[1].split(/[,;]/).map(s => s.trim()).filter(Boolean);
+          result.percus.push({
+            nom: "Timbalier",
+            items: [{ cat: "Timbales & Peaux", nom: "4 Timbales" }, ...items.map(nom => ({ cat: categorizeInstrument(nom), nom }))],
+          });
+        }
+        const percLineMatch = line.match(/percussions?\s*\d*\s*:\s*(.+)/i);
+        if (percLineMatch && !timbMatch) {
+          const percNum = line.match(/percussions?\s*(\d+)\s*:/i);
+          const items = percLineMatch[1].split(/[,;]/).map(s => s.trim()).filter(Boolean);
+          result.percus.push({
+            nom: percNum ? `Percu ${percNum[1]}` : "Percussion",
+            items: items.map(nom => ({ cat: categorizeInstrument(nom), nom })),
+          });
+        }
+      }
+    }
+  }
+
+  // ═══ LABELED FIELDS (fallback if still missing) ═══
+  if (!result.compositeur) {
+    const compMatch = all.match(/Compositeur\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Titre|Durée|Effectif|Chef|Lieu|Date|Direction)\s*:|\n|$)/i);
+    if (compMatch) result.compositeur = compMatch[1].trim();
+  }
   if (!result.titre) {
-    const titreMatch = all.match(/Titre\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Durée|Effectif|Chef|Lieu|Date)\s*:|\n|$)/i);
+    const titreMatch = all.match(/Titre\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Durée|Effectif|Chef|Lieu|Date|Direction)\s*:|\n|$)/i);
     if (titreMatch) result.titre = titreMatch[1].trim();
   }
   if (!result.salle) {
-    const lieuMatch = all.match(/(?:Lieu|Salle)\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Titre|Durée|Effectif|Chef|Date)\s*:|\n|$)/i);
+    const lieuMatch = all.match(/(?:Lieu|Salle)\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Titre|Durée|Effectif|Chef|Date|Direction)\s*:|\n|$)/i);
     if (lieuMatch) result.salle = lieuMatch[1].trim();
   }
   if (!result.chef) {
-    const chefMatch = all.match(/Chef\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Titre|Durée|Effectif|Lieu|Date)\s*:|\n|$)/i);
+    const chefMatch = all.match(/Chef\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Titre|Durée|Effectif|Lieu|Date|Direction)\s*:|\n|$)/i);
     if (chefMatch) result.chef = chefMatch[1].trim();
   }
   if (!result.date) {
-    const dateMatch = all.match(/Date\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Titre|Durée|Effectif|Chef|Lieu)\s*:|\n|$)/i);
+    const dateMatch = all.match(/Date\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Titre|Durée|Effectif|Chef|Lieu|Direction)\s*:|\n|$)/i);
     if (dateMatch) result.date = dateMatch[1].trim();
   }
+}
+
+/**
+ * Categorize an instrument name into one of the standard categories.
+ */
+function categorizeInstrument(nom) {
+  const n = nom.toLowerCase().trim();
+  if (/timbale|grosse caisse|caisse claire|tom|bongo|conga|djemb[ée]|tambour|caj[óo]n|batterie|peau/i.test(n)) {
+    return "Timbales & Peaux";
+  }
+  if (/vibraphone|marimba|xylophone|glockenspiel|c[ée]lesta|cloches?(?:\s+tubes?)?|jeu de timbres|crotales/i.test(n)) {
+    return "Claviers";
+  }
+  if (/tam-?tam|gong|t[ôo]le|enclume|cloche|grosse pi[eè]ce|contrebasse/i.test(n)) {
+    return "Grosses pièces";
+  }
+  if (/stand|pied|support|tr[ée]pied|table/i.test(n)) {
+    return "Stands & supports";
+  }
+  if (/baguette|mailloche|archet|balai/i.test(n)) {
+    return "Baguettes & spécial";
+  }
+  // Default: Accessoires for everything else
+  return "Accessoires";
 }
 
 /**

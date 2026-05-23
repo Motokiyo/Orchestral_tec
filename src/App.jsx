@@ -1534,6 +1534,7 @@ export default function App() {
           {/* Editable metadata fields */}
           <div style={{ background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
             {[
+              { key: "titre", label: "Titre" },
               { key: "compositeur", label: "Compositeur" },
               { key: "duree", label: "Durée" },
               { key: "salle", label: "Lieu" },
