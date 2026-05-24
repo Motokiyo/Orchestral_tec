@@ -192,43 +192,6 @@ export async function extractFromPdf(file) {
     result.orchestre = orchestreFromEffectif(result.effectifDetail);
   }
 
-  // Create percu slots from effectif if none found
-  if (result.percus.length === 0 && result.effectifDetail?.percussions) {
-    const perc = result.effectifDetail.percussions;
-    // Timbales → Timbalier(s) — always with 4 timbales by default
-    const timb = perc["Timbales"] || 0;
-    for (let i = 1; i <= timb; i++) {
-      result.percus.push({
-        nom: timb === 1 ? "Timbalier" : `Timbalier ${i}`,
-        items: [{ cat: "Timbales & Peaux", nom: "4 Timbales" }],
-      });
-    }
-    // Percussion → Percu N
-    const percCount = perc["Percussion"] || 0;
-    for (let i = 1; i <= percCount; i++) {
-      result.percus.push({ nom: `Percu ${i}`, items: [] });
-    }
-    // If nothing was created but total > 0, create generic slots
-    if (result.percus.length === 0) {
-      const total = perc.total || 0;
-      for (let i = 1; i <= total; i++) {
-        result.percus.push({ nom: `Percu ${i}`, items: [] });
-      }
-    }
-  }
-
-  // Ensure timbaliers exist if effectif has timbales but percus were already parsed
-  if (result.percus.length > 0 && result.effectifDetail?.percussions) {
-    const timb = result.effectifDetail.percussions["Timbales"] || 0;
-    const existingTimb = result.percus.filter(p => /timbal/i.test(p.nom)).length;
-    for (let i = existingTimb + 1; i <= timb; i++) {
-      result.percus.unshift({
-        nom: timb === 1 ? "Timbalier" : `Timbalier ${i}`,
-        items: [{ cat: "Timbales & Peaux", nom: "4 Timbales" }],
-      });
-    }
-  }
-
   // Fallback title from filename
   if (!result.titre) {
     result.titre = file.name.replace(/\.pdf$/i, "").replace(/[-_]/g, " ");
