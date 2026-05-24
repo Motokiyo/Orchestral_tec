@@ -167,9 +167,20 @@ export async function extractFromPdf(file) {
     parseGeneric(lines, result);
   }
 
+  // ── Fallback: determine sansChef from effectif if parseur didn't set it ──
+  // Si le parseur n'a pas explicitement géré sansChef, on le déduit de l'effectif :
+  // si effectif vide ou pas une nomenclature Daniels (pas de tirets/points/chiffres),
+  // alors pas de chef par défaut.
+  if (result.sansChef === undefined) {
+    if (!result.effectif || !/\d/.test(result.effectif)) {
+      result.sansChef = true;
+    }
+  }
+
   console.log("[OrkMap] Extracted:", {
     titre: result.titre, compositeur: result.compositeur, effectif: result.effectif,
     chef: result.chef, date: result.date, salle: result.salle, percus: result.percus.length,
+    sansChef: result.sansChef,
   });
 
   if (result.effectif) {
@@ -494,11 +505,28 @@ function parseDcm(lines, result) {
   // ── EFFECTIF: from "pupitres" / "chaises" / artist list ──
   const effParts = [];
 
-  const pupitreMatch = textLower.match(/(\d+)\s*(?:petits?\s+)?pupitres?\s+(?:pliants?|musiciens?)?/i);
-  const chaiseMatch = textLower.match(/(\d+)\s*chaises?\s+(?:d['o]rchestres?|stables?)?/i);
+  // Search line-by-line to avoid matching venue numbers (e.g. "Studio 104")
   let musicianCount = 0;
-  if (pupitreMatch) musicianCount = parseInt(pupitreMatch[1]);
-  if (!musicianCount && chaiseMatch) musicianCount = parseInt(chaiseMatch[1]);
+  for (const line of lines) {
+    const lineLower = line.trim().toLowerCase();
+    // Match "oui 7 pupitres" or "7 pupitres pliants" or "7 petits pupitres musiciens"
+    const pm = lineLower.match(/(\d+)\s*(?:petits?\s+)?pupitres?\s+(?:pliants?|musiciens?)?/i);
+    if (pm) {
+      musicianCount = parseInt(pm[1]);
+      break;
+    }
+  }
+  if (!musicianCount) {
+    for (const line of lines) {
+      const lineLower = line.trim().toLowerCase();
+      // Match "oui 7" or "7 chaises"
+      const cm = lineLower.match(/(\d+)\s*chaises?\b/i);
+      if (cm) {
+        musicianCount = parseInt(cm[1]);
+        break;
+      }
+    }
+  }
 
   // Detect instruments from artist line — use word boundaries to avoid false positives
   // "cor" must not match inside "corbeille", "corps", etc.
@@ -532,18 +560,23 @@ function parseDcm(lines, result) {
     result.effectif = effParts.join(", ");
   }
 
-  // ── Chef: explicitly NONE for DCM (consorts, chamber music have no conductor) ──
+  // ── Chef: DCM consorts/chamber music may or may not have a conductor ──
   // "Chef d'équipe" in contacts is a technical crew role, not a music director
+  // If effectif is a full orchestra notation (Daniels-style), assume a conductor.
+  // Otherwise (consort, chamber), no conductor.
   result.chef = "";
+  if (!result.effectif || !/\d[\.\-]/.test(result.effectif)) {
+    result.sansChef = true;
+  }
 
   // ── Orchestre: build from detected instruments/count ──
   if (instruments.length > 0 && count > 0) {
-    result.orchestre = { bois: [], cuivres: [], cordes: [instruments.join(", ")], autres: [] };
+    result.orchestre = { bois: [], cuivres: [], cordes: [`${count} ${instruments.join(", ")}`], autres: [] };
   } else if (count > 0) {
     result.orchestre = { bois: [], cuivres: [], cordes: [`${count} musicien${count > 1 ? "s" : ""}`], autres: [] };
   }
 
-  console.log("[OrkMap] DCM parse: ensemble count:", count, "instruments:", instruments);
+  console.log("[OrkMap] DCM parse: ensemble count:", count, "instruments:", instruments, "hasChef: false");
 }
 
 // ══════════════════════════════════════════

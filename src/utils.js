@@ -50,15 +50,17 @@ export function extractNumberFromItem(item) {
 }
 
 // ── Calculate mobilier (furniture) from orchestre + percus ──
-export function calculateMobilier(orchestre, percus) {
+export function calculateMobilier(orchestre, percus, options = {}) {
   if (!orchestre) return null;
+
+  const { hasChef = true } = options;
 
   const boisItems = orchestre.bois || [];
   const cuivresItems = orchestre.cuivres || [];
   const cordesItems = orchestre.cordes || [];
 
   // ── Parse cordes counts ──
-  const cordesCounts = { v1: 0, v2: 0, alto: 0, vlc: 0, cb: 0 };
+  const cordesCounts = { v1: 0, v2: 0, alto: 0, vlc: 0, cb: 0, other: 0 };
   for (const item of cordesItems) {
     const str = typeof item === "string" ? item : "";
     const num = extractNumberFromItem(str);
@@ -67,6 +69,7 @@ export function calculateMobilier(orchestre, percus) {
     else if (/altos?/i.test(str)) cordesCounts.alto = num;
     else if (/violoncelles?|vlc|vc\b/i.test(str)) cordesCounts.vlc = num;
     else if (/contrebasses?|cb\b/i.test(str)) cordesCounts.cb = num;
+    else cordesCounts.other = num; // violes de gambe, théorbes, luths, etc.
   }
 
   // ── Parse bois items → stands ──
@@ -108,11 +111,12 @@ export function calculateMobilier(orchestre, percus) {
     }
   }
 
-  // ── Autres (fixed) ──
-  const autresStands = [
-    { type: "Podium chef", qty: 1 },
-    { type: "Pupitre chef", qty: 1 },
-  ];
+  // ── Autres (conditional on chef presence) ──
+  const autresStands = [];
+  if (hasChef) {
+    autresStands.push({ type: "Podium chef", qty: 1 });
+    autresStands.push({ type: "Pupitre chef", qty: 1 });
+  }
 
   // ── Cordes stands ──
   const cordesStands = [];
@@ -125,19 +129,28 @@ export function calculateMobilier(orchestre, percus) {
   }
 
   // ── General counts ──
+  // For non-standard cordes (violes, luths, etc.), each musician gets 1 pupitre
   const pupiCordes = Math.ceil(cordesCounts.v1 / 2) + Math.ceil(cordesCounts.v2 / 2) +
-    Math.ceil(cordesCounts.alto / 2) + Math.ceil(cordesCounts.vlc / 2);
+    Math.ceil(cordesCounts.alto / 2) + Math.ceil(cordesCounts.vlc / 2) + cordesCounts.other;
   const pupiBois = boisItems.length;
   const pupiCuivres = cuivresItems.length;
-  const pupitres = pupiCordes + pupiBois + pupiCuivres + (nbPercus > 0 ? nbPercus : 0) + 1;
+  const pupitres = pupiCordes + pupiBois + pupiCuivres + (nbPercus > 0 ? nbPercus : 0) + (hasChef ? 1 : 0);
 
   const totalBois = boisItems.reduce((sum, it) => sum + extractNumberFromItem(it), 0);
   const totalCuivres = cuivresItems.reduce((sum, it) => sum + extractNumberFromItem(it), 0);
+  // Non-standard cordes (violes, etc.) use chaises normales (standard chairs, not high chairs)
   const chaisesNormales = cordesCounts.v1 + cordesCounts.v2 + cordesCounts.alto + cordesCounts.vlc +
-    totalBois + totalCuivres;
+    cordesCounts.other + totalBois + totalCuivres;
 
-  const chaisesHautes = cordesCounts.cb + 1 + nbPercus; // CB + chef + percus
-  const chaisesHautesDetail = `${cordesCounts.cb} (CB) + 1 (chef) + ${nbPercus} (percus) = ${chaisesHautes}`;
+  // Chaises hautes = CB + chef (if present) + percussionists (if any)
+  const chaisesHautes = cordesCounts.cb + (hasChef ? 1 : 0) + nbPercus;
+  const chefPart = hasChef ? " + 1 (chef)" : "";
+  const percusPart = nbPercus > 0 ? ` + ${nbPercus} (percus)` : "";
+  let chaisesHautesDetail = `${cordesCounts.cb} (CB)${chefPart}${percusPart} = ${chaisesHautes}`;
+  // If total is 0, skip the detail
+  if (chaisesHautes === 0) {
+    chaisesHautesDetail = "0";
+  }
 
   return {
     general: {
@@ -262,7 +275,7 @@ function generateMobilierText(mob) {
 // ── Generate standalone mobilier text (title + separator + content) ──
 export function generateMobilierStandaloneText(piece) {
   if (!piece) return "";
-  const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus);
+  const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef });
   let text = "";
   text += "═".repeat(35) + "\n";
   text += "📦 MOBILIER — " + (piece.titre || "Sans titre") + "\n";
@@ -338,7 +351,7 @@ export function generatePieceText(piece) {
   text += "═".repeat(35) + "\n";
   text += "📦 MOBILIER\n";
   text += "═".repeat(35) + "\n\n";
-  const mob1 = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus);
+  const mob1 = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef });
   text += generateMobilierText(mob1) + "\n";
   text += "\n" + "─".repeat(37) + "\n\n";
 
@@ -392,7 +405,7 @@ export function generateTxt(piece) {
   text += "═".repeat(35) + "\n";
   text += "📦 MOBILIER\n";
   text += "═".repeat(35) + "\n\n";
-  const mob2 = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus);
+  const mob2 = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef });
   text += generateMobilierText(mob2) + "\n";
 
   // PAGE BREAK

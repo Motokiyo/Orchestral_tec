@@ -674,7 +674,7 @@ export default function App() {
       updated.percusGlobalText = generatePercusGlobalText(updated.percus || []);
       return updated;
     }
-    const mobilier = calculateMobilier(p.orchestre, p.percus);
+    const mobilier = calculateMobilier(p.orchestre, p.percus, { hasChef: !p.sansChef });
     const updated = notation ? { ...p, effectif: notation } : { ...p };
     if (mobilier) {
       // Preserve manually edited chaisesSpeciales and autresStands
@@ -788,7 +788,7 @@ export default function App() {
           effectif: data.effectif || "",
           effectifDetail: data.effectifDetail || null,
           orchestre: data.orchestre || null,
-          mobilier: data.orchestre ? calculateMobilier(data.orchestre, percusList) : null,
+          mobilier: data.orchestre ? calculateMobilier(data.orchestre, percusList, { hasChef: !data.sansChef }) : null,
           planDataUrl: data.planDataUrl || null,
           plans: data.planDataUrls?.length > 0 ? data.planDataUrls : (data.planDataUrl ? [data.planDataUrl] : []),
           couleur: "blanc",
@@ -1854,7 +1854,7 @@ export default function App() {
 
           {/* ── 📦 Mobilier section ── */}
           {piece.orchestre && (() => {
-            const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus);
+            const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef });
             if (!mob) return null;
             const isMobOpen = percuId === "mobilier";
             const isEditing = mobilierEditing === piece.id;
@@ -1862,7 +1862,7 @@ export default function App() {
             // ── Helper: update mobilier from editor ──
             function updateMob(updater) {
               updatePiece(piece.id, (p) => {
-                const m = ensureMobilierStructure(p.mobilier || calculateMobilier(p.orchestre, p.percus));
+                const m = ensureMobilierStructure(p.mobilier || calculateMobilier(p.orchestre, p.percus, { hasChef: !p.sansChef }));
                 updater(m);
                 return { ...p, mobilier: m };
               });
@@ -1872,7 +1872,7 @@ export default function App() {
             function getLiveMob() {
               const p = pieces.find(pp => pp.id === piece.id);
               if (!p) return "";
-              const m = p.mobilier || calculateMobilier(p.orchestre, p.percus);
+              const m = p.mobilier || calculateMobilier(p.orchestre, p.percus, { hasChef: !p.sansChef });
               return m ? generateMobilierStandaloneText({ ...p, mobilier: m }) : "";
             }
 
@@ -1987,7 +1987,7 @@ export default function App() {
 
                 {/* ── EDIT MODE ── */}
                 {isMobOpen && isEditing && (() => {
-                  const editMob = piece.mobilier || ensureMobilierStructure(calculateMobilier(piece.orchestre, piece.percus));
+                  const editMob = piece.mobilier || ensureMobilierStructure(calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef }));
                   const liveText = generateMobilierStandaloneText({ ...piece, mobilier: editMob });
 
                   return (
@@ -2246,7 +2246,7 @@ export default function App() {
                           onClick={() => {
                             // Force recalc: remove _edited, recalculate mobilier
                             updatePiece(piece.id, (p) => {
-                              const newMob = calculateMobilier(p.orchestre, p.percus);
+                              const newMob = calculateMobilier(p.orchestre, p.percus, { hasChef: !p.sansChef });
                               if (newMob) newMob._edited = false;
                               return { ...p, mobilier: newMob };
                             });
