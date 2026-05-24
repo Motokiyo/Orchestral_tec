@@ -776,7 +776,7 @@ export default function App() {
                 nom: p.nom,
                 items: p.items,
               }))
-            : [{ id: "p1", nom: "Percu 1", items: [] }];
+            : [];
         const newPiece = {
           id: uid(),
           titre: data.titre || file.name.replace(/\.(pdf|jpe?g|png|txt)$/i, ""),
@@ -1420,7 +1420,7 @@ export default function App() {
                   orchestre: null,
                   planDataUrl: null,
                   couleur: "blanc",
-                  percus: [{ id: "p1", nom: "Percu 1", items: [] }],
+                  percus: [],
                 };
                 setPieces((prev) => [...prev, newPiece]);
                 goPiece(newPiece.id);

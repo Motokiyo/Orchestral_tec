@@ -1,46 +1,54 @@
 # INDEX.md — Catalogue wiki OrkMap
 
-> Lis ceci EN PREMIER. Ouvre les fichiers SEULEMENT pour les sections liees a ta tache.
-> Mis a jour : 08/04/2026
+> Lis ceci EN PREMIER. Ouvre les fichiers SEULEMENT pour les sections liées a ta tâche.
+> Mis à jour : 24/05/2026
 
 ## CLAUDE.md — instructions dev
 
-- App de gestion concerts/repertoire pour regisseurs d'orchestre
+- App de gestion concerts/répertoire pour régisseurs d'orchestre
 - Stack : React 18 (Vite 6), IndexedDB via idb, pdfjs-dist v4, JSZip, Gemini 2.5 Flash Vision
-- Deploy : Vercel (auto-deploy GitHub), repo github.com/Motokiyo/Applications/Galaad/Orchestral-tec
-- Regles : mobile-first (375px), pas de nouveau fichier .jsx sans accord, IndexedDB pour tout
+- Deploy : Vercel (auto-deploy GitHub), repo github.com/Motokiyo/Orchestral_tec
+- Règles : mobile-first (375px), pas de nouveau fichier .jsx sans accord, IndexedDB pour tout
 - Toujours `git pull` avant modification (travail multi-machine)
+
+## Fichiers wiki
+
+- `INDEX.md` — ce fichier, catalogue
+- `STATE.md` — snapshot projet (P0, déploiement, problèmes)
+- `DECISIONS.md` — décisions validées/abandonnées
+- `memory/project_timeline.md` — historique chronologique des actions
 
 ## Source — src/
 
-- `App.jsx` — composant principal, ecrans, state, navigation
+- `App.jsx` — composant principal, écrans, state, navigation
 - `useStorage.js` — hooks useConcerts() + usePhotos(), IndexedDB
-- `pdfParser.js` — import PDF multi-format + decodeur Daniels + extractWithGemini
+- `pdfParser.js` — import PDF multi-format + décodeur Daniels + extractWithGemini + parseDcm (Radio France) + parseFreeForm
 - `data.js` — constantes (BARNIER, CATEGORIES, demo data)
-- `utils.js` — generation TXT, watermark photo, clipboard
+- `utils.js` — génération TXT, watermark photo, clipboard
 - `styles.js` — tokens design
-- `main.jsx` — point d'entree React
+- `main.jsx` — point d'entrée React
 
 ## Config racine
 
 - `index.html` — page HTML Vite
-- `package.json` — dependances (react, idb, pdfjs-dist, jszip)
-- `.env.local` — cle API Gemini (gitignored)
+- `package.json` — dépendances (react, idb, pdfjs-dist, jszip)
+- `.env.local` — clé API Gemini (gitignored)
+- `vite.config.js` — config Vite
 
 ## API serverless — api/
 
-- Fonctions Vercel pour proxy API
+- Fonctions Vercel pour proxy API (extraction Gemini)
 
 ## Documentation
 
 - `BENCHMARK_IA_ENGINES.md` — comparatif moteurs IA pour extraction PDF
-- `PROMPT_MISE_A_JOUR_V1.md` — prompt de mise a jour
-- `README.md` — presentation projet
-- `OrkMap_Roadmap_BusinessModel.docx` — roadmap + modele economique
+- `PROMPT_MISE_A_JOUR_V1.md` — prompt de mise à jour
+- `README.md` — présentation projet
+- `OrkMap_Roadmap_BusinessModel.docx` — roadmap + modèle économique
 
-## Anti-patterns documentes
+## Anti-patterns documentés
 
-- Ne pas stocker en useState ephemere -> IndexedDB
-- Ne pas hardcoder cles API -> .env.local
-- Decodeur Daniels : gerer tirets, slashs, format mixte, points trainants
-- Plans PDF AutoCAD : texte fragmente, mal ordonne, parfois tourne 90°
+- Ne pas stocker en useState éphémère → IndexedDB
+- Ne pas hardcoder clés API → .env.local
+- Décodeur Daniels : gérer tirets, slashs, format mixte, points traînants
+- Plans PDF AutoCAD : texte fragmenté, mal ordonné, parfois tourné 90°

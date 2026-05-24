@@ -1884,36 +1884,9 @@ function categorizeInstrument(nom) {
  * Build percussion slots from effectif detail (shared helper).
  */
 function buildPercuFromEffectif(result) {
-  if (result.percus.length === 0 && result.effectifDetail?.percussions) {
-    const perc = result.effectifDetail.percussions;
-    const timb = perc["Timbales"] || 0;
-    for (let i = 1; i <= timb; i++) {
-      result.percus.push({
-        nom: timb === 1 ? "Timbalier" : `Timbalier ${i}`,
-        items: [{ cat: "Timbales & Peaux", nom: "4 Timbales" }],
-      });
-    }
-    const percCount = perc["Percussion"] || 0;
-    for (let i = 1; i <= percCount; i++) {
-      result.percus.push({ nom: `Percu ${i}`, items: [] });
-    }
-    if (result.percus.length === 0) {
-      const total = perc.total || 0;
-      for (let i = 1; i <= total; i++) {
-        result.percus.push({ nom: `Percu ${i}`, items: [] });
-      }
-    }
-  }
-  if (result.percus.length > 0 && result.effectifDetail?.percussions) {
-    const timb = result.effectifDetail.percussions["Timbales"] || 0;
-    const existingTimb = result.percus.filter(p => /timbal/i.test(p.nom)).length;
-    for (let i = existingTimb + 1; i <= timb; i++) {
-      result.percus.unshift({
-        nom: timb === 1 ? "Timbalier" : `Timbalier ${i}`,
-        items: [{ cat: "Timbales & Peaux", nom: "4 Timbales" }],
-      });
-    }
-  }
+  // Percussions must never be auto-generated from effectif notation.
+  // They come only from explicit parsing (P1:, P2:, DCM, EIC format, AI).
+  // This function is intentionally empty.
 }
 
 /**

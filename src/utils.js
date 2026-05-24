@@ -27,7 +27,7 @@ export const DEFAULT_MOBILIER = {
     bois: [],
     cuivres: [],
     percus: [],
-    autres: [{ type: "Podium chef", qty: 1 }, { type: "Pupitre chef", qty: 1 }],
+    autres: [],
     autresCustom: [],
   },
   _edited: false,
@@ -53,7 +53,7 @@ export function extractNumberFromItem(item) {
 export function calculateMobilier(orchestre, percus, options = {}) {
   if (!orchestre) return null;
 
-  const { hasChef = true } = options;
+  const { hasChef = false } = options;
 
   const boisItems = orchestre.bois || [];
   const cuivresItems = orchestre.cuivres || [];
