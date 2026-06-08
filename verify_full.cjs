@@ -7,7 +7,7 @@ const puppeteer = require('puppeteer');
 const path = require('path');
 
 const URL = 'http://localhost:5199';
-const SCREENSHOT_DIR = '/Users/alexandre/Galaad-Motokiyo-Ferran/Orchestral_tec';
+const SCREENSHOT_DIR = '/Users/alexandre/Territoire/Galaad-Motokiyo-Ferran/1 Projets/Orchestral-tec';
 
 const results = [];
 let browser, page;
