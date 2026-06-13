@@ -2,9 +2,26 @@ import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
-import { useConcerts, usePhotos, useOmrScores } from "./useStorage.js";
+import { exportLocalDataForMigration, importMigratedDataForUser, useConcerts, usePhotos, useOmrScores } from "./useStorage.js";
 import { S } from "./styles.js";
 import JSZip from "jszip";
+
+const LEGACY_MIGRATION_ORIGIN = "https://orchestral-tec.vercel.app";
+const MIGRATION_TARGET_ORIGINS = new Set([
+  "https://orkmap.eiffelai.io",
+  "https://orkmap.eiffel-ai.fr",
+  "https://orchestral-tec.vercel.app",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://192.168.1.227:5173",
+]);
+const MIGRATION_EXPORT_PARAM = "orkmap_migration";
+
+function randomMigrationNonce() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 // ── Shared helper: import image file, return raw dataUrl (no watermark baked) ──
 function importImageFile() {
@@ -68,6 +85,166 @@ function dataUrlToBlob(dataUrl) {
 // ── Helper: sanitize filename part ──
 function sanitize(str) {
   return (str || "Sans_titre").replace(/[/\\?%*:|"<>]/g, "_").replace(/\s+/g, "_");
+}
+
+async function postJson(url, body = {}) {
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || "Erreur réseau");
+  return data;
+}
+
+function LoginScreen({ onLogin }) {
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [step, setStep] = useState("email");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const inputStyle = {
+    width: "100%",
+    boxSizing: "border-box",
+    border: "1px solid #D6D3D1",
+    borderRadius: 10,
+    background: "#fff",
+    color: "#1C1917",
+    padding: "12px 14px",
+    fontSize: 16,
+    outline: "none",
+  };
+
+  async function requestCode(e) {
+    e.preventDefault();
+    setLoading(true);
+    setMessage("");
+    try {
+      const data = await postJson("/api/request-code", { email });
+      setStep("code");
+      setMessage(data.devCode ? `Code local: ${data.devCode}` : "Code envoyé par email.");
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function verifyCode(e) {
+    e.preventDefault();
+    setLoading(true);
+    setMessage("");
+    try {
+      const data = await postJson("/api/verify-code", { email, code });
+      onLogin(data.email);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={S.shell}>
+      <div style={{ ...S.header, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 48 }} />
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#78716C" }}>Connexion</div>
+      </div>
+      <form onSubmit={step === "email" ? requestCode : verifyCode} style={{ ...S.body, paddingTop: 26 }}>
+        <div style={{ fontSize: 22, fontWeight: 850, color: "#1C1917", marginBottom: 8 }}>OrkMap</div>
+        <div style={{ fontSize: 13, lineHeight: 1.45, color: "#78716C", marginBottom: 18 }}>
+          Entre ton adresse autorisée, puis le code reçu par email.
+        </div>
+        <label style={{ display: "block", fontSize: 12, fontWeight: 800, color: "#57534E", marginBottom: 6 }}>
+          Adresse email
+        </label>
+        <input
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          disabled={step === "code" || loading}
+          placeholder="alexferran@gmail.com"
+          style={{ ...inputStyle, marginBottom: 12 }}
+        />
+        {step === "code" && (
+          <>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 800, color: "#57534E", marginBottom: 6 }}>
+              Code
+            </label>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="123456"
+              style={{ ...inputStyle, marginBottom: 12, fontSize: 22, letterSpacing: 4, fontWeight: 800 }}
+            />
+          </>
+        )}
+        {message && (
+          <div style={{ fontSize: 13, color: message.includes("Code local") || message.includes("envoyé") ? "#166534" : "#991B1B", marginBottom: 12 }}>
+            {message}
+          </div>
+        )}
+        <button type="submit" disabled={loading || !email || (step === "code" && code.length !== 6)} style={{ ...S.btnPrimary("#1C1917"), opacity: loading ? 0.65 : 1 }}>
+          {loading ? "Patiente..." : step === "email" ? "Recevoir le code" : "Se connecter"}
+        </button>
+        {step === "code" && (
+          <button type="button" onClick={() => { setStep("email"); setCode(""); setMessage(""); }} style={{ ...S.btnSecondary, marginTop: 10 }}>
+            Changer d'adresse
+          </button>
+        )}
+      </form>
+    </div>
+  );
+}
+
+function MigrationExportScreen() {
+  const [status, setStatus] = useState("Préparation de la migration...");
+
+  useEffect(() => {
+    let done = false;
+    async function send(targetWindow, targetOrigin, nonce) {
+      if (done || !targetWindow || !MIGRATION_TARGET_ORIGINS.has(targetOrigin) || !nonce) return;
+      done = true;
+      try {
+        const payload = await exportLocalDataForMigration();
+        targetWindow.postMessage({ type: "ORKMAP_MIGRATION_DATA", nonce, payload }, targetOrigin);
+        setStatus("Données envoyées. Tu peux revenir sur OrkMap Eiffel.");
+      } catch (err) {
+        targetWindow.postMessage({ type: "ORKMAP_MIGRATION_ERROR", nonce, error: err.message }, targetOrigin);
+        setStatus("Migration impossible : " + err.message);
+      }
+    }
+
+    function onMessage(event) {
+      if (event.data?.type !== "ORKMAP_MIGRATION_REQUEST") return;
+      send(event.source, event.origin, event.data.nonce);
+    }
+
+    window.addEventListener("message", onMessage);
+    if (window.opener) {
+      for (const origin of MIGRATION_TARGET_ORIGINS) {
+        window.opener.postMessage({ type: "ORKMAP_MIGRATION_READY" }, origin);
+      }
+    }
+
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  return (
+    <div style={{ ...S.shell, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, boxSizing: "border-box" }}>
+      <div style={{ textAlign: "center" }}>
+        <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 72, marginBottom: 16 }} />
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#1C1917", marginBottom: 8 }}>Migration OrkMap</div>
+        <div style={{ fontSize: 13, color: "#78716C", lineHeight: 1.45 }}>{status}</div>
+      </div>
+    </div>
+  );
 }
 
 function fileToDataUrl(file) {
@@ -791,13 +968,16 @@ function calculateTotalMusicians(orchestre) {
 // calculateMobilier is now imported from utils.js
 
 export default function App() {
-  const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }]);
+  const [authStatus, setAuthStatus] = useState("checking");
+  const [authEmail, setAuthEmail] = useState("");
+  const [migrationStatus, setMigrationStatus] = useState("");
+  const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }], authEmail);
   const [screen, setScreen] = useState("start");
   const [concertId, setConcertId] = useState(null);
   const [pieceId, setPieceId] = useState(null);
   const [percuId, setPercuId] = useState(null);
-  const [photos, setPhotos] = usePhotos();
-  const [omrScores, setOmrScores] = useOmrScores();
+  const [photos, setPhotos, photosLoaded] = usePhotos(authEmail);
+  const [omrScores, setOmrScores, omrLoaded] = useOmrScores(authEmail);
   const [omrScoreId, setOmrScoreId] = useState(null);
   const [omrReading, setOmrReading] = useState({ scoreId: null, index: -1 });
   const omrTimerRef = useRef(null);
@@ -822,11 +1002,108 @@ export default function App() {
   const [mobilierEditing, setMobilierEditing] = useState(null); // pieceId currently editing mob
   const [mobilierBackup, setMobilierBackup] = useState(null);
 
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/session", { credentials: "include" })
+      .then((resp) => resp.json())
+      .then((data) => {
+        if (!alive) return;
+        if (data.user?.email) {
+          setAuthEmail(data.user.email);
+        } else {
+          setAuthStatus("anonymous");
+        }
+      })
+      .catch(() => {
+        if (alive) setAuthStatus("anonymous");
+      });
+    return () => { alive = false; };
+  }, []);
+
+  async function logout() {
+    await postJson("/api/logout").catch(() => {});
+    setAuthEmail("");
+    setAuthStatus("anonymous");
+    goStart();
+  }
+
+  function startLegacyMigration() {
+    if (!authEmail) return;
+    setMigrationStatus("Ouverture de l'ancienne adresse...");
+    const popup = window.open(`${LEGACY_MIGRATION_ORIGIN}/?${MIGRATION_EXPORT_PARAM}=export`, "orkmapMigration", "width=420,height=720");
+    if (!popup) {
+      setMigrationStatus("La fenêtre de migration a été bloquée. Autorise les popups pour OrkMap puis réessaie.");
+      return;
+    }
+
+    let finished = false;
+    const nonce = randomMigrationNonce();
+    let pingTimer = null;
+    const cleanup = () => {
+      window.removeEventListener("message", onMessage);
+      if (pingTimer) window.clearInterval(pingTimer);
+    };
+    const requestExport = () => {
+      try {
+        popup.postMessage({ type: "ORKMAP_MIGRATION_REQUEST", nonce }, LEGACY_MIGRATION_ORIGIN);
+      } catch {
+        // The popup may still be navigating.
+      }
+    };
+    async function onMessage(event) {
+      if (event.origin !== LEGACY_MIGRATION_ORIGIN) return;
+      if (event.source !== popup) return;
+      if (event.data?.type === "ORKMAP_MIGRATION_READY") {
+        setMigrationStatus("Lecture des données de l'ancienne adresse...");
+        requestExport();
+        return;
+      }
+      if (event.data?.nonce !== nonce) return;
+      if (event.data?.type === "ORKMAP_MIGRATION_ERROR") {
+        finished = true;
+        cleanup();
+        setMigrationStatus("Migration impossible : " + (event.data.error || "erreur inconnue"));
+        return;
+      }
+      if (event.data?.type !== "ORKMAP_MIGRATION_DATA") return;
+      finished = true;
+      cleanup();
+      try {
+        setMigrationStatus("Import des données sur Eiffel...");
+        const summary = await importMigratedDataForUser(event.data.payload, authEmail);
+        setMigrationStatus(`Migration terminée : ${summary.concerts} concert(s), ${summary.photoGroups} groupe(s) photo, ${summary.omrScores} partition(s). Rechargement...`);
+        window.setTimeout(() => window.location.reload(), 900);
+      } catch (err) {
+        setMigrationStatus("Import impossible : " + err.message);
+      }
+    }
+
+    window.addEventListener("message", onMessage);
+    pingTimer = window.setInterval(() => {
+      if (finished || popup.closed) {
+        cleanup();
+        if (!finished) setMigrationStatus("Fenêtre de migration fermée avant la fin.");
+        return;
+      }
+      requestExport();
+    }, 700);
+  }
+
   const concert = concerts.find((c) => c.id === concertId);
   const pieces = concert ? concert.pieces : [];
   const piece = pieces.find((p) => p.id === pieceId);
   const percu = piece ? piece.percus.find((r) => r.id === percuId) : null;
   const omrScore = omrScores.find((score) => score.id === omrScoreId) || null;
+
+  useEffect(() => {
+    if (authEmail && dbLoaded && photosLoaded && omrLoaded) {
+      setAuthStatus("authenticated");
+    }
+  }, [authEmail, dbLoaded, photosLoaded, omrLoaded]);
+
+  if (new URLSearchParams(window.location.search).get(MIGRATION_EXPORT_PARAM) === "export") {
+    return <MigrationExportScreen />;
+  }
 
   // ── Navigation ──
   function goStart() { setScreen("start"); setConcertId(null); setPieceId(null); setPercuId(null); setOmrScoreId(null); }
@@ -1609,6 +1886,21 @@ export default function App() {
   // ════════════════════════════════
   // LOADING
   // ════════════════════════════════
+  if (authStatus === "checking") {
+    return (
+      <div style={{ ...S.shell, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ textAlign: "center" }}>
+          <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 80, marginBottom: 16 }} />
+          <div style={{ fontSize: 14, color: "#78716C" }}>Connexion...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (authStatus !== "authenticated") {
+    return <LoginScreen onLogin={(email) => { setAuthStatus("checking"); setAuthEmail(email); }} />;
+  }
+
   if (!dbLoaded) {
     return (
       <div style={{ ...S.shell, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1881,7 +2173,10 @@ export default function App() {
       <div style={S.shell}>
         <div style={{ ...S.header, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 48 }} />
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#78716C" }}>Accueil</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#78716C", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{authEmail}</div>
+            <button onClick={logout} style={{ background: "none", border: "1px solid #D6D3D1", borderRadius: 8, color: "#57534E", fontSize: 12, fontWeight: 700, padding: "6px 8px", cursor: "pointer" }}>Sortir</button>
+          </div>
         </div>
         <div style={{ ...S.body, paddingTop: 18 }}>
           <button
@@ -1894,7 +2189,7 @@ export default function App() {
           >
             <span style={{ fontSize: 36, width: 52, textAlign: "center" }}>♫</span>
             <span style={{ flex: 1 }}>
-              <span style={{ display: "block", fontSize: 22, fontWeight: 800, color: "#1C1917" }}>Concerts</span>
+              <span style={{ display: "block", fontSize: 22, fontWeight: 800, color: "#1C1917" }}>Concerts & régie</span>
               <span style={{ display: "block", fontSize: 13, lineHeight: 1.35, color: "#78716C", marginTop: 4 }}>
                 Régie, plans, matériel, photos et listes TXT.
               </span>
@@ -1910,16 +2205,32 @@ export default function App() {
           >
             <span style={{ fontSize: 38, width: 52, textAlign: "center" }}>♬</span>
             <span style={{ flex: 1 }}>
-              <span style={{ display: "block", fontSize: 23, fontWeight: 800, color: "#fff" }}>Lire une partition</span>
+              <span style={{ display: "block", fontSize: 23, fontWeight: 800, color: "#fff" }}>OrkScore</span>
               <span style={{ display: "block", fontSize: 13, lineHeight: 1.35, color: "#D6D3D1", marginTop: 4 }}>
-                Photographie une page : les notes se remplissent, puis tu peux les écouter.
+                Lire une partition : photo, notes, rythme et écoute.
               </span>
             </span>
           </button>
+          {authEmail === "alexferran@gmail.com" && window.location.origin !== LEGACY_MIGRATION_ORIGIN && (
+            <div style={{ background: "#fff", border: "1px solid #D6D3D1", borderRadius: 10, padding: 14, marginBottom: 12 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#1C1917", marginBottom: 4 }}>Migration depuis l'ancienne adresse</div>
+              <div style={{ fontSize: 12, lineHeight: 1.45, color: "#78716C", marginBottom: 10 }}>
+                Récupère les concerts, photos et partitions stockés sur ce téléphone dans l'ancienne app Vercel.
+              </div>
+              <button onClick={startLegacyMigration} style={S.btnSecondary}>
+                Importer mes données Vercel
+              </button>
+              {migrationStatus && (
+                <div style={{ fontSize: 12, lineHeight: 1.45, color: migrationStatus.includes("impossible") || migrationStatus.includes("bloquée") || migrationStatus.includes("fermée") ? "#991B1B" : "#166534", marginTop: 10 }}>
+                  {migrationStatus}
+                </div>
+              )}
+            </div>
+          )}
           {omrScores.length > 0 && (
             <div style={{ marginTop: 18 }}>
               <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#78716C", textTransform: "uppercase", marginBottom: 8 }}>
-                Partitions récentes
+                OrkScore · partitions récentes
               </div>
               {omrScores.slice(0, 3).map((score) => (
                 <button key={score.id} onClick={() => goOmr(score.id)} style={{ ...S.btnSecondary, justifyContent: "flex-start", marginBottom: 8 }}>
@@ -1945,7 +2256,7 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button onClick={() => { stopOmrReading(); goStart(); }} style={S.backBtn}>←</button>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>OMR familial</div>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>OrkScore</div>
               <div style={{ fontSize: 17, fontWeight: 700, color: "#1C1917", marginTop: 1 }}>
                 {activeScore ? activeScore.title : "Lire une partition"}
               </div>

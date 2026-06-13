@@ -5,12 +5,16 @@
  * Returns: { titre, compositeur, duree, salle, chef, date, effectif, orchestre, percus }
  */
 
+import { noStore, requireSession } from "./auth-utils.js";
+
 export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
+  noStore(res);
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
+  if (!requireSession(req, res)) return;
 
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {

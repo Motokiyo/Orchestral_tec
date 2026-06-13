@@ -1,6 +1,18 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import extractAiHandler from './api/extract-ai.js'
+import requestCodeHandler from './api/request-code.js'
+import verifyCodeHandler from './api/verify-code.js'
+import sessionHandler from './api/session.js'
+import logoutHandler from './api/logout.js'
+
+const localApiHandlers = {
+  '/api/extract-ai': extractAiHandler,
+  '/api/request-code': requestCodeHandler,
+  '/api/verify-code': verifyCodeHandler,
+  '/api/session': sessionHandler,
+  '/api/logout': logoutHandler,
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -10,16 +22,10 @@ export default defineConfig(({ mode }) => {
   plugins: [
     react(),
     {
-      name: 'local-api-extract-ai',
+      name: 'local-api',
       configureServer(server) {
-        server.middlewares.use('/api/extract-ai', async (req, res) => {
-          if (req.method !== 'POST') {
-            res.statusCode = 405
-            res.setHeader('Content-Type', 'application/json')
-            res.end(JSON.stringify({ error: 'Method not allowed' }))
-            return
-          }
-
+        for (const [route, handler] of Object.entries(localApiHandlers)) {
+          server.middlewares.use(route, async (req, res) => {
           let raw = ''
           req.on('data', (chunk) => { raw += chunk })
           req.on('end', async () => {
@@ -34,8 +40,12 @@ export default defineConfig(({ mode }) => {
                   res.setHeader('Content-Type', 'application/json')
                   res.end(JSON.stringify(payload))
                 },
+                setHeader(name, value) {
+                  res.setHeader(name, value)
+                  return response
+                },
               }
-              await extractAiHandler(req, response)
+              await handler(req, response)
             } catch (err) {
               res.statusCode = 500
               res.setHeader('Content-Type', 'application/json')
@@ -43,6 +53,7 @@ export default defineConfig(({ mode }) => {
             }
           })
         })
+        }
       },
     },
   ],
