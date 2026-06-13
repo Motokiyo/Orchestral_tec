@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { openDB } from "idb";
 
 const DB_NAME = "orkmap-db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE = "concerts";
 const PHOTOS_STORE = "photos";
+const OMR_STORE = "omr-scores";
 const DEBOUNCE_MS = 500;
 
 async function getDB() {
@@ -15,6 +16,9 @@ async function getDB() {
       }
       if (!db.objectStoreNames.contains(PHOTOS_STORE)) {
         db.createObjectStore(PHOTOS_STORE);
+      }
+      if (!db.objectStoreNames.contains(OMR_STORE)) {
+        db.createObjectStore(OMR_STORE, { keyPath: "id" });
       }
     },
   });
@@ -139,4 +143,56 @@ export function usePhotos() {
   }, [save]);
 
   return [photos, setPhotosAndSave, loaded];
+}
+
+/**
+ * Hook: persistent OMR scores backed by IndexedDB.
+ * Returns [scores, setScores, loaded] — same API as useState.
+ */
+export function useOmrScores() {
+  const [scores, setScores] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const saveTimer = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const db = await getDB();
+        const all = await db.getAll(OMR_STORE);
+        setScores(all);
+      } catch (err) {
+        console.warn("[OrkMap] OMR scores load failed:", err);
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  const save = useCallback(async (data) => {
+    try {
+      const db = await getDB();
+      const tx = db.transaction(OMR_STORE, "readwrite");
+      const existingKeys = await tx.store.getAllKeys();
+      const newIds = new Set(data.map((score) => score.id));
+      for (const key of existingKeys) {
+        if (!newIds.has(key)) await tx.store.delete(key);
+      }
+      for (const score of data) {
+        await tx.store.put(score);
+      }
+      await tx.done;
+    } catch (err) {
+      console.warn("[OrkMap] OMR scores save failed:", err);
+    }
+  }, []);
+
+  const setScoresAndSave = useCallback((fn) => {
+    setScores((prev) => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => save(next), DEBOUNCE_MS);
+      return next;
+    });
+  }, [save]);
+
+  return [scores, setScoresAndSave, loaded];
 }

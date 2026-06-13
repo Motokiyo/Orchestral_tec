@@ -1909,11 +1909,12 @@ function fileToDataUrlLocal(file) {
  * Extract data from a plan image via serverless endpoint (/api/extract-ai).
  * The API key stays server-side only — never exposed to the browser.
  */
-export async function extractWithGemini(imageDataUrl) {
+export async function extractWithGemini(imageDataUrl, mode) {
+  if (!mode) throw new Error("Mode d'extraction IA manquant");
   const resp = await fetch("/api/extract-ai", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ image: imageDataUrl }),
+    body: JSON.stringify({ image: imageDataUrl, mode }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
@@ -1935,4 +1936,28 @@ export async function extractWithGemini(imageDataUrl) {
     if (result.effectifDetail && !result.orchestre) result.orchestre = orchestreFromEffectif(result.effectifDetail);
   }
   return result;
+}
+
+export async function extractOmrWithAudiveris(imageDataUrl) {
+  const endpoint = `${window.location.protocol}//${window.location.hostname}:8766/omr`;
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image: imageDataUrl }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || `Erreur OMR ${resp.status}`);
+  }
+  const parsed = await resp.json();
+  return {
+    title: parsed.title || "",
+    composer: parsed.composer || "",
+    year: parsed.year || "",
+    notesText: parsed.notesText || "",
+    bpm: parsed.bpm || 60,
+    timeSignature: parsed.timeSignature || null,
+    confidence: Number(parsed.confidence) || 0,
+    warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+  };
 }

@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
-import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini } from "./pdfParser.js";
-import { useConcerts, usePhotos } from "./useStorage.js";
+import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
+import { useConcerts, usePhotos, useOmrScores } from "./useStorage.js";
 import { S } from "./styles.js";
 import JSZip from "jszip";
 
@@ -68,6 +68,324 @@ function dataUrlToBlob(dataUrl) {
 // ── Helper: sanitize filename part ──
 function sanitize(str) {
   return (str || "Sans_titre").replace(/[/\\?%*:|"<>]/g, "_").replace(/\s+/g, "_");
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (file.size > 8 * 1024 * 1024) {
+      reject(new Error("Fichier trop lourd. Essaie une image ou un PDF de moins de 8 Mo."));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function downscaleImageDataUrl(dataUrl, maxSide = 1600, quality = 0.82) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+function prepareScoreImageForOmr(dataUrl, maxSide = 1800) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const source = document.createElement("canvas");
+      source.width = img.naturalWidth;
+      source.height = img.naturalHeight;
+      const sctx = source.getContext("2d", { willReadFrequently: true });
+      sctx.fillStyle = "#fff";
+      sctx.fillRect(0, 0, source.width, source.height);
+      sctx.drawImage(img, 0, 0);
+
+      const image = sctx.getImageData(0, 0, source.width, source.height);
+      const data = image.data;
+      let minLum = 255, maxLum = 0;
+      let pageMinX = source.width, pageMinY = source.height, pageMaxX = 0, pageMaxY = 0;
+
+      for (let y = 0; y < source.height; y += 4) {
+        for (let x = 0; x < source.width; x += 4) {
+          const i = (y * source.width + x) * 4;
+          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          if (lum > 150) {
+            pageMinX = Math.min(pageMinX, x);
+            pageMinY = Math.min(pageMinY, y);
+            pageMaxX = Math.max(pageMaxX, x);
+            pageMaxY = Math.max(pageMaxY, y);
+          }
+          minLum = Math.min(minLum, lum);
+          maxLum = Math.max(maxLum, lum);
+        }
+      }
+
+      const page = pageMinX < pageMaxX && pageMinY < pageMaxY
+        ? { x: pageMinX, y: pageMinY, w: pageMaxX - pageMinX + 1, h: pageMaxY - pageMinY + 1 }
+        : { x: 0, y: 0, w: source.width, h: source.height };
+
+      const rowHits = [];
+      for (let y = 0; y < page.h; y++) {
+        if (y < page.h * 0.25 || y > page.h * 0.9) continue;
+        let dark = 0;
+        for (let x = 0; x < page.w; x += 2) {
+          const sx = page.x + x;
+          const sy = page.y + y;
+          const i = (sy * source.width + sx) * 4;
+          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          if (lum < 125) dark++;
+        }
+        if (dark > (page.w / 2) * 0.18) rowHits.push(y);
+      }
+
+      const lineClusters = [];
+      for (const y of rowHits) {
+        if (!lineClusters.length || y - lineClusters[lineClusters.length - 1][lineClusters[lineClusters.length - 1].length - 1] > 8) {
+          lineClusters.push([]);
+        }
+        lineClusters[lineClusters.length - 1].push(y);
+      }
+
+      const systems = [];
+      for (const cluster of lineClusters) {
+        const y = Math.round((cluster[0] + cluster[cluster.length - 1]) / 2);
+        if (systems.length && y - systems[systems.length - 1][systems[systems.length - 1].length - 1] < 80) {
+          systems[systems.length - 1].push(y);
+        } else {
+          systems.push([y]);
+        }
+      }
+
+      let safeCrop = page;
+      if (systems.length) {
+        const yValues = systems.flat();
+        const marginY = Math.round(page.h * 0.04);
+        const y0 = Math.max(0, Math.min(...yValues) - marginY);
+        const y1 = Math.min(page.h, Math.max(...yValues) + marginY);
+        let staffMinX = page.w, staffMaxX = 0;
+        for (let y = y0; y < y1; y++) {
+          for (let x = 0; x < page.w; x += 2) {
+            const sx = page.x + x;
+            const sy = page.y + y;
+            const i = (sy * source.width + sx) * 4;
+            const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+            if (lum < 125) {
+              staffMinX = Math.min(staffMinX, x);
+              staffMaxX = Math.max(staffMaxX, x);
+            }
+          }
+        }
+        const marginX = Math.round(page.w * 0.04);
+        const x0 = Math.max(0, staffMinX - marginX);
+        const x1 = Math.min(page.w, staffMaxX + marginX);
+        if (staffMinX < staffMaxX) {
+          safeCrop = { x: page.x + x0, y: page.y + y0, w: x1 - x0, h: y1 - y0 };
+        }
+      }
+
+      const minReadableHeight = 720;
+      const minReadableWidth = 1800;
+      const upscale = Math.max(
+        1,
+        minReadableHeight / Math.max(1, safeCrop.h),
+        minReadableWidth / Math.max(1, safeCrop.w)
+      );
+      const scale = Math.min(3, upscale, 2600 / Math.max(safeCrop.w, safeCrop.h));
+
+      const canvas = document.createElement("canvas");
+      const pad = Math.round(80 * scale);
+      canvas.width = Math.max(1, Math.round(safeCrop.w * scale) + pad * 2);
+      canvas.height = Math.max(1, Math.round(safeCrop.h * scale) + pad * 2);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(
+        source,
+        safeCrop.x,
+        safeCrop.y,
+        safeCrop.w,
+        safeCrop.h,
+        pad,
+        pad,
+        Math.round(safeCrop.w * scale),
+        Math.round(safeCrop.h * scale)
+      );
+
+      const out = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const pixels = out.data;
+      const spread = Math.max(40, maxLum - minLum);
+      for (let i = 0; i < pixels.length; i += 4) {
+        const lum = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+        const normalized = Math.max(0, Math.min(255, ((lum - minLum) / spread) * 255));
+        const boosted = normalized < 210 ? Math.max(0, normalized - 28) : 255;
+        pixels[i] = boosted;
+        pixels[i + 1] = boosted;
+        pixels[i + 2] = boosted;
+      }
+      ctx.putImageData(out, 0, 0);
+      resolve(canvas.toDataURL("image/jpeg", 0.9));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+function parseOmrNotes(raw) {
+  const durationMap = {
+    r: 4,
+    ronde: 4,
+    b: 2,
+    blanche: 2,
+    n: 1,
+    noire: 1,
+    c: 0.5,
+    croche: 0.5,
+  };
+  return (raw || "")
+    .split(/[\s,;|]+/)
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map((token) => {
+      const [notePart, durationPart] = token.split(":");
+      const note = notePart.replace(/_/g, " ");
+      const normalizedDuration = (durationPart || "n").toLowerCase();
+      const rest = ["silence", "soupir", "pause", "rest"].includes(note.toLowerCase());
+      return {
+        note,
+        rest,
+        duration: durationMap[normalizedDuration] || Number(normalizedDuration) || 1,
+      };
+    });
+}
+
+function formatOmrNotes(notes) {
+  return (notes || []).map((item) => `${item.rest ? "silence" : item.note}:${item.duration || 1}`).join(" ");
+}
+
+function pronounceOmrToken(item) {
+  if (item.rest) {
+    if (Math.abs(item.duration - 1) < 0.01) return "soupir";
+    if (Math.abs(item.duration - 2) < 0.01) return "demi pause";
+    if (Math.abs(item.duration - 4) < 0.01) return "pause";
+    if (Math.abs(item.duration - 0.5) < 0.01) return "demi soupir";
+    return "silence";
+  }
+  const [base, accidental = ""] = item.note.toLowerCase().split(/(?=[#b])/);
+  const names = {
+    do: "do",
+    re: "ré",
+    "ré": "ré",
+    mi: "mi",
+    fa: "fa",
+    sol: "sol",
+    la: "la",
+    si: "si",
+  };
+  const spoken = names[base] || item.note;
+  if (accidental === "#") return `${spoken} dièse`;
+  if (accidental === "b") return `${spoken} bémol`;
+  return spoken;
+}
+
+function heldVowelForOmrToken(item, step, steps) {
+  const base = item.note.toLowerCase().replace(/[#b].*$/, "");
+  const last = step === steps - 1;
+  if (base === "sol") return last ? "all" : "oh";
+  if (base === "ré" || base === "re") return "hé";
+  if (base === "mi") return last ? "i" : "i";
+  if (base === "si") return last ? "i" : "i";
+  if (base === "do") return last ? "oh" : "oh";
+  if (base === "fa" || base === "la") return last ? "a" : "a";
+  return "e";
+}
+
+function attackSyllableForOmrToken(item, steps) {
+  const base = item.note.toLowerCase().replace(/[#b].*$/, "");
+  if (base === "sol" && steps > 1) return "so";
+  return pronounceOmrToken(item);
+}
+
+function buildOmrReadingEvents(notes) {
+  const events = [];
+  let cursor = 0;
+  notes.forEach((item, index) => {
+    const duration = Math.max(0.25, Number(item.duration) || 1);
+    const steps = duration < 1 ? 1 : Math.max(1, Math.round(duration));
+    for (let step = 0; step < steps; step++) {
+      const offset = duration < 1 ? 0 : step;
+      const first = step === 0;
+      let text;
+      if (item.rest) {
+        text = first ? pronounceOmrToken(item) : "chut";
+      } else {
+        text = first ? attackSyllableForOmrToken(item, steps) : heldVowelForOmrToken(item, step, steps);
+      }
+      events.push({ index, text, offsetTotal: cursor + offset, duration: duration < 1 ? duration : 1 });
+    }
+    cursor += duration;
+  });
+  return events;
+}
+
+function pronounceTimeSignature(timeSignature) {
+  if (!timeSignature?.beats || !timeSignature?.beatType) return null;
+  const numbers = {
+    2: "deux",
+    3: "trois",
+    4: "quatre",
+    6: "six",
+    8: "huit",
+  };
+  return `${numbers[timeSignature.beats] || timeSignature.beats} ${numbers[timeSignature.beatType] || timeSignature.beatType}`;
+}
+
+function omrNoteFrequency(item, tuning = 442) {
+  if (item.rest) return null;
+  const match = /^([a-zé]+)([#b])?/i.exec(item.note.trim());
+  if (!match) return null;
+  const base = match[1].toLowerCase();
+  const accidental = match[2] || "";
+  const semitones = {
+    do: 0,
+    re: 2,
+    "ré": 2,
+    mi: 4,
+    fa: 5,
+    sol: 7,
+    la: 9,
+    si: 11,
+  };
+  if (semitones[base] === undefined) return null;
+  const alter = accidental === "#" ? 1 : accidental === "b" ? -1 : 0;
+  const midi = 60 + semitones[base] + alter;
+  return tuning * Math.pow(2, (midi - 69) / 12);
+}
+
+function omrMetaInputStyle(strong = false) {
+  return {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "8px 9px",
+    border: "1px solid #D6D3D1",
+    borderRadius: 8,
+    fontSize: strong ? 15 : 13,
+    fontWeight: strong ? 700 : 500,
+    color: "#1C1917",
+    outline: "none",
+    background: "#fff",
+  };
 }
 
 // ── Download photos as ZIP (piece level) ──
@@ -474,11 +792,21 @@ function calculateTotalMusicians(orchestre) {
 
 export default function App() {
   const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }]);
-  const [screen, setScreen] = useState("concerts");
+  const [screen, setScreen] = useState("start");
   const [concertId, setConcertId] = useState(null);
   const [pieceId, setPieceId] = useState(null);
   const [percuId, setPercuId] = useState(null);
   const [photos, setPhotos] = usePhotos();
+  const [omrScores, setOmrScores] = useOmrScores();
+  const [omrScoreId, setOmrScoreId] = useState(null);
+  const [omrReading, setOmrReading] = useState({ scoreId: null, index: -1 });
+  const omrTimerRef = useRef(null);
+  const omrSpeechClearTimersRef = useRef([]);
+  const omrAudioContextRef = useRef(null);
+  const omrAudioNodesRef = useRef([]);
+  const omrVisualTimersRef = useRef([]);
+  const omrPlaybackRef = useRef(0);
+  const [omrAnalyzing, setOmrAnalyzing] = useState(false);
   const [capture, setCapture] = useState(null);
   const [fullPhoto, setFullPhoto] = useState(null);
   const [showPhotoDownload, setShowPhotoDownload] = useState(null); // "piece" | "concert" | null
@@ -498,14 +826,17 @@ export default function App() {
   const pieces = concert ? concert.pieces : [];
   const piece = pieces.find((p) => p.id === pieceId);
   const percu = piece ? piece.percus.find((r) => r.id === percuId) : null;
+  const omrScore = omrScores.find((score) => score.id === omrScoreId) || null;
 
   // ── Navigation ──
+  function goStart() { setScreen("start"); setConcertId(null); setPieceId(null); setPercuId(null); setOmrScoreId(null); }
   function goConcerts() { setScreen("concerts"); setConcertId(null); setPieceId(null); setPercuId(null); }
   function goConcert(id) { setConcertId(id); setPieceId(null); setPercuId(null); setScreen("home"); }
   function goHome() { setScreen("home"); setPieceId(null); setPercuId(null); }
   function goPiece(id) { setPieceId(id); setPercuId(null); setScreen("piece"); }
   function goTxt(id) { if (id) setPieceId(id); setScreen("txt"); }
   function goGallery(id) { if (id !== undefined) setPieceId(id); setScreen("gallery"); }
+  function goOmr(id = null) { setOmrScoreId(id); setScreen("omr"); }
 
   // ── Concert mutations ──
   function updateConcert(id, fn) {
@@ -758,6 +1089,298 @@ export default function App() {
     }));
   }
 
+  function updateOmrScore(id, fn) {
+    setOmrScores((prev) => prev.map((score) => (score.id === id ? fn(score) : score)));
+  }
+
+  function deleteOmrScore(id) {
+    if (!confirm("Supprimer cette partition ?")) return;
+    setOmrScores((prev) => prev.filter((score) => score.id !== id));
+    if (omrScoreId === id) setOmrScoreId(null);
+    stopOmrReading();
+  }
+
+  async function handleOmrImport() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".pdf,.jpg,.jpeg,.png,.webp";
+    input.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 12 * 1024 * 1024) {
+        alert("Fichier trop lourd. Essaie une partition de moins de 12 Mo.");
+        return;
+      }
+      setPdfLoading(true);
+      try {
+        const name = (file.name || "").toLowerCase();
+        const type = (file.type || "").toLowerCase();
+        const isPdf = type.includes("pdf") || name.endsWith(".pdf");
+        const pages = isPdf ? (await extractFromPdf(file)).planDataUrls || [] : [await fileToDataUrl(file)];
+        if (pages.length === 0) {
+          alert("Aucune page lisible dans ce fichier.");
+          return;
+        }
+        await addOmrPagesFromImages(pages, file.name.replace(/\.(pdf|jpe?g|png|webp)$/i, "").replace(/[-_]/g, " "), true);
+      } catch (err) {
+        alert("Impossible d'importer la partition : " + err.message);
+      } finally {
+        setPdfLoading(false);
+      }
+    };
+    input.click();
+  }
+
+  function handleOmrPhotoCapture() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.capture = "environment";
+    input.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const dataUrl = await fileToDataUrl(file);
+        await addOmrPagesFromImages([dataUrl], "Partition photographiée", true);
+      } catch (err) {
+        alert("Impossible de lire la photo : " + err.message);
+      }
+    };
+    input.click();
+  }
+
+  async function analyzeOmrImage(imageDataUrl) {
+    const prepared = await prepareScoreImageForOmr(imageDataUrl);
+    const ai = await extractOmrWithAudiveris(prepared);
+    if (!ai.notesText || parseOmrNotes(ai.notesText).length === 0) {
+      return {
+        ...ai,
+        notesText: "",
+        warnings: [...(ai.warnings || []), "Je n'ai pas réussi à identifier les notes. Essaie de relancer avec un cadrage serré sur une portée."],
+      };
+    }
+    return ai;
+  }
+
+  async function reanalyzeOmrScore(scoreId) {
+    const score = omrScores.find((item) => item.id === scoreId);
+    const page = score?.pages?.[0];
+    if (!score || !page) return;
+    setOmrAnalyzing(true);
+    try {
+      const ai = await analyzeOmrImage(page);
+      updateOmrScore(score.id, (current) => ({
+        ...current,
+        title: ai.title || current.title || "",
+        composer: ai.composer || current.composer || "",
+        year: ai.year || current.year || "",
+        notesText: ai.notesText || current.notesText || "",
+        bpm: ai.bpm || current.bpm || 60,
+        timeSignature: ai.timeSignature || current.timeSignature || null,
+        confidence: ai.confidence ?? current.confidence,
+        warnings: ai.warnings || [],
+      }));
+    } catch (err) {
+      updateOmrScore(score.id, (current) => ({
+        ...current,
+        warnings: [`Lecture échouée : ${err.message}`],
+      }));
+    } finally {
+      setOmrAnalyzing(false);
+    }
+  }
+
+  async function addOmrPagesFromImages(imageDataUrls, sourceTitle = "Nouvelle partition", analyzeFirstPage = true) {
+    const pages = await Promise.all(imageDataUrls.map((url) => downscaleImageDataUrl(url)));
+    if (pages.length === 0) {
+      alert("Aucune page lisible.");
+      return;
+    }
+    setOmrAnalyzing(analyzeFirstPage);
+    let ai = null;
+    try {
+      if (analyzeFirstPage) {
+        ai = await analyzeOmrImage(pages[0]);
+      }
+    } catch (err) {
+      alert("Je n'ai pas réussi à lire automatiquement les notes. La photo est gardée, vous pouvez réessayer.");
+    } finally {
+      setOmrAnalyzing(false);
+    }
+
+    if (omrScoreId && omrScore) {
+      updateOmrScore(omrScoreId, (score) => ({
+        ...score,
+        title: ai?.title || score.title || "",
+        composer: ai?.composer || score.composer || "",
+        year: ai?.year || score.year || "",
+        pages: [...(score.pages || []), ...pages],
+        notesText: ai?.notesText || score.notesText || "",
+        bpm: ai?.bpm || score.bpm || 60,
+        timeSignature: ai?.timeSignature || score.timeSignature || null,
+        confidence: ai?.confidence ?? score.confidence,
+        warnings: ai?.warnings || score.warnings || [],
+      }));
+      return;
+    }
+
+    const score = {
+      id: uid(),
+      title: ai?.title || sourceTitle,
+      composer: ai?.composer || "",
+      year: ai?.year || "",
+      createdAt: new Date().toISOString(),
+      pages,
+      notesText: ai?.notesText || "",
+      bpm: ai?.bpm || 60,
+      tuning: 442,
+      timeSignature: ai?.timeSignature || null,
+      playMode: "pitched",
+      confidence: ai?.confidence || 0,
+      warnings: ai?.warnings || [],
+    };
+    setOmrScores((prev) => [score, ...prev]);
+    setOmrScoreId(score.id);
+  }
+
+  function stopOmrReading() {
+    omrPlaybackRef.current += 1;
+    if (omrTimerRef.current) {
+      window.clearTimeout(omrTimerRef.current);
+      omrTimerRef.current = null;
+    }
+    omrSpeechClearTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    omrSpeechClearTimersRef.current = [];
+    omrVisualTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    omrVisualTimersRef.current = [];
+    omrAudioNodesRef.current.forEach((node) => {
+      try { node.stop(); } catch {}
+      try { node.disconnect(); } catch {}
+    });
+    omrAudioNodesRef.current = [];
+    window.speechSynthesis?.cancel();
+    setOmrReading({ scoreId: null, index: -1 });
+  }
+
+  function speakOmrScore(score) {
+    if (!score) return;
+    const notes = parseOmrNotes(score.notesText);
+    if (notes.length === 0) {
+      alert("Écris d'abord les notes à lire sous la partition.");
+      return;
+    }
+    if (!("speechSynthesis" in window)) {
+      alert("La lecture vocale n'est pas disponible sur ce navigateur.");
+      return;
+    }
+    stopOmrReading();
+    const playbackId = omrPlaybackRef.current;
+    const bpm = Math.max(30, Math.min(180, Number(score.bpm) || 60));
+    const beatMs = 60000 / bpm;
+    const meterText = pronounceTimeSignature(score.timeSignature);
+    const events = [
+      ...(meterText ? [{ index: -1, text: meterText, offsetTotal: 0, duration: 1 }] : []),
+      ...buildOmrReadingEvents(notes).map((event) => ({ ...event, offsetTotal: event.offsetTotal + (meterText ? 1.5 : 0) })),
+    ];
+    const startTime = performance.now() + 120;
+    let activeSpeechEvent = -1;
+    const clearSpeechBeforeNext = (delay, eventIndex) => {
+      const clearDelay = Math.max(40, delay - 180);
+      omrSpeechClearTimersRef.current.push(window.setTimeout(() => {
+        if (playbackId === omrPlaybackRef.current && activeSpeechEvent === eventIndex) {
+          window.speechSynthesis.cancel();
+        }
+      }, clearDelay));
+    };
+    const speakEvent = (eventIndex) => {
+      if (playbackId !== omrPlaybackRef.current) return;
+      if (eventIndex >= events.length) {
+        setOmrReading({ scoreId: null, index: -1 });
+        return;
+      }
+      const event = events[eventIndex];
+      activeSpeechEvent = eventIndex;
+      setOmrReading({ scoreId: score.id, index: event.index });
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(event.text);
+      utterance.lang = "fr-FR";
+      utterance.rate = 1.35;
+      utterance.pitch = 1;
+      window.speechSynthesis.speak(utterance);
+      const next = events[eventIndex + 1];
+      if (!next) {
+        const delay = Math.max(120, event.duration * beatMs);
+        clearSpeechBeforeNext(delay, eventIndex);
+        omrTimerRef.current = window.setTimeout(() => speakEvent(eventIndex + 1), delay);
+        return;
+      }
+      const target = startTime + next.offsetTotal * beatMs;
+      const delay = Math.max(20, target - performance.now());
+      clearSpeechBeforeNext(delay, eventIndex);
+      omrTimerRef.current = window.setTimeout(() => speakEvent(eventIndex + 1), delay);
+    };
+    omrTimerRef.current = window.setTimeout(() => speakEvent(0), Math.max(20, startTime - performance.now()));
+  }
+
+  async function playOmrPitchedScore(score) {
+    if (!score) return;
+    const notes = parseOmrNotes(score.notesText);
+    if (notes.length === 0) {
+      alert("Aucune note à lire.");
+      return;
+    }
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      alert("La lecture audio précise n'est pas disponible sur ce navigateur.");
+      return;
+    }
+
+    stopOmrReading();
+    const playbackId = omrPlaybackRef.current;
+    const ctx = omrAudioContextRef.current || new AudioContextClass();
+    omrAudioContextRef.current = ctx;
+    if (ctx.state === "suspended") await ctx.resume();
+
+    const bpm = Math.max(30, Math.min(220, Number(score.bpm) || 60));
+    const tuning = Math.max(400, Math.min(480, Number(score.tuning) || 442));
+    const beatSec = 60 / bpm;
+    const startAt = ctx.currentTime + 0.16;
+    let cursor = 0;
+
+    notes.forEach((item, index) => {
+      const duration = Math.max(0.25, Number(item.duration) || 1);
+      const freq = omrNoteFrequency(item, tuning);
+      const t0 = startAt + cursor * beatSec;
+      const noteSec = duration * beatSec;
+
+      omrVisualTimersRef.current.push(window.setTimeout(() => {
+        if (playbackId === omrPlaybackRef.current) setOmrReading({ scoreId: score.id, index });
+      }, Math.max(0, (t0 - ctx.currentTime) * 1000)));
+
+      if (freq) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, t0);
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(0.16, t0 + 0.012);
+        gain.gain.setValueAtTime(0.16, Math.max(t0 + 0.02, t0 + noteSec - 0.045));
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + noteSec);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + noteSec + 0.01);
+        omrAudioNodesRef.current.push(osc, gain);
+      }
+
+      cursor += duration;
+    });
+
+    omrVisualTimersRef.current.push(window.setTimeout(() => {
+      if (playbackId === omrPlaybackRef.current) setOmrReading({ scoreId: null, index: -1 });
+    }, Math.max(0, (startAt + cursor * beatSec - ctx.currentTime) * 1000)));
+  }
+
   // ── File Import: new piece (from home screen) — supports PDF, JPEG, PNG, TXT ──
   async function handlePdfImportNew() {
     const input = document.createElement("input");
@@ -881,7 +1504,7 @@ export default function App() {
     const image = localData.planDataUrls?.[0] || localData.planDataUrl;
     if (!image) return localData;
     try {
-      const aiData = await extractWithGemini(image);
+      const aiData = await extractWithGemini(image, "concert");
       return {
         ...localData,
         titre: localData.titre || aiData.titre || "",
@@ -914,7 +1537,7 @@ export default function App() {
     }
     setAiLoading(true);
     try {
-      const extracted = await extractWithGemini(targetPiece.plans[0]);
+      const extracted = await extractWithGemini(targetPiece.plans[0], "concert");
       const ex = extracted || {};
       const autoFilled = [];
 
@@ -976,15 +1599,6 @@ export default function App() {
     }
   }
 
-  function fileToDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-
   function deletePlan(pId, planIdx) {
     updatePiece(pId, (p) => {
       const plans = (p.plans || []).filter((_, i) => i !== planIdx);
@@ -1006,7 +1620,6 @@ export default function App() {
     );
   }
 
-  // ════════════════════════════════
   // ZONE SELECT (before standalone camera)
   // ════════════════════════════════
   if (zoneSelectMode) {
@@ -1255,6 +1868,313 @@ export default function App() {
           <button onClick={() => setMergeData(null)} style={{ ...S.btnPrimary("#1C1917"), marginTop: 16 }}>
             Terminé
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ════════════════════════════════
+  // START — direct family access
+  // ════════════════════════════════
+  if (screen === "start") {
+    return (
+      <div style={S.shell}>
+        <div style={{ ...S.header, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 48 }} />
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#78716C" }}>Accueil</div>
+        </div>
+        <div style={{ ...S.body, paddingTop: 18 }}>
+          <button
+            onClick={goConcerts}
+            style={{
+              width: "100%", minHeight: 132, marginBottom: 12, padding: 18,
+              background: "#fff", border: "1px solid #D6D3D1", borderRadius: 10,
+              display: "flex", alignItems: "center", gap: 16, textAlign: "left", cursor: "pointer",
+            }}
+          >
+            <span style={{ fontSize: 36, width: 52, textAlign: "center" }}>♫</span>
+            <span style={{ flex: 1 }}>
+              <span style={{ display: "block", fontSize: 22, fontWeight: 800, color: "#1C1917" }}>Concerts</span>
+              <span style={{ display: "block", fontSize: 13, lineHeight: 1.35, color: "#78716C", marginTop: 4 }}>
+                Régie, plans, matériel, photos et listes TXT.
+              </span>
+            </span>
+          </button>
+          <button
+            onClick={() => goOmr(null)}
+            style={{
+              width: "100%", minHeight: 154, marginBottom: 12, padding: 18,
+              background: "#1C1917", border: "1px solid #1C1917", borderRadius: 10,
+              display: "flex", alignItems: "center", gap: 16, textAlign: "left", cursor: "pointer",
+            }}
+          >
+            <span style={{ fontSize: 38, width: 52, textAlign: "center" }}>♬</span>
+            <span style={{ flex: 1 }}>
+              <span style={{ display: "block", fontSize: 23, fontWeight: 800, color: "#fff" }}>Lire une partition</span>
+              <span style={{ display: "block", fontSize: 13, lineHeight: 1.35, color: "#D6D3D1", marginTop: 4 }}>
+                Photographie une page : les notes se remplissent, puis tu peux les écouter.
+              </span>
+            </span>
+          </button>
+          {omrScores.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#78716C", textTransform: "uppercase", marginBottom: 8 }}>
+                Partitions récentes
+              </div>
+              {omrScores.slice(0, 3).map((score) => (
+                <button key={score.id} onClick={() => goOmr(score.id)} style={{ ...S.btnSecondary, justifyContent: "flex-start", marginBottom: 8 }}>
+                  ♬ {score.title}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ════════════════════════════════
+  // OMR — score reader
+  // ════════════════════════════════
+  if (screen === "omr") {
+    const activeScore = omrScore;
+    const parsedNotes = parseOmrNotes(activeScore?.notesText || "");
+    return (
+      <div style={S.shell}>
+        <div style={S.header}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button onClick={() => { stopOmrReading(); goStart(); }} style={S.backBtn}>←</button>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, color: "#78716C", textTransform: "uppercase" }}>OMR familial</div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "#1C1917", marginTop: 1 }}>
+                {activeScore ? activeScore.title : "Lire une partition"}
+              </div>
+            </div>
+            {activeScore && (
+              <button onClick={() => deleteOmrScore(activeScore.id)} style={{ background: "none", border: "none", fontSize: 16, color: "#A8A29E", cursor: "pointer", padding: 4 }}>✕</button>
+            )}
+          </div>
+        </div>
+        <div style={S.body}>
+          <button onClick={handleOmrPhotoCapture} disabled={omrAnalyzing} style={{ ...S.btnPrimary("#1C1917"), marginBottom: 8, opacity: omrAnalyzing ? 0.65 : 1 }}>
+            {omrAnalyzing ? "Lecture de la partition..." : activeScore ? "Photographier une autre page" : "Photographier la partition"}
+          </button>
+          <button onClick={handleOmrImport} disabled={pdfLoading || omrAnalyzing} style={{ ...S.btnSecondary, marginBottom: 12, opacity: pdfLoading || omrAnalyzing ? 0.65 : 1 }}>
+            {pdfLoading ? "Import en cours..." : activeScore ? "+ Ajouter un PDF ou une image" : "Importer un PDF ou une image"}
+          </button>
+
+          {!activeScore && (
+            <>
+              {omrAnalyzing ? (
+                <div style={{ textAlign: "center", padding: "52px 16px", color: "#1D4ED8" }}>
+                  <div style={{ fontSize: 34, marginBottom: 10 }}>♬</div>
+                  <div style={{ fontSize: 16, fontWeight: 800 }}>Lecture de la partition...</div>
+                  <div style={{ fontSize: 13, marginTop: 6, lineHeight: 1.45, color: "#78716C" }}>
+                    Les notes vont se remplir automatiquement.
+                  </div>
+                </div>
+              ) : omrScores.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "52px 16px", color: "#78716C" }}>
+                  <div style={{ fontSize: 44, marginBottom: 8 }}>♬</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: "#1C1917" }}>Aucune partition</div>
+                  <div style={{ fontSize: 13, marginTop: 6, lineHeight: 1.45 }}>
+                    Ajoute une photo ou un PDF de partition pour commencer.
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#78716C", textTransform: "uppercase", marginBottom: 8 }}>Mes partitions</div>
+                  {omrScores.map((score) => (
+                    <div key={score.id} onClick={() => setOmrScoreId(score.id)} style={{ ...S.card("#1C1917"), display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 800, color: "#1C1917" }}>{score.title}</div>
+                        <div style={{ fontSize: 12, color: "#78716C", marginTop: 2 }}>
+                          {(score.pages || []).length} page{(score.pages || []).length > 1 ? "s" : ""} · {parseOmrNotes(score.notesText).length} note{parseOmrNotes(score.notesText).length > 1 ? "s" : ""}
+                        </div>
+                      </div>
+                      <span style={{ color: "#A8A29E", fontSize: 20 }}>›</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {activeScore && (
+            <>
+              <div style={{ background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#78716C", textTransform: "uppercase", marginBottom: 8 }}>
+                  Infos partition
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
+                  <input
+                    value={activeScore.title || ""}
+                    onChange={(e) => updateOmrScore(activeScore.id, (score) => ({ ...score, title: e.target.value }))}
+                    placeholder="Titre"
+                    style={omrMetaInputStyle(true)}
+                  />
+                  <input
+                    value={activeScore.composer || ""}
+                    onChange={(e) => updateOmrScore(activeScore.id, (score) => ({ ...score, composer: e.target.value }))}
+                    placeholder="Compositeur"
+                    style={omrMetaInputStyle()}
+                  />
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <input
+                      value={activeScore.year || ""}
+                      onChange={(e) => updateOmrScore(activeScore.id, (score) => ({ ...score, year: e.target.value }))}
+                      placeholder="Année"
+                      style={omrMetaInputStyle()}
+                    />
+                    <input
+                      type="number"
+                      min="30"
+                      max="220"
+                      value={activeScore.bpm || 60}
+                      onChange={(e) => updateOmrScore(activeScore.id, (score) => ({ ...score, bpm: e.target.value }))}
+                      placeholder="BPM"
+                      style={omrMetaInputStyle()}
+                    />
+                    <input
+                      type="number"
+                      min="400"
+                      max="480"
+                      value={activeScore.tuning || 442}
+                      onChange={(e) => updateOmrScore(activeScore.id, (score) => ({ ...score, tuning: e.target.value }))}
+                      placeholder="Diapason"
+                      style={omrMetaInputStyle()}
+                    />
+                  </div>
+                </div>
+              </div>
+              {parsedNotes.length > 0 && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                  <button onClick={() => (activeScore.playMode || "pitched") === "spoken" ? speakOmrScore(activeScore) : playOmrPitchedScore(activeScore)} style={{ ...S.btnPrimary("#1C1917"), flex: 1 }}>
+                    ▶ Lire les notes trouvées
+                  </button>
+                  <button onClick={stopOmrReading} style={{ ...S.btnSecondary, width: 86, flex: "0 0 86px" }}>
+                    Stop
+                  </button>
+                </div>
+              )}
+              {(activeScore.pages || []).length > 0 && (
+                <button
+                  onClick={() => reanalyzeOmrScore(activeScore.id)}
+                  disabled={omrAnalyzing}
+                  style={{ ...S.btnSecondary, marginBottom: 10, opacity: omrAnalyzing ? 0.65 : 1 }}
+                >
+                  {omrAnalyzing ? "Lecture en cours..." : activeScore.notesText ? "Relancer la lecture des notes" : "Réessayer de lire les notes"}
+                </button>
+              )}
+              {omrAnalyzing && (
+                <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 8, padding: "10px 12px", fontSize: 13, fontWeight: 700, color: "#1D4ED8", marginBottom: 10 }}>
+                  Lecture automatique de la partition...
+                </div>
+              )}
+              {(activeScore.pages || []).map((page, idx) => (
+                <div key={idx} style={{ background: "#fff", border: "1px solid #D6D3D1", borderRadius: 8, overflow: "hidden", marginBottom: 10 }}>
+                  <img src={page} alt={`Partition page ${idx + 1}`} style={{ width: "100%", display: "block" }} />
+                  <div style={{ padding: "5px 8px", fontSize: 11, fontWeight: 700, color: "#78716C", background: "#FAFAF9" }}>Page {idx + 1}</div>
+                </div>
+              ))}
+
+              <div style={{ background: "#fff", border: "1px solid #D6D3D1", borderRadius: 8, padding: 12, marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#78716C", textTransform: "uppercase", marginBottom: 6 }}>
+                  {activeScore.notesText ? "Notes trouvées" : "Notes à trouver"}
+                </div>
+                <textarea
+                  value={activeScore.notesText || ""}
+                  onChange={(e) => updateOmrScore(activeScore.id, (score) => ({ ...score, notesText: e.target.value }))}
+                  placeholder={omrAnalyzing ? "Lecture de la partition..." : "Les notes apparaîtront ici après la photo."}
+                  style={{ width: "100%", minHeight: 86, boxSizing: "border-box", padding: 10, border: "1px solid #E7E5E4", borderRadius: 8, fontSize: 15, lineHeight: 1.45, color: "#1C1917", outline: "none", resize: "vertical" }}
+                />
+                <div style={{ fontSize: 11, color: "#A8A29E", lineHeight: 1.4, marginTop: 6 }}>
+                  Si besoin, les notes peuvent être corrigées ici. Option rythme : ajoute `:b` blanche, `:r` ronde, `:c` croche.
+                </div>
+              </div>
+
+              {activeScore.warnings?.length > 0 && (
+                <div style={{ background: "#FFFBEB", border: "1px solid #FCD34D", borderRadius: 8, padding: "8px 10px", fontSize: 12, color: "#92400E", lineHeight: 1.4, marginBottom: 10 }}>
+                  {activeScore.warnings.join(" ")}
+                </div>
+              )}
+
+              {parsedNotes.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                  {parsedNotes.map((item, idx) => (
+                    <span key={`${item.note}-${idx}`} style={{ ...S.tag, background: omrReading.scoreId === activeScore.id && omrReading.index === idx ? "#1C1917" : "#E7E5E4", color: omrReading.scoreId === activeScore.id && omrReading.index === idx ? "#fff" : "#57534E", fontSize: 12 }}>
+                      {item.note}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ background: "#FAFAF9", border: "1px solid #E7E5E4", borderRadius: 8, padding: 12, marginBottom: 10 }}>
+                <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                  {[
+                    { key: "pitched", label: "Pitché" },
+                    { key: "spoken", label: "Parlé" },
+                  ].map((mode) => {
+                    const active = (activeScore.playMode || "pitched") === mode.key;
+                    return (
+                      <button
+                        key={mode.key}
+                        onClick={() => updateOmrScore(activeScore.id, (score) => ({ ...score, playMode: mode.key }))}
+                        style={{
+                          flex: 1,
+                          padding: "8px 10px",
+                          borderRadius: 8,
+                          border: active ? "1px solid #1C1917" : "1px solid #D6D3D1",
+                          background: active ? "#1C1917" : "#fff",
+                          color: active ? "#fff" : "#57534E",
+                          fontSize: 13,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {mode.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {activeScore.timeSignature?.beats && (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 13, fontWeight: 700, color: "#57534E", marginBottom: 8 }}>
+                    <span>Mesure</span>
+                    <span style={{ padding: "5px 10px", border: "1px solid #D6D3D1", borderRadius: 8, background: "#fff", color: "#1C1917" }}>
+                      {activeScore.timeSignature.beats}/{activeScore.timeSignature.beatType}
+                    </span>
+                  </div>
+                )}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 13, fontWeight: 700, color: "#57534E" }}>
+                  <span>Tempo</span>
+                  <span style={{ padding: "5px 10px", border: "1px solid #D6D3D1", borderRadius: 8, background: "#fff", color: "#1C1917" }}>
+                    {activeScore.bpm || 60} BPM
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 13, fontWeight: 700, color: "#57534E", marginTop: 8 }}>
+                  <span>Diapason</span>
+                  <span style={{ padding: "5px 10px", border: "1px solid #D6D3D1", borderRadius: 8, background: "#fff", color: "#1C1917" }}>
+                    {activeScore.tuning || 442} Hz
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => (activeScore.playMode || "pitched") === "spoken" ? speakOmrScore(activeScore) : playOmrPitchedScore(activeScore)} style={{ ...S.btnPrimary("#1C1917"), flex: 1 }}>
+                  ▶ Lire
+                </button>
+                <button onClick={stopOmrReading} style={{ ...S.btnSecondary, flex: 1 }}>
+                  Stop
+                </button>
+              </div>
+              <button
+                onClick={() => updateOmrScore(activeScore.id, (score) => ({ ...score, notesText: formatOmrNotes(parseOmrNotes(score.notesText)) }))}
+                style={{ ...S.btnSecondary, marginTop: 8 }}
+              >
+                Nettoyer les notes
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
