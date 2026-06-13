@@ -63,7 +63,7 @@ export function readCookies(req) {
 }
 
 function cookie(name, value, maxAge) {
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const secure = process.env.NODE_ENV === "production" || process.env.VERCEL ? "; Secure" : "";
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 }
 
@@ -136,8 +136,54 @@ export async function sendLoginCode(email, code) {
     return { dev: false };
   }
 
+  if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
+    const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: String(process.env.GMAIL_CLIENT_ID).trim(),
+        client_secret: String(process.env.GMAIL_CLIENT_SECRET).trim(),
+        refresh_token: String(process.env.GMAIL_REFRESH_TOKEN).trim(),
+        grant_type: "refresh_token",
+      }),
+    });
+    if (!tokenResp.ok) {
+      const body = await tokenResp.text();
+      throw new Error(`Gmail token error: ${body.slice(0, 200)}`);
+    }
+
+    const { access_token: accessToken } = await tokenResp.json();
+    const gmailFrom = String(process.env.GMAIL_FROM || "OrkMap <motokiyoferran@gmail.com>").trim();
+    const raw = [
+      `From: ${gmailFrom}`,
+      `To: ${email}`,
+      `Subject: ${subject}`,
+      "MIME-Version: 1.0",
+      "Content-Type: text/plain; charset=UTF-8",
+      "",
+      text,
+    ].join("\r\n");
+
+    const sendResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ raw: Buffer.from(raw).toString("base64url") }),
+    });
+    if (!sendResp.ok) {
+      const body = await sendResp.text();
+      throw new Error(`Gmail send error: ${body.slice(0, 200)}`);
+    }
+    return { dev: false };
+  }
+
   if (process.env.NODE_ENV === "production") {
     throw new Error("Email provider is required in production");
+  }
+  if (process.env.AUTH_DEV_CODES !== "true") {
+    throw new Error("Email provider is required unless AUTH_DEV_CODES=true");
   }
   console.log(`[orkmap-auth] code for ${email}: ${code}`);
   return { dev: true };
