@@ -2,11 +2,15 @@
 
 ## VALIDÉ
 
+- 2026-06-13 — OrkMap est l'application Eiffel unique accessible sur `https://orkmap.eiffelai.io`, avec deux accès applicatifs : concerts/régie et scores/OMR.
+- 2026-06-13 — L'OMR doit utiliser un vrai moteur OMR (Audiveris côté sidecar/local) et non Gemini pour lire les partitions.
+- 2026-06-13 — Authentification familiale par code email, limitée pour l'instant à `<adresse d'Alexandre>`, `<adresse d'un membre de la famille>`, `<adresse Parédé>`.
+- 2026-06-13 — Envoi des codes de connexion via Gmail OAuth en production Vercel. Le code fixe `790762` et `AUTH_FALLBACK_CODE` sont supprimés.
 - 2026-05-24 — Déploiement Vercel via auto-deploy GitHub (push sur main). Validation : git commit vide (`--allow-empty`) déclenche bien le build. Pas besoin de token Vercel CLI sur le serveur.
 
 ## ABANDONNÉ
 
-- (aucun dans cette session)
+- 2026-06-13 — Abandon de l'import/migration visible "Importer mes données Vercel" dans l'interface utilisateur.
 
 ## Notes
 
