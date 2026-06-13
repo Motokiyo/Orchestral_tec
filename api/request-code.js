@@ -15,10 +15,7 @@ export default async function handler(req, res) {
     res.setHeader("Set-Cookie", createChallenge(email, code));
     return res.status(200).json({ ok: true, devCode: result.dev ? code : undefined });
   } catch (err) {
-    if (process.env.AUTH_FALLBACK_CODE) {
-      console.warn("[orkmap-auth] email failed, fallback code enabled:", err.message);
-      return res.status(200).json({ ok: true, fallback: true });
-    }
-    return res.status(500).json({ error: "Impossible d'envoyer le code.", detail: err.message });
+    console.error("[orkmap-auth] email send failed:", err);
+    return res.status(500).json({ error: "Impossible d'envoyer le code." });
   }
 }
