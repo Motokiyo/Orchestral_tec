@@ -41,7 +41,7 @@
 
 ## Documentation
 
-- `BENCHMARK_IA_ENGINES.md` — comparatif moteurs IA pour extraction PDF
+- `BENCHMARK_IA_ENGINES.md` — comparatif moteurs IA pour [[4 Ressources/Outils-IA|extraction PDF]]
 - `PROMPT_MISE_A_JOUR_V1.md` — prompt de mise à jour
 - `README.md` — présentation projet
 - `OrkMap_Roadmap_BusinessModel.docx` — roadmap + modèle économique
@@ -52,3 +52,7 @@
 - Ne pas hardcoder clés API → .env.local
 - Décodeur Daniels : gérer tirets, slashs, format mixte, points traînants
 - Plans PDF AutoCAD : texte fragmenté, mal ordonné, parfois tourné 90°
+
+## Reliés
+- [[2 Casquettes/Régisseur/_context]] — OrkMap naît directement du métier de régisseur d'orchestre d'Alexandre : gestion concerts, répertoire, plans de scène, décodeur Daniels
+- [[2 Casquettes/Entrepreneur/_context]] — app outillée d'une roadmap et d'un modèle économique, dans la continuité de l'activité produit d'Alexandre
