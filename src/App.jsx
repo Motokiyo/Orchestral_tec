@@ -2,26 +2,9 @@ import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
-import { exportLocalDataForMigration, importMigratedDataForUser, useConcerts, usePhotos, useOmrScores } from "./useStorage.js";
+import { useConcerts, usePhotos, useOmrScores } from "./useStorage.js";
 import { S } from "./styles.js";
 import JSZip from "jszip";
-
-const LEGACY_MIGRATION_ORIGIN = "https://orchestral-tec.vercel.app";
-const MIGRATION_TARGET_ORIGINS = new Set([
-  "https://orkmap.eiffelai.io",
-  "https://orkmap.eiffel-ai.fr",
-  "https://orchestral-tec.vercel.app",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-  "http://192.168.1.227:5173",
-]);
-const MIGRATION_EXPORT_PARAM = "orkmap_migration";
-
-function randomMigrationNonce() {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
 
 // ── Shared helper: import image file, return raw dataUrl (no watermark baked) ──
 function importImageFile() {
@@ -167,7 +150,7 @@ function LoginScreen({ onLogin }) {
           inputMode="email"
           autoComplete="email"
           disabled={step === "code" || loading}
-          placeholder="alexferran@gmail.com"
+          placeholder="user@mail.com"
           style={{ ...inputStyle, marginBottom: 12 }}
         />
         {step === "code" && (
@@ -199,50 +182,6 @@ function LoginScreen({ onLogin }) {
           </button>
         )}
       </form>
-    </div>
-  );
-}
-
-function MigrationExportScreen() {
-  const [status, setStatus] = useState("Préparation de la migration...");
-
-  useEffect(() => {
-    let done = false;
-    async function send(targetWindow, targetOrigin, nonce) {
-      if (done || !targetWindow || !MIGRATION_TARGET_ORIGINS.has(targetOrigin) || !nonce) return;
-      done = true;
-      try {
-        const payload = await exportLocalDataForMigration();
-        targetWindow.postMessage({ type: "ORKMAP_MIGRATION_DATA", nonce, payload }, targetOrigin);
-        setStatus("Données envoyées. Tu peux revenir sur OrkMap Eiffel.");
-      } catch (err) {
-        targetWindow.postMessage({ type: "ORKMAP_MIGRATION_ERROR", nonce, error: err.message }, targetOrigin);
-        setStatus("Migration impossible : " + err.message);
-      }
-    }
-
-    function onMessage(event) {
-      if (event.data?.type !== "ORKMAP_MIGRATION_REQUEST") return;
-      send(event.source, event.origin, event.data.nonce);
-    }
-
-    window.addEventListener("message", onMessage);
-    if (window.opener) {
-      for (const origin of MIGRATION_TARGET_ORIGINS) {
-        window.opener.postMessage({ type: "ORKMAP_MIGRATION_READY" }, origin);
-      }
-    }
-
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
-
-  return (
-    <div style={{ ...S.shell, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, boxSizing: "border-box" }}>
-      <div style={{ textAlign: "center" }}>
-        <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 72, marginBottom: 16 }} />
-        <div style={{ fontSize: 18, fontWeight: 800, color: "#1C1917", marginBottom: 8 }}>Migration OrkMap</div>
-        <div style={{ fontSize: 13, color: "#78716C", lineHeight: 1.45 }}>{status}</div>
-      </div>
     </div>
   );
 }
@@ -970,7 +909,6 @@ function calculateTotalMusicians(orchestre) {
 export default function App() {
   const [authStatus, setAuthStatus] = useState("checking");
   const [authEmail, setAuthEmail] = useState("");
-  const [migrationStatus, setMigrationStatus] = useState("");
   const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }], authEmail);
   const [screen, setScreen] = useState("start");
   const [concertId, setConcertId] = useState(null);
@@ -1027,68 +965,6 @@ export default function App() {
     goStart();
   }
 
-  function startLegacyMigration() {
-    if (!authEmail) return;
-    setMigrationStatus("Ouverture de l'ancienne adresse...");
-    const popup = window.open(`${LEGACY_MIGRATION_ORIGIN}/?${MIGRATION_EXPORT_PARAM}=export`, "orkmapMigration", "width=420,height=720");
-    if (!popup) {
-      setMigrationStatus("La fenêtre de migration a été bloquée. Autorise les popups pour OrkMap puis réessaie.");
-      return;
-    }
-
-    let finished = false;
-    const nonce = randomMigrationNonce();
-    let pingTimer = null;
-    const cleanup = () => {
-      window.removeEventListener("message", onMessage);
-      if (pingTimer) window.clearInterval(pingTimer);
-    };
-    const requestExport = () => {
-      try {
-        popup.postMessage({ type: "ORKMAP_MIGRATION_REQUEST", nonce }, LEGACY_MIGRATION_ORIGIN);
-      } catch {
-        // The popup may still be navigating.
-      }
-    };
-    async function onMessage(event) {
-      if (event.origin !== LEGACY_MIGRATION_ORIGIN) return;
-      if (event.source !== popup) return;
-      if (event.data?.type === "ORKMAP_MIGRATION_READY") {
-        setMigrationStatus("Lecture des données de l'ancienne adresse...");
-        requestExport();
-        return;
-      }
-      if (event.data?.nonce !== nonce) return;
-      if (event.data?.type === "ORKMAP_MIGRATION_ERROR") {
-        finished = true;
-        cleanup();
-        setMigrationStatus("Migration impossible : " + (event.data.error || "erreur inconnue"));
-        return;
-      }
-      if (event.data?.type !== "ORKMAP_MIGRATION_DATA") return;
-      finished = true;
-      cleanup();
-      try {
-        setMigrationStatus("Import des données sur Eiffel...");
-        const summary = await importMigratedDataForUser(event.data.payload, authEmail);
-        setMigrationStatus(`Migration terminée : ${summary.concerts} concert(s), ${summary.photoGroups} groupe(s) photo, ${summary.omrScores} partition(s). Rechargement...`);
-        window.setTimeout(() => window.location.reload(), 900);
-      } catch (err) {
-        setMigrationStatus("Import impossible : " + err.message);
-      }
-    }
-
-    window.addEventListener("message", onMessage);
-    pingTimer = window.setInterval(() => {
-      if (finished || popup.closed) {
-        cleanup();
-        if (!finished) setMigrationStatus("Fenêtre de migration fermée avant la fin.");
-        return;
-      }
-      requestExport();
-    }, 700);
-  }
-
   const concert = concerts.find((c) => c.id === concertId);
   const pieces = concert ? concert.pieces : [];
   const piece = pieces.find((p) => p.id === pieceId);
@@ -1100,10 +976,6 @@ export default function App() {
       setAuthStatus("authenticated");
     }
   }, [authEmail, dbLoaded, photosLoaded, omrLoaded]);
-
-  if (new URLSearchParams(window.location.search).get(MIGRATION_EXPORT_PARAM) === "export") {
-    return <MigrationExportScreen />;
-  }
 
   // ── Navigation ──
   function goStart() { setScreen("start"); setConcertId(null); setPieceId(null); setPercuId(null); setOmrScoreId(null); }
@@ -2211,22 +2083,6 @@ export default function App() {
               </span>
             </span>
           </button>
-          {authEmail === "alexferran@gmail.com" && window.location.origin !== LEGACY_MIGRATION_ORIGIN && (
-            <div style={{ background: "#fff", border: "1px solid #D6D3D1", borderRadius: 10, padding: 14, marginBottom: 12 }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: "#1C1917", marginBottom: 4 }}>Migration depuis l'ancienne adresse</div>
-              <div style={{ fontSize: 12, lineHeight: 1.45, color: "#78716C", marginBottom: 10 }}>
-                Récupère les concerts, photos et partitions stockés sur ce téléphone dans l'ancienne app Vercel.
-              </div>
-              <button onClick={startLegacyMigration} style={S.btnSecondary}>
-                Importer mes données Vercel
-              </button>
-              {migrationStatus && (
-                <div style={{ fontSize: 12, lineHeight: 1.45, color: migrationStatus.includes("impossible") || migrationStatus.includes("bloquée") || migrationStatus.includes("fermée") ? "#991B1B" : "#166534", marginTop: 10 }}>
-                  {migrationStatus}
-                </div>
-              )}
-            </div>
-          )}
           {omrScores.length > 0 && (
             <div style={{ marginTop: 18 }}>
               <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#78716C", textTransform: "uppercase", marginBottom: 8 }}>

@@ -6,7 +6,6 @@ const DB_VERSION = 4;
 const STORE = "concerts";
 const PHOTOS_STORE = "photos";
 const OMR_STORE = "omr-scores";
-const BACKUP_STORE = "migration-backups";
 const DEBOUNCE_MS = 500;
 const ALEX_EMAIL = "alexferran@gmail.com";
 
@@ -38,99 +37,8 @@ async function getDB() {
       if (!db.objectStoreNames.contains(OMR_STORE)) {
         db.createObjectStore(OMR_STORE, { keyPath: "id" });
       }
-      if (!db.objectStoreNames.contains(BACKUP_STORE)) {
-        db.createObjectStore(BACKUP_STORE, { keyPath: "id" });
-      }
     },
   });
-}
-
-export async function exportLocalDataForMigration() {
-  const db = await getDB();
-  const concerts = (await db.getAll(STORE)).filter((item) => belongsToUser(item, ALEX_EMAIL));
-  const legacyPhotos = await db.get(PHOTOS_STORE, "all-photos");
-  const alexPhotos = await db.get(PHOTOS_STORE, photosKey(ALEX_EMAIL));
-  const omrScores = (await db.getAll(OMR_STORE)).filter((item) => belongsToUser(item, ALEX_EMAIL));
-  return {
-    version: 1,
-    dbName: DB_NAME,
-    dbVersion: DB_VERSION,
-    ownerEmail: ALEX_EMAIL,
-    exportedAt: new Date().toISOString(),
-    concerts,
-    photos: alexPhotos || legacyPhotos || {},
-    omrScores,
-  };
-}
-
-export async function importMigratedDataForUser(payload, userEmail) {
-  const email = normalizeEmail(userEmail);
-  if (!email) throw new Error("Utilisateur manquant.");
-  if (payload?.version !== 1 || payload?.dbName !== DB_NAME) throw new Error("Format de migration invalide.");
-  const concerts = Array.isArray(payload?.concerts) ? payload.concerts : [];
-  const omrScores = Array.isArray(payload?.omrScores) ? payload.omrScores : [];
-  const photos = payload?.photos && typeof payload.photos === "object" ? payload.photos : {};
-  const db = await getDB();
-
-  const existingConcerts = (await db.getAll(STORE)).filter((item) => belongsToUser(item, email));
-  const existingPhotos = (await db.get(PHOTOS_STORE, photosKey(email))) || {};
-  const existingOmrScores = (await db.getAll(OMR_STORE)).filter((item) => belongsToUser(item, email));
-  await db.put(BACKUP_STORE, {
-    id: `backup:${email}:${Date.now()}`,
-    ownerEmail: email,
-    createdAt: new Date().toISOString(),
-    concerts: existingConcerts,
-    photos: existingPhotos,
-    omrScores: existingOmrScores,
-  });
-
-  const mergedConcerts = new Map();
-  for (const concert of existingConcerts) {
-    if (concert?.id && !(concert.id === "demo" && concerts.length > 0)) {
-      mergedConcerts.set(concert.id, withOwner(concert, email));
-    }
-  }
-  for (const concert of concerts) {
-    if (concert?.id) mergedConcerts.set(concert.id, withOwner(concert, email));
-  }
-
-  const concertTx = db.transaction(STORE, "readwrite");
-  const concertKeys = await concertTx.store.getAllKeys();
-  for (const key of concertKeys) {
-    const existing = await concertTx.store.get(key);
-    if (belongsToUser(existing, email)) await concertTx.store.delete(key);
-  }
-  for (const concert of mergedConcerts.values()) {
-    await concertTx.store.put(concert);
-  }
-  await concertTx.done;
-
-  await db.put(PHOTOS_STORE, { ...existingPhotos, ...photos }, photosKey(email));
-
-  const mergedOmrScores = new Map();
-  for (const score of existingOmrScores) {
-    if (score?.id) mergedOmrScores.set(score.id, withOwner(score, email));
-  }
-  for (const score of omrScores) {
-    if (score?.id) mergedOmrScores.set(score.id, withOwner(score, email));
-  }
-
-  const omrTx = db.transaction(OMR_STORE, "readwrite");
-  const omrKeys = await omrTx.store.getAllKeys();
-  for (const key of omrKeys) {
-    const existing = await omrTx.store.get(key);
-    if (belongsToUser(existing, email)) await omrTx.store.delete(key);
-  }
-  for (const score of mergedOmrScores.values()) {
-    await omrTx.store.put(score);
-  }
-  await omrTx.done;
-
-  return {
-    concerts: mergedConcerts.size,
-    photoGroups: Object.keys(photos).length,
-    omrScores: mergedOmrScores.size,
-  };
 }
 
 /**
