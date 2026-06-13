@@ -1,13 +1,13 @@
 # INDEX.md — Catalogue wiki OrkMap
 
 > Lis ceci EN PREMIER. Ouvre les fichiers SEULEMENT pour les sections liées a ta tâche.
-> Mis à jour : 24/05/2026
+> Mis à jour : 13/06/2026
 
 ## CLAUDE.md — instructions dev
 
 - App de gestion concerts/répertoire pour régisseurs d'orchestre
-- Stack : React 18 (Vite 6), IndexedDB via idb, pdfjs-dist v4, JSZip, Gemini 2.5 Flash Vision
-- Deploy : Vercel (auto-deploy GitHub), repo github.com/Motokiyo/Orchestral_tec
+- Stack : React 18 (Vite 6), IndexedDB via idb, pdfjs-dist v4, JSZip, Gemini 2.5 Flash Vision, Audiveris sidecar pour OMR
+- Deploy : Vercel, domaine `https://orkmap.eiffelai.io`, repo github.com/Motokiyo/Orchestral_tec
 - Règles : mobile-first (375px), pas de nouveau fichier .jsx sans accord, IndexedDB pour tout
 - Toujours `git pull` avant modification (travail multi-machine)
 
@@ -38,6 +38,8 @@
 ## API serverless — api/
 
 - Fonctions Vercel pour proxy API (extraction Gemini)
+- Auth familiale par code email : `request-code`, `verify-code`, session cookie signée
+- Envoi email production via Gmail OAuth ; pas de `AUTH_FALLBACK_CODE`
 
 ## Documentation
 
