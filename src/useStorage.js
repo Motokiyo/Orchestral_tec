@@ -7,6 +7,8 @@ const STORE = "concerts";
 const PHOTOS_STORE = "photos";
 const OMR_STORE = "omr-scores";
 const DEBOUNCE_MS = 500;
+const LOCAL_LOAD_TIMEOUT_MS = 4000;
+const REMOTE_LOAD_TIMEOUT_MS = 8000;
 const ALEX_EMAIL = "alexferran@gmail.com";
 
 const SYNC_TYPES = {
@@ -29,6 +31,15 @@ function withOwner(item, email) {
 
 function photosKey(email) {
   return `all-photos:${email}`;
+}
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]);
 }
 
 async function loadRemote(type) {
@@ -111,6 +122,7 @@ export function useConcerts(initialConcerts, userEmail) {
       let localData = [];
       let canSeedRemoteFromLocal = false;
       try {
+        await withTimeout((async () => {
         const db = await getDB();
         const all = await db.getAll(STORE);
         const matching = all.filter((item) => belongsToUser(item, email));
@@ -133,6 +145,7 @@ export function useConcerts(initialConcerts, userEmail) {
           }
           await tx.done;
         }
+        })(), LOCAL_LOAD_TIMEOUT_MS, "Concert IndexedDB load");
         setConcerts(localData);
       } catch (err) {
         console.warn("[OrkMap] IndexedDB load failed, using memory:", err);
@@ -142,13 +155,17 @@ export function useConcerts(initialConcerts, userEmail) {
         }
       }
       try {
-        const remote = await loadRemote(SYNC_TYPES.concerts);
+        const remote = await withTimeout(loadRemote(SYNC_TYPES.concerts), REMOTE_LOAD_TIMEOUT_MS, "Concert sync load");
         if (remote.available && Array.isArray(remote.data)) {
           const remoteData = remote.data.map((item) => withOwner(item, email));
           setConcerts(remoteData);
-          await saveLocal(remoteData);
+          await withTimeout(saveLocal(remoteData), LOCAL_LOAD_TIMEOUT_MS, "Concert cache save");
         } else if (remote.available && canSeedRemoteFromLocal && localData.length > 0) {
-          await saveRemote(SYNC_TYPES.concerts, localData.map((item) => withOwner(item, email)));
+          await withTimeout(
+            saveRemote(SYNC_TYPES.concerts, localData.map((item) => withOwner(item, email))),
+            REMOTE_LOAD_TIMEOUT_MS,
+            "Concert initial sync save"
+          );
         }
       } catch (err) {
         console.warn("[OrkMap] Concert sync load failed, using local cache:", err);
@@ -219,6 +236,7 @@ export function usePhotos(userEmail) {
       setLoadedFor("");
       let localData = {};
       try {
+        await withTimeout((async () => {
         const db = await getDB();
         let stored = await db.get(PHOTOS_STORE, photosKey(email));
         if (!stored && email === ALEX_EMAIL) {
@@ -228,17 +246,18 @@ export function usePhotos(userEmail) {
         if (stored) {
           localData = stored;
         }
+        })(), LOCAL_LOAD_TIMEOUT_MS, "Photos IndexedDB load");
         setPhotos(localData);
       } catch (err) {
         console.warn("[OrkMap] Photos load failed:", err);
       }
       try {
-        const remote = await loadRemote(SYNC_TYPES.photos);
+        const remote = await withTimeout(loadRemote(SYNC_TYPES.photos), REMOTE_LOAD_TIMEOUT_MS, "Photo sync load");
         if (remote.available && remote.data && typeof remote.data === "object" && !Array.isArray(remote.data)) {
           setPhotos(remote.data);
-          await saveLocal(remote.data);
+          await withTimeout(saveLocal(remote.data), LOCAL_LOAD_TIMEOUT_MS, "Photo cache save");
         } else if (remote.available && Object.keys(localData).length > 0) {
-          await saveRemote(SYNC_TYPES.photos, localData);
+          await withTimeout(saveRemote(SYNC_TYPES.photos, localData), REMOTE_LOAD_TIMEOUT_MS, "Photo initial sync save");
         }
       } catch (err) {
         console.warn("[OrkMap] Photo sync load failed, using local cache:", err);
@@ -315,6 +334,7 @@ export function useOmrScores(userEmail) {
       setLoadedFor("");
       let localData = [];
       try {
+        await withTimeout((async () => {
         const db = await getDB();
         const all = await db.getAll(OMR_STORE);
         const matching = all.filter((item) => belongsToUser(item, email));
@@ -327,17 +347,22 @@ export function useOmrScores(userEmail) {
           for (const score of owned) await tx.store.put(score);
           await tx.done;
         }
+        })(), LOCAL_LOAD_TIMEOUT_MS, "OMR IndexedDB load");
       } catch (err) {
         console.warn("[OrkMap] OMR scores load failed:", err);
       }
       try {
-        const remote = await loadRemote(SYNC_TYPES.omrScores);
+        const remote = await withTimeout(loadRemote(SYNC_TYPES.omrScores), REMOTE_LOAD_TIMEOUT_MS, "OMR sync load");
         if (remote.available && Array.isArray(remote.data)) {
           const remoteData = remote.data.map((item) => withOwner(item, email));
           setScores(remoteData);
-          await saveLocal(remoteData);
+          await withTimeout(saveLocal(remoteData), LOCAL_LOAD_TIMEOUT_MS, "OMR cache save");
         } else if (remote.available && localData.length > 0) {
-          await saveRemote(SYNC_TYPES.omrScores, localData.map((item) => withOwner(item, email)));
+          await withTimeout(
+            saveRemote(SYNC_TYPES.omrScores, localData.map((item) => withOwner(item, email))),
+            REMOTE_LOAD_TIMEOUT_MS,
+            "OMR initial sync save"
+          );
         }
       } catch (err) {
         console.warn("[OrkMap] OMR sync load failed, using local cache:", err);
