@@ -17,3 +17,12 @@
 - **+** Code fixe de secours `790762` supprimé de Vercel et du code serveur.
 - **+** Déploiement production vérifié : demande de code OK, ancien fallback refusé, email hors allowlist refusé, API IA protégée.
 - **+** Commit poussé : `004d13d fix: send login codes with gmail`.
+
+## 2026-06-14
+
+- **+** Projet Supabase séparé créé pour OrkMap : `orkmap`, ref `yxkktarojpnktsfrvjhb`, région `eu-west-1`.
+- **+** Migration appliquée : table `public.orkmap_user_data` pour synchroniser `concerts`, `photos`, `omr-scores` par email.
+- **+** API `/api/sync` ajoutée et protégée par session OrkMap ; IndexedDB reste le cache local/offline.
+- **+** Vercel production configuré avec `SUPABASE_URL` et `SUPABASE_SERVICE_ROLE_KEY` du projet OrkMap, pas Tarot.
+- **+** Déploiement production `dpl_8ThXtvXxp3gobgMyY3ezk1pN13MM` aliasé sur `https://orkmap.eiffelai.io`.
+- **+** Commit poussé : `e0162f2 Add account sync with dedicated OrkMap Supabase`.
