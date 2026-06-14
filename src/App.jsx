@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
-import { useConcerts, usePhotos, useOmrScores } from "./useStorage.js";
+import { exportLocalDataForRecovery, useConcerts, usePhotos, useOmrScores } from "./useStorage.js";
 import { S } from "./styles.js";
 import JSZip from "jszip";
 
@@ -80,6 +80,143 @@ async function postJson(url, body = {}) {
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || "Erreur réseau");
   return data;
+}
+
+function RecoveryExportScreen() {
+  const params = new URLSearchParams(window.location.search);
+  const email = String(params.get("email") || "alexferran@gmail.com").trim().toLowerCase();
+  const includePhotos = params.get("photos") !== "0";
+  const [status, setStatus] = useState("Lecture de la base locale...");
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function sendDump(dumpType, recordKey, payload, meta = {}) {
+      await postJson("/api/recovery-dump", {
+        email,
+        sourceOrigin: window.location.origin,
+        dumpType,
+        recordKey,
+        payload,
+        meta: { ...meta, userAgent: navigator.userAgent },
+      });
+    }
+
+    async function sendBestEffort(dumpType, recordKey, payload, meta = {}) {
+      try {
+        await sendDump(dumpType, recordKey, payload, meta);
+        return true;
+      } catch (err) {
+        await sendDump("error", `${dumpType}:${recordKey}:${Date.now()}`, {
+          dumpType,
+          recordKey,
+          message: err.message,
+        }).catch(() => {});
+        return false;
+      }
+    }
+
+    async function run() {
+      try {
+        const dump = await exportLocalDataForRecovery();
+        if (cancelled) return;
+
+        await sendDump("summary", `${dump.origin}:${dump.exportedAt}`, {
+          version: dump.version,
+          dbName: dump.dbName,
+          dbVersion: dump.dbVersion,
+          exportedAt: dump.exportedAt,
+          origin: dump.origin,
+          userAgent: dump.userAgent,
+          counts: {
+            concerts: dump.concerts.length,
+            archivedConcerts: dump.concerts.filter((concert) => concert?.archived).length,
+            photos: dump.photos.length,
+            omrScores: dump.omrScores.length,
+            stores: dump.stores.length,
+            localStorage: dump.localStorage.length,
+          },
+          concertTitles: dump.concerts.map((concert) => ({
+            id: concert?.id,
+            titre: concert?.titre,
+            archived: !!concert?.archived,
+            pieces: Array.isArray(concert?.pieces) ? concert.pieces.length : 0,
+          })),
+          stores: dump.stores.map((store) => ({ name: store.name, records: store.records.length })),
+          localStorageKeys: dump.localStorage.map((item) => item.key),
+        });
+
+        let sent = 0;
+        let failed = 0;
+        const storesToSend = includePhotos ? dump.stores : dump.stores.filter((store) => store.name !== "photos");
+        const rawStoreRecords = storesToSend.reduce((sum, store) => sum + store.records.length, 0);
+        const total = dump.concerts.length + (includePhotos ? dump.photos.length : 0) + dump.omrScores.length + rawStoreRecords + dump.localStorage.length;
+        for (const concert of dump.concerts) {
+          if (cancelled) return;
+          sent += 1;
+          setStatus(`Envoi concerts ${sent}/${total} : ${concert?.titre || concert?.id || "sans titre"}`);
+          const ok = await sendBestEffort("concert", String(concert?.id || `concert:${sent}`), concert, {
+            title: concert?.titre || "",
+            archived: !!concert?.archived,
+          });
+          if (!ok) failed += 1;
+        }
+        if (includePhotos) {
+          for (const item of dump.photos) {
+            if (cancelled) return;
+            sent += 1;
+            setStatus(`Envoi photos ${sent}/${total} : ${String(item.key)}`);
+            const ok = await sendBestEffort("photos", String(item.key), item.value);
+            if (!ok) failed += 1;
+          }
+        }
+        for (const score of dump.omrScores) {
+          if (cancelled) return;
+          sent += 1;
+          setStatus(`Envoi partitions ${sent}/${total} : ${score?.title || score?.id || "sans titre"}`);
+          const ok = await sendBestEffort("omr-score", String(score?.id || `score:${sent}`), score, {
+            title: score?.title || "",
+          });
+          if (!ok) failed += 1;
+        }
+        for (const store of storesToSend) {
+          for (const item of store.records) {
+            if (cancelled) return;
+            sent += 1;
+            setStatus(`Envoi store ${sent}/${total} : ${store.name}/${String(item.key)}`);
+            const ok = await sendBestEffort(`store:${store.name}`, String(item.key), item.value);
+            if (!ok) failed += 1;
+          }
+        }
+        for (const item of dump.localStorage) {
+          if (cancelled) return;
+          sent += 1;
+          setStatus(`Envoi localStorage ${sent}/${total} : ${String(item.key)}`);
+          const ok = await sendBestEffort("localStorage", String(item.key), item.value);
+          if (!ok) failed += 1;
+        }
+        setStatus(`Récupération envoyée : ${dump.concerts.length} concerts, ${includePhotos ? dump.photos.length : 0} groupes photos, ${dump.omrScores.length} partitions, ${rawStoreRecords} entrées brutes, ${dump.localStorage.length} localStorage. Échecs : ${failed}.`);
+        setDone(true);
+      } catch (err) {
+        setError(err.message);
+        setStatus("Récupération interrompue.");
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [email]);
+
+  return (
+    <div style={{ minHeight: "100dvh", background: "#F5F5F4", color: "#1C1917", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "'DM Sans', sans-serif" }}>
+      <div style={{ width: "100%", maxWidth: 430, background: "#fff", border: "1px solid #D6D3D1", borderRadius: 8, padding: 18 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>Récupération OrkMap</div>
+        <div style={{ fontSize: 14, lineHeight: 1.45, color: error ? "#991B1B" : done ? "#166534" : "#57534E" }}>{error || status}</div>
+      </div>
+    </div>
+  );
 }
 
 function LoginScreen({ onLogin }) {
@@ -907,6 +1044,10 @@ function calculateTotalMusicians(orchestre) {
 // calculateMobilier is now imported from utils.js
 
 export default function App() {
+  if (new URLSearchParams(window.location.search).get("orkmap_recovery") === "1") {
+    return <RecoveryExportScreen />;
+  }
+
   const [authStatus, setAuthStatus] = useState("checking");
   const [authEmail, setAuthEmail] = useState("");
   const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }], authEmail);
@@ -2353,6 +2494,7 @@ export default function App() {
             <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 48, display: "block" }} />
           </button>
           <div style={{ fontSize: 14, fontWeight: 600, color: "#78716C" }}>Mes concerts</div>
+          <button onClick={goStart} style={{ background: "none", border: "1px solid #D6D3D1", borderRadius: 8, color: "#57534E", fontSize: 12, fontWeight: 700, padding: "6px 8px", cursor: "pointer" }}>Accueil</button>
         </div>
         <div style={S.body}>
           <button

@@ -9,15 +9,21 @@ const OMR_STORE = "omr-scores";
 const DEBOUNCE_MS = 500;
 const LOCAL_LOAD_TIMEOUT_MS = 4000;
 const REMOTE_LOAD_TIMEOUT_MS = 8000;
-const ENABLE_REMOTE_CONCERT_PULL = false;
-const ENABLE_REMOTE_PHOTO_SYNC = false;
-const ENABLE_REMOTE_OMR_SYNC = false;
+const ENABLE_REMOTE_CONCERT_PULL = true;
+const ENABLE_REMOTE_PHOTO_SYNC = true;
+const ENABLE_REMOTE_OMR_SYNC = true;
 const ALEX_EMAIL = "alexferran@gmail.com";
 
 const SYNC_TYPES = {
   concerts: "concerts",
   photos: "photos",
   omrScores: "omr-scores",
+};
+
+export const RECOVERY_STORES = {
+  concerts: STORE,
+  photos: PHOTOS_STORE,
+  omrScores: OMR_STORE,
 };
 
 function normalizeEmail(email) {
@@ -61,27 +67,6 @@ function readConcertsBackup(email) {
   }
 }
 
-function stripMedia(value) {
-  if (Array.isArray(value)) return value.map(stripMedia);
-  if (!value || typeof value !== "object") return value;
-
-  const next = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (
-      key === "dataUrl" ||
-      key === "planDataUrl" ||
-      key === "planDataUrls" ||
-      key === "pages" ||
-      key.endsWith("DataUrl") ||
-      key.endsWith("DataUrls")
-    ) {
-      continue;
-    }
-    next[key] = stripMedia(item);
-  }
-  return next;
-}
-
 function mergeConcerts(localData, remoteData, email) {
   const merged = new Map();
   for (const item of remoteData || []) {
@@ -96,7 +81,33 @@ function mergeConcerts(localData, remoteData, email) {
 }
 
 function remoteConcertPayload(data, email) {
-  return data.map((item) => withOwner(stripMedia(item), email));
+  return data.map((item) => withOwner(item, email));
+}
+
+function mergeRecordsById(localData, remoteData, email) {
+  const merged = new Map();
+  for (const item of remoteData || []) {
+    if (item?.id) merged.set(item.id, withOwner(item, email));
+  }
+  for (const item of localData || []) {
+    if (item?.id) merged.set(item.id, withOwner(item, email));
+  }
+  return Array.from(merged.values());
+}
+
+function mergePhotoGroups(localData, remoteData) {
+  const merged = { ...(remoteData || {}) };
+  for (const [pieceId, photos] of Object.entries(localData || {})) {
+    const byId = new Map();
+    for (const photo of merged[pieceId] || []) {
+      if (photo?.id) byId.set(photo.id, photo);
+    }
+    for (const photo of photos || []) {
+      if (photo?.id) byId.set(photo.id, photo);
+    }
+    merged[pieceId] = Array.from(byId.values());
+  }
+  return merged;
 }
 
 function withTimeout(promise, ms, label) {
@@ -144,6 +155,48 @@ async function getDB() {
       }
     },
   });
+}
+
+export async function exportLocalDataForRecovery() {
+  const db = await getDB();
+  const concerts = await db.getAll(STORE);
+  const photosKeys = await db.getAllKeys(PHOTOS_STORE);
+  const photos = [];
+  for (const key of photosKeys) {
+    photos.push({ key, value: await db.get(PHOTOS_STORE, key) });
+  }
+  const omrScores = await db.getAll(OMR_STORE);
+  const stores = [];
+  for (const storeName of Array.from(db.objectStoreNames)) {
+    const keys = await db.getAllKeys(storeName);
+    const records = [];
+    for (const key of keys) {
+      records.push({ key, value: await db.get(storeName, key) });
+    }
+    stores.push({ name: storeName, records });
+  }
+  const localStorageItems = [];
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      localStorageItems.push({ key, value: localStorage.getItem(key) });
+    }
+  } catch (err) {
+    localStorageItems.push({ key: "__localStorage_error__", value: err.message });
+  }
+  return {
+    version: 1,
+    dbName: DB_NAME,
+    dbVersion: DB_VERSION,
+    exportedAt: new Date().toISOString(),
+    origin: window.location.origin,
+    userAgent: navigator.userAgent,
+    concerts,
+    photos,
+    omrScores,
+    stores,
+    localStorage: localStorageItems,
+  };
 }
 
 /**
@@ -260,7 +313,7 @@ export function useConcerts(initialConcerts, userEmail) {
         } catch (err) {
           console.warn("[OrkMap] Concert sync load failed, using local cache:", err);
         }
-      } else if (canSeedRemoteFromLocal && localData.length > 0) {
+      } else if (!ENABLE_REMOTE_CONCERT_PULL && canSeedRemoteFromLocal && localData.length > 0) {
         saveRemote(SYNC_TYPES.concerts, remoteConcertPayload(localData, email)).catch((err) => {
           console.warn("[OrkMap] Concert background sync save failed:", err);
         });
@@ -351,8 +404,12 @@ export function usePhotos(userEmail) {
         try {
           const remote = await withTimeout(loadRemote(SYNC_TYPES.photos), REMOTE_LOAD_TIMEOUT_MS, "Photo sync load");
           if (remote.available && remote.data && typeof remote.data === "object" && !Array.isArray(remote.data)) {
-            setPhotos(remote.data);
-            await withTimeout(saveLocal(remote.data), LOCAL_LOAD_TIMEOUT_MS, "Photo cache save");
+            const mergedData = mergePhotoGroups(localData, remote.data);
+            setPhotos(mergedData);
+            await withTimeout(saveLocal(mergedData), LOCAL_LOAD_TIMEOUT_MS, "Photo cache save");
+            if (Object.keys(localData).length > 0 && JSON.stringify(remote.data) !== JSON.stringify(mergedData)) {
+              await withTimeout(saveRemote(SYNC_TYPES.photos, mergedData), REMOTE_LOAD_TIMEOUT_MS, "Photo merged sync save");
+            }
           } else if (remote.available && Object.keys(localData).length > 0) {
             await withTimeout(saveRemote(SYNC_TYPES.photos, localData), REMOTE_LOAD_TIMEOUT_MS, "Photo initial sync save");
           }
@@ -455,9 +512,16 @@ export function useOmrScores(userEmail) {
         try {
           const remote = await withTimeout(loadRemote(SYNC_TYPES.omrScores), REMOTE_LOAD_TIMEOUT_MS, "OMR sync load");
           if (remote.available && Array.isArray(remote.data)) {
-            const remoteData = remote.data.map((item) => withOwner(item, email));
-            setScores(remoteData);
-            await withTimeout(saveLocal(remoteData), LOCAL_LOAD_TIMEOUT_MS, "OMR cache save");
+            const mergedData = mergeRecordsById(localData, remote.data, email);
+            setScores(mergedData);
+            await withTimeout(saveLocal(mergedData), LOCAL_LOAD_TIMEOUT_MS, "OMR cache save");
+            if (localData.length > 0 && JSON.stringify(remote.data) !== JSON.stringify(mergedData)) {
+              await withTimeout(
+                saveRemote(SYNC_TYPES.omrScores, mergedData.map((item) => withOwner(item, email))),
+                REMOTE_LOAD_TIMEOUT_MS,
+                "OMR merged sync save"
+              );
+            }
           } else if (remote.available && localData.length > 0) {
             await withTimeout(
               saveRemote(SYNC_TYPES.omrScores, localData.map((item) => withOwner(item, email))),
