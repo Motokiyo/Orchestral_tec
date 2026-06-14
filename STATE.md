@@ -11,6 +11,12 @@
 
 - (aucun — app web PWA, pas de contrainte Raspberry Pi)
 
+## Environnement
+
+- Racine actuelle du territoire/vault : `/Users/alexandre/Territoire/Galaad-Motokiyo-Ferran`.
+- Helper daily log : `/Users/alexandre/Territoire/Galaad-Motokiyo-Ferran/_scripts/log_event.sh`.
+- Ne plus utiliser l'ancien chemin `/Users/alexandre/Galaad-Motokiyo-Ferran`.
+
 ## Dernier déploiement
 
 - **Déclenché** : 2026-06-14 (déploiement Vercel CLI production)
