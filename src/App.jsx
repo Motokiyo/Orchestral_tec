@@ -2349,7 +2349,9 @@ export default function App() {
     return (
       <div style={S.shell}>
         <div style={{ ...S.header, padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 48 }} />
+          <button onClick={goStart} style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }} aria-label="Accueil">
+            <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 48, display: "block" }} />
+          </button>
           <div style={{ fontSize: 14, fontWeight: 600, color: "#78716C" }}>Mes concerts</div>
         </div>
         <div style={S.body}>
@@ -2459,6 +2461,7 @@ export default function App() {
               <div style={{ fontSize: 17, fontWeight: 600, color: "#1C1917", marginTop: 1 }}>{concert.titre}</div>
               {concert.chef && <div style={{ fontSize: 12, color: "#A8A29E" }}>Chef : {concert.chef} — {concert.date}</div>}
             </div>
+            <button onClick={goStart} style={{ background: "none", border: "1px solid #D6D3D1", borderRadius: 8, color: "#57534E", fontSize: 12, fontWeight: 700, padding: "6px 8px", cursor: "pointer" }}>Accueil</button>
             <button onClick={() => {
               const t = prompt("Titre :", concert.titre); if (!t) return;
               updateConcert(concert.id, c => ({ ...c,
