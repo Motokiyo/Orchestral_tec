@@ -28,6 +28,7 @@
 - **Supabase OrkMap séparé** : projet `orkmap`, ref `yxkktarojpnktsfrvjhb`, région `eu-west-1`.
 - **Table** : `public.orkmap_user_data`, clé `(email, type)`, types `concerts`, `photos`, `omr-scores`.
 - **Vercel production** : `SUPABASE_URL` et `SUPABASE_SERVICE_ROLE_KEY` configurés pour OrkMap, pas Tarot.
+- **Coffre partagé serveur** : credentials OrkMap poussés dans `Galaad-credentials` (`502d625 Add OrkMap Supabase credentials`).
 - **Cache local** : IndexedDB reste actif ; Supabase devient la source de synchro par compte.
 
 ## Problèmes connus
