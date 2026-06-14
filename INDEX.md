@@ -21,7 +21,7 @@
 ## Source — src/
 
 - `App.jsx` — composant principal, écrans, state, navigation
-- `useStorage.js` — hooks useConcerts() + usePhotos() + useOmrScores(), IndexedDB cache + synchro `/api/sync`
+- `useStorage.js` — hooks useConcerts() + usePhotos() + useOmrScores(), IndexedDB cache + synchro `/api/sync`; fusion non destructive local+serveur.
 - `pdfParser.js` — import PDF multi-format + décodeur Daniels + extractWithGemini + parseDcm (Radio France) + parseFreeForm
 - `data.js` — constantes (BARNIER, CATEGORIES, demo data)
 - `utils.js` — génération TXT, watermark photo, clipboard
@@ -35,6 +35,8 @@
 - `.env.local` — clé API Gemini (gitignored)
 - `vite.config.js` — config Vite
 - `supabase/migrations/001_orkmap_user_data.sql` — table de synchro compte OrkMap (`concerts`, `photos`, `omr-scores`)
+- `supabase/migrations/002_orkmap_recovery_dumps.sql` — dumps de récupération séparés, sans modifier les données actives
+- `supabase/migrations/003_orkmap_sync_history.sql` — historique obligatoire des sauvegardes Supabase OrkMap
 
 ## API serverless — api/
 
@@ -42,6 +44,7 @@
 - Auth familiale par code email : `request-code`, `verify-code`, session cookie signée
 - Envoi email production via Gmail OAuth ; pas de `AUTH_FALLBACK_CODE`
 - `sync.js` — API de synchro protégée par session, reliée au Supabase OrkMap séparé (`yxkktarojpnktsfrvjhb`)
+- `recovery-dump.js` — API de dump de récupération, table séparée `orkmap_recovery_dumps`
 
 ## Documentation
 
@@ -54,6 +57,9 @@
 
 - Ne pas stocker en useState éphémère → IndexedDB
 - Ne pas hardcoder clés API → .env.local
+- Ne jamais remplacer des données serveur par un payload local plus petit : fusion + historique + refus `409`.
+- Ne jamais retirer médias/plans des concerts envoyés au serveur sans alternative explicite.
+- Avant toute migration/synchro : export JSON complet + snapshot serveur + vérification sur deux appareils.
 - Décodeur Daniels : gérer tirets, slashs, format mixte, points traînants
 - Plans PDF AutoCAD : texte fragmenté, mal ordonné, parfois tourné 90°
 
