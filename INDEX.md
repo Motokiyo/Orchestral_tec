@@ -1,12 +1,12 @@
 # INDEX.md — Catalogue wiki OrkMap
 
 > Lis ceci EN PREMIER. Ouvre les fichiers SEULEMENT pour les sections liées a ta tâche.
-> Mis à jour : 13/06/2026
+> Mis à jour : 14/06/2026
 
 ## CLAUDE.md — instructions dev
 
 - App de gestion concerts/répertoire pour régisseurs d'orchestre
-- Stack : React 18 (Vite 6), IndexedDB via idb, pdfjs-dist v4, JSZip, Gemini 2.5 Flash Vision, Audiveris sidecar pour OMR
+- Stack : React 18 (Vite 6), IndexedDB via idb, Supabase OrkMap séparé pour synchro compte, pdfjs-dist v4, JSZip, Gemini 2.5 Flash Vision, Audiveris sidecar pour OMR
 - Deploy : Vercel, domaine `https://orkmap.eiffelai.io`, repo github.com/Motokiyo/Orchestral_tec
 - Règles : mobile-first (375px), pas de nouveau fichier .jsx sans accord, IndexedDB pour tout
 - Toujours `git pull` avant modification (travail multi-machine)
@@ -21,7 +21,7 @@
 ## Source — src/
 
 - `App.jsx` — composant principal, écrans, state, navigation
-- `useStorage.js` — hooks useConcerts() + usePhotos(), IndexedDB
+- `useStorage.js` — hooks useConcerts() + usePhotos() + useOmrScores(), IndexedDB cache + synchro `/api/sync`
 - `pdfParser.js` — import PDF multi-format + décodeur Daniels + extractWithGemini + parseDcm (Radio France) + parseFreeForm
 - `data.js` — constantes (BARNIER, CATEGORIES, demo data)
 - `utils.js` — génération TXT, watermark photo, clipboard
@@ -34,12 +34,14 @@
 - `package.json` — dépendances (react, idb, pdfjs-dist, jszip)
 - `.env.local` — clé API Gemini (gitignored)
 - `vite.config.js` — config Vite
+- `supabase/migrations/001_orkmap_user_data.sql` — table de synchro compte OrkMap (`concerts`, `photos`, `omr-scores`)
 
 ## API serverless — api/
 
 - Fonctions Vercel pour proxy API (extraction Gemini)
 - Auth familiale par code email : `request-code`, `verify-code`, session cookie signée
 - Envoi email production via Gmail OAuth ; pas de `AUTH_FALLBACK_CODE`
+- `sync.js` — API de synchro protégée par session, reliée au Supabase OrkMap séparé (`yxkktarojpnktsfrvjhb`)
 
 ## Documentation
 
