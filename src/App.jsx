@@ -977,6 +977,12 @@ export default function App() {
     }
   }, [authEmail, dbLoaded, photosLoaded, omrLoaded]);
 
+  useEffect(() => {
+    if (authEmail) {
+      setAuthStatus("authenticated");
+    }
+  }, [authEmail]);
+
   // ── Navigation ──
   function goStart() { setScreen("start"); setConcertId(null); setPieceId(null); setPercuId(null); setOmrScoreId(null); }
   function goConcerts() { setScreen("concerts"); setConcertId(null); setPieceId(null); setPercuId(null); }
@@ -1771,17 +1777,6 @@ export default function App() {
 
   if (authStatus !== "authenticated") {
     return <LoginScreen onLogin={(email) => { setAuthStatus("checking"); setAuthEmail(email); }} />;
-  }
-
-  if (!dbLoaded) {
-    return (
-      <div style={{ ...S.shell, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ textAlign: "center" }}>
-          <img src="/orkmap-logo.png" alt="OrkMap" style={{ height: 80, marginBottom: 16 }} />
-          <div style={{ fontSize: 14, color: "#78716C" }}>Chargement...</div>
-        </div>
-      </div>
-    );
   }
 
   // ZONE SELECT (before standalone camera)
