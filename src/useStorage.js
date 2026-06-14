@@ -9,6 +9,7 @@ const OMR_STORE = "omr-scores";
 const DEBOUNCE_MS = 500;
 const LOCAL_LOAD_TIMEOUT_MS = 4000;
 const REMOTE_LOAD_TIMEOUT_MS = 8000;
+const ENABLE_REMOTE_CONCERT_PULL = false;
 const ENABLE_REMOTE_PHOTO_SYNC = false;
 const ENABLE_REMOTE_OMR_SYNC = false;
 const ALEX_EMAIL = "alexferran@gmail.com";
@@ -238,25 +239,31 @@ export function useConcerts(initialConcerts, userEmail) {
           }
         }
       }
-      try {
-        const remote = await withTimeout(loadRemote(SYNC_TYPES.concerts), REMOTE_LOAD_TIMEOUT_MS, "Concert sync load");
-        if (remote.available && Array.isArray(remote.data)) {
-          const mergedData = mergeConcerts(localData, remote.data, email);
-          setConcerts(mergedData);
-          writeConcertsBackup(email, mergedData);
-          await withTimeout(saveLocal(mergedData), LOCAL_LOAD_TIMEOUT_MS, "Concert cache save");
-          if (canSeedRemoteFromLocal && JSON.stringify(remote.data) !== JSON.stringify(remoteConcertPayload(mergedData, email))) {
-            await withTimeout(saveRemote(SYNC_TYPES.concerts, remoteConcertPayload(mergedData, email)), REMOTE_LOAD_TIMEOUT_MS, "Concert merged sync save");
+      if (ENABLE_REMOTE_CONCERT_PULL) {
+        try {
+          const remote = await withTimeout(loadRemote(SYNC_TYPES.concerts), REMOTE_LOAD_TIMEOUT_MS, "Concert sync load");
+          if (remote.available && Array.isArray(remote.data)) {
+            const mergedData = mergeConcerts(localData, remote.data, email);
+            setConcerts(mergedData);
+            writeConcertsBackup(email, mergedData);
+            await withTimeout(saveLocal(mergedData), LOCAL_LOAD_TIMEOUT_MS, "Concert cache save");
+            if (canSeedRemoteFromLocal && JSON.stringify(remote.data) !== JSON.stringify(remoteConcertPayload(mergedData, email))) {
+              await withTimeout(saveRemote(SYNC_TYPES.concerts, remoteConcertPayload(mergedData, email)), REMOTE_LOAD_TIMEOUT_MS, "Concert merged sync save");
+            }
+          } else if (remote.available && canSeedRemoteFromLocal && localData.length > 0) {
+            await withTimeout(
+              saveRemote(SYNC_TYPES.concerts, remoteConcertPayload(localData, email)),
+              REMOTE_LOAD_TIMEOUT_MS,
+              "Concert initial sync save"
+            );
           }
-        } else if (remote.available && canSeedRemoteFromLocal && localData.length > 0) {
-          await withTimeout(
-            saveRemote(SYNC_TYPES.concerts, remoteConcertPayload(localData, email)),
-            REMOTE_LOAD_TIMEOUT_MS,
-            "Concert initial sync save"
-          );
+        } catch (err) {
+          console.warn("[OrkMap] Concert sync load failed, using local cache:", err);
         }
-      } catch (err) {
-        console.warn("[OrkMap] Concert sync load failed, using local cache:", err);
+      } else if (canSeedRemoteFromLocal && localData.length > 0) {
+        saveRemote(SYNC_TYPES.concerts, remoteConcertPayload(localData, email)).catch((err) => {
+          console.warn("[OrkMap] Concert background sync save failed:", err);
+        });
       }
       setLoaded(true);
       setLoadedFor(email);
