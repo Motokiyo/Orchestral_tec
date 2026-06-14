@@ -9,6 +9,12 @@ const OMR_STORE = "omr-scores";
 const DEBOUNCE_MS = 500;
 const ALEX_EMAIL = "alexferran@gmail.com";
 
+const SYNC_TYPES = {
+  concerts: "concerts",
+  photos: "photos",
+  omrScores: "omr-scores",
+};
+
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
@@ -23,6 +29,28 @@ function withOwner(item, email) {
 
 function photosKey(email) {
   return `all-photos:${email}`;
+}
+
+async function loadRemote(type) {
+  const resp = await fetch(`/api/sync?type=${encodeURIComponent(type)}`, {
+    credentials: "include",
+  });
+  if (resp.status === 503) return { available: false, data: null };
+  if (!resp.ok) throw new Error(`Remote load failed: ${resp.status}`);
+  const payload = await resp.json();
+  return { available: true, data: payload.data };
+}
+
+async function saveRemote(type, data) {
+  const resp = await fetch("/api/sync", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, data }),
+  });
+  if (resp.status === 503) return false;
+  if (!resp.ok) throw new Error(`Remote save failed: ${resp.status}`);
+  return true;
 }
 
 async function getDB() {
@@ -53,7 +81,23 @@ export function useConcerts(initialConcerts, userEmail) {
   const saveTimer = useRef(null);
   const email = normalizeEmail(userEmail);
 
-  // Load from IndexedDB on mount
+  const saveLocal = useCallback(async (data) => {
+    if (!email) return;
+    const db = await getDB();
+    const tx = db.transaction(STORE, "readwrite");
+    const existingKeys = await tx.store.getAllKeys();
+    const newIds = new Set(data.map((c) => c.id));
+    for (const key of existingKeys) {
+      const existing = await tx.store.get(key);
+      if (belongsToUser(existing, email) && !newIds.has(key)) await tx.store.delete(key);
+    }
+    for (const c of data) {
+      await tx.store.put(withOwner(c, email));
+    }
+    await tx.done;
+  }, [email]);
+
+  // Load from IndexedDB first, then prefer the account sync when available.
   useEffect(() => {
     (async () => {
       if (!email) {
@@ -64,6 +108,8 @@ export function useConcerts(initialConcerts, userEmail) {
       }
       setLoaded(false);
       setLoadedFor("");
+      let localData = [];
+      let canSeedRemoteFromLocal = false;
       try {
         const db = await getDB();
         const all = await db.getAll(STORE);
@@ -71,57 +117,62 @@ export function useConcerts(initialConcerts, userEmail) {
         const needsMigration = email === ALEX_EMAIL && matching.some((item) => !item.ownerEmail);
         const owned = matching.map((item) => withOwner(item, email));
         if (owned.length > 0) {
-          setConcerts(owned);
+          localData = owned;
+          canSeedRemoteFromLocal = true;
           if (needsMigration) {
             const tx = db.transaction(STORE, "readwrite");
             for (const c of owned) await tx.store.put(c);
             await tx.done;
           }
         } else if (email === ALEX_EMAIL && initialConcerts && initialConcerts.length > 0) {
-          // First launch: seed with demo data
           const seeded = initialConcerts.map((item) => withOwner(item, email));
-          setConcerts(seeded);
-          // Save demo data to DB
+          localData = seeded;
           const tx = db.transaction(STORE, "readwrite");
           for (const c of seeded) {
             await tx.store.put(c);
           }
           await tx.done;
-        } else {
-          setConcerts([]);
         }
+        setConcerts(localData);
       } catch (err) {
         console.warn("[OrkMap] IndexedDB load failed, using memory:", err);
-        if (email === ALEX_EMAIL && initialConcerts) setConcerts(initialConcerts.map((item) => withOwner(item, email)));
+        if (email === ALEX_EMAIL && initialConcerts) {
+          localData = initialConcerts.map((item) => withOwner(item, email));
+          setConcerts(localData);
+        }
+      }
+      try {
+        const remote = await loadRemote(SYNC_TYPES.concerts);
+        if (remote.available && Array.isArray(remote.data)) {
+          const remoteData = remote.data.map((item) => withOwner(item, email));
+          setConcerts(remoteData);
+          await saveLocal(remoteData);
+        } else if (remote.available && canSeedRemoteFromLocal && localData.length > 0) {
+          await saveRemote(SYNC_TYPES.concerts, localData.map((item) => withOwner(item, email)));
+        }
+      } catch (err) {
+        console.warn("[OrkMap] Concert sync load failed, using local cache:", err);
       }
       setLoaded(true);
       setLoadedFor(email);
     })();
-  }, [email]);
+  }, [email, saveLocal]);
 
-  // Auto-save to IndexedDB (debounced)
+  // Auto-save to IndexedDB + account sync (debounced)
   const save = useCallback(async (data) => {
     if (!email) return;
+    const owned = data.map((item) => withOwner(item, email));
     try {
-      const db = await getDB();
-      const tx = db.transaction(STORE, "readwrite");
-      // Get existing IDs in DB
-      const existingKeys = await tx.store.getAllKeys();
-      const newIds = new Set(data.map((c) => c.id));
-      // Delete removed concerts
-      for (const key of existingKeys) {
-        const existing = await tx.store.get(key);
-        if (belongsToUser(existing, email) && !newIds.has(key)) await tx.store.delete(key);
-      }
-      // Put all current concerts
-      for (const c of data) {
-        await tx.store.put(withOwner(c, email));
-      }
-      await tx.done;
+      await saveLocal(owned);
     } catch (err) {
       console.warn("[OrkMap] IndexedDB save failed:", err);
     }
-  }, [email]);
+    try {
+      await saveRemote(SYNC_TYPES.concerts, owned);
+    } catch (err) {
+      console.warn("[OrkMap] Concert sync save failed:", err);
+    }
+  }, [email, saveLocal]);
 
   // Wrap setConcerts to trigger debounced save
   const setConcertsAndSave = useCallback((fn) => {
@@ -149,7 +200,13 @@ export function usePhotos(userEmail) {
   const saveTimer = useRef(null);
   const email = normalizeEmail(userEmail);
 
-  // Load from IndexedDB on mount
+  const saveLocal = useCallback(async (data) => {
+    if (!email) return;
+    const db = await getDB();
+    await db.put(PHOTOS_STORE, data, photosKey(email));
+  }, [email]);
+
+  // Load from IndexedDB first, then prefer the account sync when available.
   useEffect(() => {
     (async () => {
       if (!email) {
@@ -160,6 +217,7 @@ export function usePhotos(userEmail) {
       }
       setLoaded(false);
       setLoadedFor("");
+      let localData = {};
       try {
         const db = await getDB();
         let stored = await db.get(PHOTOS_STORE, photosKey(email));
@@ -168,28 +226,42 @@ export function usePhotos(userEmail) {
           if (stored) await db.put(PHOTOS_STORE, stored, photosKey(email));
         }
         if (stored) {
-          setPhotos(stored);
-        } else {
-          setPhotos({});
+          localData = stored;
         }
+        setPhotos(localData);
       } catch (err) {
         console.warn("[OrkMap] Photos load failed:", err);
+      }
+      try {
+        const remote = await loadRemote(SYNC_TYPES.photos);
+        if (remote.available && remote.data && typeof remote.data === "object" && !Array.isArray(remote.data)) {
+          setPhotos(remote.data);
+          await saveLocal(remote.data);
+        } else if (remote.available && Object.keys(localData).length > 0) {
+          await saveRemote(SYNC_TYPES.photos, localData);
+        }
+      } catch (err) {
+        console.warn("[OrkMap] Photo sync load failed, using local cache:", err);
       }
       setLoaded(true);
       setLoadedFor(email);
     })();
-  }, [email]);
+  }, [email, saveLocal]);
 
-  // Auto-save to IndexedDB (debounced)
+  // Auto-save to IndexedDB + account sync (debounced)
   const save = useCallback(async (data) => {
     if (!email) return;
     try {
-      const db = await getDB();
-      await db.put(PHOTOS_STORE, data, photosKey(email));
+      await saveLocal(data);
     } catch (err) {
       console.warn("[OrkMap] Photos save failed:", err);
     }
-  }, [email]);
+    try {
+      await saveRemote(SYNC_TYPES.photos, data);
+    } catch (err) {
+      console.warn("[OrkMap] Photo sync save failed:", err);
+    }
+  }, [email, saveLocal]);
 
   // Wrap setPhotos to trigger debounced save
   const setPhotosAndSave = useCallback((fn) => {
@@ -215,6 +287,22 @@ export function useOmrScores(userEmail) {
   const saveTimer = useRef(null);
   const email = normalizeEmail(userEmail);
 
+  const saveLocal = useCallback(async (data) => {
+    if (!email) return;
+    const db = await getDB();
+    const tx = db.transaction(OMR_STORE, "readwrite");
+    const existingKeys = await tx.store.getAllKeys();
+    const newIds = new Set(data.map((score) => score.id));
+    for (const key of existingKeys) {
+      const existing = await tx.store.get(key);
+      if (belongsToUser(existing, email) && !newIds.has(key)) await tx.store.delete(key);
+    }
+    for (const score of data) {
+      await tx.store.put(withOwner(score, email));
+    }
+    await tx.done;
+  }, [email]);
+
   useEffect(() => {
     (async () => {
       if (!email) {
@@ -225,13 +313,15 @@ export function useOmrScores(userEmail) {
       }
       setLoaded(false);
       setLoadedFor("");
+      let localData = [];
       try {
         const db = await getDB();
         const all = await db.getAll(OMR_STORE);
         const matching = all.filter((item) => belongsToUser(item, email));
         const needsMigration = email === ALEX_EMAIL && matching.some((item) => !item.ownerEmail);
         const owned = matching.map((item) => withOwner(item, email));
-        setScores(owned);
+        localData = owned;
+        setScores(localData);
         if (needsMigration) {
           const tx = db.transaction(OMR_STORE, "readwrite");
           for (const score of owned) await tx.store.put(score);
@@ -240,30 +330,37 @@ export function useOmrScores(userEmail) {
       } catch (err) {
         console.warn("[OrkMap] OMR scores load failed:", err);
       }
+      try {
+        const remote = await loadRemote(SYNC_TYPES.omrScores);
+        if (remote.available && Array.isArray(remote.data)) {
+          const remoteData = remote.data.map((item) => withOwner(item, email));
+          setScores(remoteData);
+          await saveLocal(remoteData);
+        } else if (remote.available && localData.length > 0) {
+          await saveRemote(SYNC_TYPES.omrScores, localData.map((item) => withOwner(item, email)));
+        }
+      } catch (err) {
+        console.warn("[OrkMap] OMR sync load failed, using local cache:", err);
+      }
       setLoaded(true);
       setLoadedFor(email);
     })();
-  }, [email]);
+  }, [email, saveLocal]);
 
   const save = useCallback(async (data) => {
     if (!email) return;
+    const owned = data.map((item) => withOwner(item, email));
     try {
-      const db = await getDB();
-      const tx = db.transaction(OMR_STORE, "readwrite");
-      const existingKeys = await tx.store.getAllKeys();
-      const newIds = new Set(data.map((score) => score.id));
-      for (const key of existingKeys) {
-        const existing = await tx.store.get(key);
-        if (belongsToUser(existing, email) && !newIds.has(key)) await tx.store.delete(key);
-      }
-      for (const score of data) {
-        await tx.store.put(withOwner(score, email));
-      }
-      await tx.done;
+      await saveLocal(owned);
     } catch (err) {
       console.warn("[OrkMap] OMR scores save failed:", err);
     }
-  }, [email]);
+    try {
+      await saveRemote(SYNC_TYPES.omrScores, owned);
+    } catch (err) {
+      console.warn("[OrkMap] OMR sync save failed:", err);
+    }
+  }, [email, saveLocal]);
 
   const setScoresAndSave = useCallback((fn) => {
     setScores((prev) => {

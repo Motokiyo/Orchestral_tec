@@ -6,6 +6,8 @@
 - 2026-06-13 — L'OMR doit utiliser un vrai moteur OMR (Audiveris côté sidecar/local) et non Gemini pour lire les partitions.
 - 2026-06-13 — Authentification familiale par code email, limitée pour l'instant à `alexferran@gmail.com`, `larminaux.claire@gmail.com`, `galileo@leparede.org`.
 - 2026-06-13 — Envoi des codes de connexion via Gmail OAuth en production Vercel. Le code fixe `790762` et `AUTH_FALLBACK_CODE` sont supprimés.
+- 2026-06-14 — Les données OrkMap synchronisées par compte utilisent un projet Supabase séparé (`orkmap`, ref `yxkktarojpnktsfrvjhb`), distinct de Supabase TarotMarseille.
+- 2026-06-14 — IndexedDB reste le cache local/offline ; Supabase OrkMap devient la couche de synchronisation pour `concerts`, `photos`, `omr-scores`.
 - 2026-05-24 — Déploiement Vercel via auto-deploy GitHub (push sur main). Validation : git commit vide (`--allow-empty`) déclenche bien le build. Pas besoin de token Vercel CLI sur le serveur.
 
 ## ABANDONNÉ
