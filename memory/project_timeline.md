@@ -27,3 +27,8 @@
 - **+** Déploiement production `dpl_8ThXtvXxp3gobgMyY3ezk1pN13MM` aliasé sur `https://orkmap.eiffelai.io`.
 - **+** Commit poussé : `e0162f2 Add account sync with dedicated OrkMap Supabase`.
 - **+** Credentials OrkMap poussés dans le coffre partagé serveur `Galaad-credentials` : commit `502d625 Add OrkMap Supabase credentials`.
+- **+** Synchro OrkMap durcie : `useStorage.js` réactive concerts/photos/OMR avec fusion locale+serveur, payload concerts complet, et `/api/sync` refuse les sauvegardes destructives (`409`).
+- **+** Historique serveur ajouté : table `orkmap_sync_history` pour conserver les sauvegardes entrantes et l'état précédent.
+- **+** Récupération séparée ajoutée : endpoint `/api/recovery-dump` + table `orkmap_recovery_dumps`, sans interaction avec `orkmap_user_data`.
+- **+** Navigation ajoutée : bouton `Accueil` explicite dans `Mes concerts`; OrkScore revient au menu par la flèche.
+- **+** Déploiement production `dpl_Hfr5F437joqJ9grvDicLDUgB1NM2`, commit poussé `101659d Harden OrkMap sync persistence`.
