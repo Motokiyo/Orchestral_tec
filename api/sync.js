@@ -1,6 +1,7 @@
 import { noStore, requireSession } from "./auth-utils.js";
 
 const TABLE = "orkmap_user_data";
+const HISTORY_TABLE = "orkmap_sync_history";
 const TYPES = new Set(["concerts", "photos", "omr-scores"]);
 
 export const config = {
@@ -52,6 +53,59 @@ function parseType(value) {
   return TYPES.has(type) ? type : "";
 }
 
+function idsFromArray(value) {
+  if (!Array.isArray(value)) return new Set();
+  return new Set(value.map((item) => item?.id).filter(Boolean));
+}
+
+function objectKeys(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return new Set();
+  return new Set(Object.keys(value));
+}
+
+function missingFromIncoming(existingKeys, incomingKeys) {
+  return Array.from(existingKeys).filter((key) => !incomingKeys.has(key));
+}
+
+function validateNonDestructiveSync(type, existingData, incomingData) {
+  if (!existingData) return;
+
+  if (type === "concerts" || type === "omr-scores") {
+    const existingIds = idsFromArray(existingData);
+    const incomingIds = idsFromArray(incomingData);
+    const missing = missingFromIncoming(existingIds, incomingIds);
+    if (missing.length > 0) {
+      const error = new Error(`Refusing destructive ${type} sync; missing ids: ${missing.slice(0, 20).join(", ")}`);
+      error.status = 409;
+      throw error;
+    }
+  }
+
+  if (type === "photos") {
+    const existingKeys = objectKeys(existingData);
+    const incomingKeys = objectKeys(incomingData);
+    const missing = missingFromIncoming(existingKeys, incomingKeys);
+    if (missing.length > 0) {
+      const error = new Error(`Refusing destructive photo sync; missing groups: ${missing.slice(0, 20).join(", ")}`);
+      error.status = 409;
+      throw error;
+    }
+  }
+}
+
+async function writeHistory(email, type, data, source) {
+  await supabaseFetch(HISTORY_TABLE, {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      email,
+      type,
+      source,
+      data,
+    }),
+  });
+}
+
 export default async function handler(req, res) {
   noStore(res);
   const session = requireSession(req, res);
@@ -82,13 +136,22 @@ export default async function handler(req, res) {
     if (!type) return res.status(400).json({ error: "Invalid sync type" });
 
     try {
+      const existingRows = await supabaseFetch(
+        `${TABLE}?email=eq.${encodeURIComponent(session.email)}&type=eq.${encodeURIComponent(type)}&select=data,updated_at&limit=1`
+      );
+      const existingRow = Array.isArray(existingRows) ? existingRows[0] : null;
+      const incomingData = req.body?.data ?? null;
+      validateNonDestructiveSync(type, existingRow?.data ?? null, incomingData);
+      await writeHistory(session.email, type, incomingData, "incoming");
+      if (existingRow) await writeHistory(session.email, type, existingRow.data ?? null, "previous");
+
       const rows = await supabaseFetch(`${TABLE}?on_conflict=email,type`, {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates,return=representation" },
         body: JSON.stringify({
           email: session.email,
           type,
-          data: req.body?.data ?? null,
+          data: incomingData,
           updated_at: new Date().toISOString(),
         }),
       });
