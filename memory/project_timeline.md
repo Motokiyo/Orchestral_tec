@@ -26,3 +26,4 @@
 - **+** Vercel production configuré avec `SUPABASE_URL` et `SUPABASE_SERVICE_ROLE_KEY` du projet OrkMap, pas Tarot.
 - **+** Déploiement production `dpl_8ThXtvXxp3gobgMyY3ezk1pN13MM` aliasé sur `https://orkmap.eiffelai.io`.
 - **+** Commit poussé : `e0162f2 Add account sync with dedicated OrkMap Supabase`.
+- **+** Credentials OrkMap poussés dans le coffre partagé serveur `Galaad-credentials` : commit `502d625 Add OrkMap Supabase credentials`.
