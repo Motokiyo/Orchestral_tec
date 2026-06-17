@@ -59,7 +59,15 @@ c'est ce qui a donné l'illusion "c'est OK".
 Principe directeur, tiré de TA bible (`docs/EXTRACTION_IA_REFERENCE.md`) :
 **le type de document décide du chemin. Un plan/dessin/photo se lit avec l'IA Vision. Une liste texte propre se lit avec le parser local.** On arrête de mélanger les deux.
 
-### Étape 2.1 — Remplacer le moteur IA : Google → DeepSeek V4 Flash
+### MOTEUR IA VÉRIFIÉ (test réel du 17/06/2026)
+
+- **DeepSeek V4 (flash/pro) = AVEUGLE via l'API officielle** : `api.deepseek.com` (standard ET /beta) refuse toute image (`unknown variant image_url, expected text`). Les modèles existent sur la clé mais sont text-only ici. Les articles « V4 multimodal » étaient faux pour l'API directe. → DeepSeek ne peut PAS lire les plans.
+- **xAI Grok = OK, retenu.** `grok-4.20-0309-non-reasoning` (aussi dispo : `grok-4.3`), endpoint `https://api.x.ai/v1/chat/completions`, format OpenAI `image_url` (objet `{url:"data:image/jpeg;base64,..."}`), clé `XAI_API_KEY` (coffre `api-keys/xai.env`). Non-Google.
+- **Testé sur les 7 documents réels d'Alexandre** : cartouche + effectif lus quasi parfaitement (titre/lieu/date/ligne effectif verbatim, cordes exactes), y compris AutoCAD, fiches de prod multi-pages, consort baroque (noms des musiciens).
+- **2 réglages de prompt à figer** : (1) « T » seul dans le bloc percussions = 1 timbalier (pas percussionniste) ; (2) garder le décodage chiffré strictement aligné sur la ligne brute du cartouche.
+- À faire pour la prod : ajouter `XAI_API_KEY` aux variables d'env Vercel (déposer aussi dans le coffre, déjà présent).
+
+### Étape 2.1 — Remplacer le moteur IA : Google → xAI Grok (vision)
 - Endpoint serveur `api/extract-ai.js` réécrit pour appeler :
   - Base URL : `https://api.deepseek.com`
   - Endpoint : `/chat/completions` (format OpenAI)

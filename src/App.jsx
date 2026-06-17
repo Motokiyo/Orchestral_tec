@@ -1794,25 +1794,29 @@ export default function App() {
   }
 
   async function enrichWithAi(localData) {
-    const score = [localData.titre, localData.compositeur, localData.effectif, localData.chef]
-      .filter(Boolean).length + (localData.percus.length > 0 ? 1 : 0);
-    if (score >= 3) return localData;
     const image = localData.planDataUrls?.[0] || localData.planDataUrl;
+    // No image (e.g. plain text / TXT list) -> trust the local text parser.
     if (!image) return localData;
+    // Plans / photos: the AI vision reads the cartouche and IS the source of
+    // truth; local parsing only fills gaps. The old local text parser fabricated
+    // effectifs from plan numbers (seat/dimension digits), which made AutoCAD
+    // plans come out "tout faux" and even suppressed the AI. AI now wins.
     try {
       const aiData = await extractWithGemini(image, "concert");
+      const aiEffectif = aiData.effectif || "";
+      const effectifDetail = aiEffectif ? decodeEffectif(aiEffectif) : localData.effectifDetail;
       return {
         ...localData,
-        titre: localData.titre || aiData.titre || "",
-        compositeur: localData.compositeur || aiData.compositeur || "",
-        duree: localData.duree || aiData.duree || "",
-        salle: localData.salle || aiData.salle || "",
-        chef: localData.chef || aiData.chef || "",
-        date: localData.date || aiData.date || "",
-        effectif: localData.effectif || aiData.effectif || "",
-        effectifDetail: localData.effectifDetail || aiData.effectifDetail || null,
-        orchestre: localData.orchestre || aiData.orchestre || null,
-        percus: localData.percus.length > 0 ? localData.percus : (aiData.percus || []),
+        titre: aiData.titre || localData.titre || "",
+        compositeur: aiData.compositeur || localData.compositeur || "",
+        duree: aiData.duree || localData.duree || "",
+        salle: aiData.salle || localData.salle || "",
+        chef: aiData.chef || localData.chef || "",
+        date: aiData.date || localData.date || "",
+        effectif: aiEffectif || localData.effectif || "",
+        effectifDetail: effectifDetail || null,
+        orchestre: aiData.orchestre || localData.orchestre || null,
+        percus: (aiData.percus && aiData.percus.length > 0) ? aiData.percus : localData.percus,
       };
     } catch (err) {
       console.warn("[OrkMap] AI enrichment failed:", err.message);
