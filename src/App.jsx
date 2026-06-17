@@ -1187,6 +1187,19 @@ export default function App() {
   function goPiece(id) { setPieceId(id); setPercuId(null); setScreen("piece"); }
   function goTxt(id) { if (id) setPieceId(id); setScreen("txt"); }
   function goGallery(id) { if (id !== undefined) setPieceId(id); setScreen("gallery"); }
+
+  // Replace the local concert list with the authoritative server version.
+  // Used to pull in server-side corrections that local-priority merge would mask.
+  // Photos live in a separate store and are NOT affected.
+  async function reloadConcertsFromAccount() {
+    if (!confirm("Recharger les concerts depuis ton compte ?\nLes versions locales seront remplacées par celles du serveur. Tes photos ne sont pas touchées.")) return;
+    try {
+      const r = await fetch("/api/sync?type=concerts", { credentials: "include" });
+      const d = await r.json();
+      if (Array.isArray(d.data)) { setConcerts(() => d.data); alert("Concerts rechargés depuis ton compte."); }
+      else alert("Aucune donnée de concert sur le compte.");
+    } catch (e) { alert("Échec du rechargement : " + e.message); }
+  }
   function goOmr(id = null) { setOmrScoreId(id); setScreen("omr"); }
 
   // ── Concert mutations ──
@@ -2603,6 +2616,8 @@ export default function App() {
               </select>
             </div>
           )}
+
+          <button onClick={reloadConcertsFromAccount} style={{ ...S.btnSecondary, fontSize: 12, marginBottom: 12, padding: "8px 12px" }}>↻ Recharger depuis le compte</button>
 
           {shownConcerts.length === 0 && (
             <div style={{ textAlign: "center", padding: "20px 0", color: "#A8A29E", fontSize: 14 }}>Aucun concert trouvé</div>
