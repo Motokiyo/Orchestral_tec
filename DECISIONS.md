@@ -2,6 +2,12 @@
 
 ## VALIDÉ
 
+- 2026-06-17 — **Moteur de reconnaissance de documents = xAI Grok** (`grok-4.20-0309-non-reasoning`, `api.x.ai/v1/chat/completions`, format OpenAI image_url, clé dédiée `XAI_API_KEY`). Remplace Google Gemini. Vérifié sur 7+ plans réels.
+- 2026-06-17 — `/api/extract-ai` envoie la **légende visuelle d'Alexandre** embarquée (`api/nomenclature-legend.js`) en image 1 + **toutes les pages** du document. Côté client, l'IA est **autorité pour les plans/photos** ; le parser texte local ne sert que pour les listes texte propres (fin de la fabrication d'effectif à partir des chiffres du plan).
+- 2026-06-17 — **Suppression chirurgicale** : `saveLocal`/`saveRemote` (concerts + omr-scores) ne suppriment QUE les ids explicitement retirés (`removedIds`, calculés prev→next), jamais « tout ce qui est absent ». Le garde-fou serveur `/api/sync` autorise exactement ces suppressions. Empêche l'effacement accidentel (cause de l'incident du jour).
+- 2026-06-17 — **Photos cloisonnées par concert** : dé-duplication des ids de pièces au chargement (1er concert garde ses ids), et galerie/compteur photos scopés au concert courant (plus de `Object.values(photos).flat()`).
+- 2026-06-17 — **sansChef** détecté par l'IA et propagé jusqu'au mobilier (pas de chef → pas de podium/pupitre/chaise haute). Ensemble homogène (consort) → effectif déduit du nombre de musiciens + instrument.
+- 2026-06-17 — Tri des concerts par date (récent/ancien/manuel, parseur de dates FR) + champ de recherche. Bouton « Recharger depuis le compte » pour faire primer la version serveur sur un local périmé.
 - 2026-06-13 — OrkMap est l'application Eiffel unique accessible sur `https://orkmap.eiffelai.io`, avec deux accès applicatifs : concerts/régie et scores/OMR.
 - 2026-06-13 — L'OMR doit utiliser un vrai moteur OMR (Audiveris côté sidecar/local) et non Gemini pour lire les partitions.
 - 2026-06-13 — Authentification familiale par code email, limitée pour l'instant à `alexferran@gmail.com`, `larminaux.claire@gmail.com`, `galileo@leparede.org`.
@@ -14,6 +20,8 @@
 
 ## ABANDONNÉ
 
+- 2026-06-17 — **DeepSeek V4 pour la vision** : l'API officielle `api.deepseek.com` (standard ET `/beta`) refuse toute image (`unknown variant image_url`) → text-only en pratique, incapable de lire un plan. Écarté au profit de xAI Grok.
+- 2026-06-17 — **Google Gemini** comme moteur de reconnaissance (remplacé par xAI Grok ; `GOOGLE_API_KEY` plus utilisé par `/api/extract-ai`).
 - 2026-06-13 — Abandon de l'import/migration visible "Importer mes données Vercel" dans l'interface utilisateur.
 
 ## Notes

@@ -32,3 +32,16 @@
 - **+** Récupération séparée ajoutée : endpoint `/api/recovery-dump` + table `orkmap_recovery_dumps`, sans interaction avec `orkmap_user_data`.
 - **+** Navigation ajoutée : bouton `Accueil` explicite dans `Mes concerts`; OrkScore revient au menu par la flèche.
 - **+** Déploiement production `dpl_Hfr5F437joqJ9grvDicLDUgB1NM2`, commit poussé `101659d Harden OrkMap sync persistence`.
+
+## 2026-06-17
+
+- **+** Anti-perte de données : suppression chirurgicale (concerts + omr-scores), local ET serveur ne suppriment que les ids explicitement retirés (`removedIds`). Tests 9/9.
+- **-** Incident : ~3 mois de concerts corrigés perdus (jonction email a écrasé le local Brave/Fairphone par le démo, jamais synchronisés intacts ; aucun backup). Irrécupérables (Mac, serveur, mémoire Brave via adb/CDP vérifiés = démo seulement).
+- **+** Reconnaissance de documents basculée Google Gemini → **xAI Grok** (`grok-4.20-0309-non-reasoning`), clé dédiée `XAI_API_KEY` (Vercel + coffre).
+- **-** DeepSeek V4 écarté pour la vision : API officielle refuse toute image (text-only).
+- **+** `/api/extract-ai` : légende visuelle d'Alexandre embarquée (`api/nomenclature-legend.js`) en image 1 + envoi de toutes les pages ; l'IA devient autorité pour plans/photos.
+- **+** Détection `sansChef` (pas de chef → pas de mobilier chef), claviers reconnus par forme, ensemble homogène déduit (consort → « 7 violes de gambe »), mobilier explicite lu sur fiche.
+- **+** Photos cloisonnées par concert : dé-dup des ids de pièces au chargement + galerie/compteur scopés au concert (fin du débordement des 22 photos Francesconi).
+- **+** UI : champs éditables/crayon plus grisés ; tri concerts par date (récent/ancien/manuel) + recherche ; bouton « Recharger depuis le compte ».
+- **+** Récupération : ~5 concerts recréés depuis les plans (xAI Grok) écrits sur le compte `alexferran@gmail.com` (OLC session 20, Master Percussion CNSM 2026, Récital Hajime & Chung En, Consort Les Lucioles, La Femme sans ombre).
+- **+** ~10 commits poussés sur `feature/omr-family-access` ; déploiements Vercel production successifs (dernier commit `13ff48e`).
