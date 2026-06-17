@@ -21,21 +21,28 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "XAI_API_KEY not configured on server" });
   }
 
-  const { image, mode } = req.body || {};
-  if (!image) {
+  const { image, images: imagesIn, mode } = req.body || {};
+  // Accept a single image (legacy) OR an array of pages (multi-page production sheets).
+  const rawImages = Array.isArray(imagesIn) && imagesIn.length ? imagesIn : (image ? [image] : []);
+  if (!rawImages.length) {
     return res.status(400).json({ error: "Missing image field" });
   }
   if (mode !== "concert") {
     return res.status(400).json({ error: "Missing or invalid extraction mode" });
   }
 
-  const base64 = image.replace(/^data:image\/\w+;base64,/, "");
-  const mimeType = image.match(/^data:(image\/\w+);/)?.[1] || "image/jpeg";
-  if (!/^image\/(jpeg|jpg|png|webp)$/.test(mimeType)) {
-    return res.status(400).json({ error: "Unsupported image type" });
+  // Build image parts (up to 8 pages); skip anything invalid or oversized.
+  const imageParts = [];
+  for (const img of rawImages.slice(0, 8)) {
+    if (typeof img !== "string") continue;
+    const base64 = img.replace(/^data:image\/\w+;base64,/, "");
+    const mimeType = img.match(/^data:(image\/\w+);/)?.[1] || "image/jpeg";
+    if (!/^image\/(jpeg|jpg|png|webp)$/.test(mimeType)) continue;
+    if (base64.length > 12_000_000) continue;
+    imageParts.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } });
   }
-  if (base64.length > 12_000_000) {
-    return res.status(413).json({ error: "Image too large" });
+  if (!imageParts.length) {
+    return res.status(400).json({ error: "Aucune image exploitable" });
   }
 
   const concertPrompt = `Tu es un régisseur d'orchestre professionnel (20 ans Radio France/Philharmonie). Tu lis des plans de scène orchestraux comme un expert du métier.
@@ -88,7 +95,9 @@ OUTPUT JSON STRICT (sans markdown, sans backticks) :
 }
 Catégories percus : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pièces", "Stands & supports", "Baguettes & spécial"`;
 
-  const prompt = concertPrompt;
+  const prompt = imageParts.length > 1
+    ? concertPrompt + "\n\nNB : les images fournies sont les PAGES d'un MÊME document (plan + fiche de production). Lis-les TOUTES et combine les informations (effectif, percussions, mobilier) en une seule réponse."
+    : concertPrompt;
 
   const body = {
     model: "grok-4.20-0309-non-reasoning",
@@ -98,7 +107,7 @@ Catégories percus : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pi�
       role: "user",
       content: [
         { type: "text", text: prompt },
-        { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+        ...imageParts,
       ],
     }],
   };

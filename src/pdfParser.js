@@ -1909,12 +1909,16 @@ function fileToDataUrlLocal(file) {
  * Extract data from a plan image via serverless endpoint (/api/extract-ai).
  * The API key stays server-side only — never exposed to the browser.
  */
-export async function extractWithGemini(imageDataUrl, mode) {
+export async function extractWithGemini(imageDataUrls, mode) {
   if (!mode) throw new Error("Mode d'extraction IA manquant");
+  // Accept a single dataURL (string) or several pages (array).
+  const images = Array.isArray(imageDataUrls)
+    ? imageDataUrls.filter(Boolean)
+    : (imageDataUrls ? [imageDataUrls] : []);
   const resp = await fetch("/api/extract-ai", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ image: imageDataUrl, mode }),
+    body: JSON.stringify({ images, mode }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
