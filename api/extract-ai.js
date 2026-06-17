@@ -81,6 +81,7 @@ RÈGLES CRITIQUES :
 • CHEF : mets sansChef=true s'il n'y a PAS de chef/podium de direction (récital, solo, petite formation jouée sans direction). NE SUPPOSE JAMAIS un chef : pas de podium visible et pas de "Direction" écrite → sansChef=true. Chef présent → sansChef=false.
 • Une SALLE (Pflimlin, Rémy Pflimlin, Auditorium, Philharmonie, CMPP...) n'est PAS un compositeur. Pour un récital, le nom du titre est l'interprète, pas le compositeur.
 • Claviers (marimba, xylophone, vibraphone, glockenspiel, piano, célesta, clavecin) → orchestre.autres ; reconnais-les par leur FORME (légende) même non écrits.
+• orchestre.bois / cuivres / cordes / autres = liste de NOMS d'instruments avec quantité (ex : "4 Flûtes", "3 Hautbois", "14 Violons I"). JAMAIS la notation chiffrée brute ("4.3.5.4") dans ces listes : ça va dans "effectif" uniquement.
 • Si illisible/ambigu : NE PAS inventer. Mettre "" ou [].
 
 EXEMPLES :

@@ -2680,7 +2680,7 @@ export default function App() {
   // HOME (pieces d'un concert)
   // ════════════════════════════════
   if (screen === "home" && concert) {
-    const totalPhotos = Object.values(photos).flat().length;
+    const totalPhotos = concert.pieces.reduce((s, p) => s + (photos[p.id] || []).length, 0);
     return (
       <div style={S.shell}>
         <div style={S.header}>
@@ -3675,7 +3675,9 @@ export default function App() {
   // GALLERY
   // ════════════════════════════════
   if (screen === "gallery") {
-    const allPhotos = pieceId ? (photos[pieceId] || []) : Object.values(photos).flat();
+    const allPhotos = pieceId
+      ? (photos[pieceId] || [])
+      : (concert ? concert.pieces.flatMap((p) => photos[p.id] || []) : Object.values(photos).flat());
     return (
       <div style={S.shell}>
         <div style={S.header}>
