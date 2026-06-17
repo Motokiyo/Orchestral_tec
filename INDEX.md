@@ -1,12 +1,12 @@
 # INDEX.md — Catalogue wiki OrkMap
 
 > Lis ceci EN PREMIER. Ouvre les fichiers SEULEMENT pour les sections liées a ta tâche.
-> Mis à jour : 14/06/2026
+> Mis à jour : 17/06/2026
 
 ## CLAUDE.md — instructions dev
 
 - App de gestion concerts/répertoire pour régisseurs d'orchestre
-- Stack : React 18 (Vite 6), IndexedDB via idb, Supabase OrkMap séparé pour synchro compte, pdfjs-dist v4, JSZip, Gemini 2.5 Flash Vision, Audiveris sidecar pour OMR
+- Stack : React 18 (Vite 6), IndexedDB via idb, Supabase OrkMap séparé pour synchro compte, pdfjs-dist v4, JSZip, **xAI Grok vision** (reconnaissance documents, ex-Gemini), Audiveris sidecar pour OMR
 - Deploy : Vercel, domaine `https://orkmap.eiffelai.io`, repo github.com/Motokiyo/Orchestral_tec
 - Règles : mobile-first (375px), pas de nouveau fichier .jsx sans accord, IndexedDB pour tout
 - Toujours `git pull` avant modification (travail multi-machine)
@@ -40,7 +40,8 @@
 
 ## API serverless — api/
 
-- Fonctions Vercel pour proxy API (extraction Gemini)
+- `extract-ai.js` — reconnaissance documents via **xAI Grok** (clé `XAI_API_KEY`), envoie la légende `nomenclature-legend.js` (image 1) + toutes les pages ; renvoie effectif/orchestre(noms)/percus/sansChef
+- `nomenclature-legend.js` — légende visuelle des symboles d'Alexandre (base64), embarquée et envoyée à l'IA
 - Auth familiale par code email : `request-code`, `verify-code`, session cookie signée
 - Envoi email production via Gmail OAuth ; pas de `AUTH_FALLBACK_CODE`
 - `sync.js` — API de synchro protégée par session, reliée au Supabase OrkMap séparé (`yxkktarojpnktsfrvjhb`)
