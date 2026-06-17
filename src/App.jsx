@@ -1853,6 +1853,7 @@ export default function App() {
         salle: aiData.salle || localData.salle || "",
         chef: aiData.chef || localData.chef || "",
         date: aiData.date || localData.date || "",
+        sansChef: typeof aiData.sansChef === "boolean" ? aiData.sansChef : localData.sansChef,
         effectif: aiEffectif || localData.effectif || "",
         effectifDetail: effectifDetail || null,
         orchestre: aiData.orchestre || localData.orchestre || null,
