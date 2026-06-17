@@ -1929,6 +1929,7 @@ export async function extractWithGemini(imageDataUrls, mode) {
     titre: parsed.titre || "", compositeur: parsed.compositeur || "",
     duree: parsed.duree || "", salle: parsed.salle || "",
     chef: parsed.chef || "", date: parsed.date || "",
+    sansChef: parsed.sansChef === true,
     effectif: parsed.effectif || "", effectifDetail: null,
     orchestre: parsed.orchestre || null,
     percus: (parsed.percus || []).map(p => ({
