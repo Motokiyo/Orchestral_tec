@@ -1830,15 +1830,19 @@ export default function App() {
   }
 
   async function enrichWithAi(localData) {
-    const image = localData.planDataUrls?.[0] || localData.planDataUrl;
+    // Send ALL rendered pages so multi-page production sheets (Radio France / CNSM)
+    // are read in full, not just their first page.
+    const images = (localData.planDataUrls && localData.planDataUrls.length)
+      ? localData.planDataUrls
+      : (localData.planDataUrl ? [localData.planDataUrl] : []);
     // No image (e.g. plain text / TXT list) -> trust the local text parser.
-    if (!image) return localData;
+    if (!images.length) return localData;
     // Plans / photos: the AI vision reads the cartouche and IS the source of
     // truth; local parsing only fills gaps. The old local text parser fabricated
     // effectifs from plan numbers (seat/dimension digits), which made AutoCAD
     // plans come out "tout faux" and even suppressed the AI. AI now wins.
     try {
-      const aiData = await extractWithGemini(image, "concert");
+      const aiData = await extractWithGemini(images, "concert");
       const aiEffectif = aiData.effectif || "";
       const effectifDetail = aiEffectif ? decodeEffectif(aiEffectif) : localData.effectifDetail;
       return {
@@ -1873,7 +1877,7 @@ export default function App() {
     }
     setAiLoading(true);
     try {
-      const extracted = await extractWithGemini(targetPiece.plans[0], "concert");
+      const extracted = await extractWithGemini(targetPiece.plans, "concert");
       const ex = extracted || {};
       const autoFilled = [];
 
