@@ -31,6 +31,23 @@ function dedupePieceIds(concerts) {
   return { result, changed };
 }
 
+// Parse a free-text French concert date into a sortable timestamp (0 if unknown).
+const FR_MONTHS = { janvier: 1, "février": 2, fevrier: 2, mars: 3, avril: 4, mai: 5, juin: 6, juillet: 7, "août": 8, aout: 8, septembre: 9, octobre: 10, novembre: 11, "décembre": 12, decembre: 12 };
+function parseConcertDate(str) {
+  const s = String(str || "").toLowerCase().trim();
+  if (!s) return 0;
+  let m;
+  m = s.match(/(\d{1,2})\s+([a-zà-ÿ]+)\.?\s+(\d{4})/); // jj mois aaaa
+  if (m && FR_MONTHS[m[2]]) return Date.UTC(+m[3], FR_MONTHS[m[2]] - 1, +m[1]);
+  m = s.match(/(\d{1,2})[\/\s.-](\d{1,2})[\/\s.-](\d{4})/); // jj/mm/aaaa
+  if (m) return Date.UTC(+m[3], +m[2] - 1, +m[1]);
+  m = s.match(/([a-zà-ÿ]+)\.?\s+(\d{4})/); // mois aaaa
+  if (m && FR_MONTHS[m[1]]) return Date.UTC(+m[2], FR_MONTHS[m[1]] - 1, 1);
+  m = s.match(/(\d{4})/); // aaaa
+  if (m) return Date.UTC(+m[1], 0, 1);
+  return 0;
+}
+
 // ── Shared helper: import image file, return raw dataUrl (no watermark baked) ──
 function importImageFile() {
   return new Promise((resolve) => {
@@ -1100,6 +1117,8 @@ export default function App() {
   const [zoneSelectMode, setZoneSelectMode] = useState(null);
   const [showArchives, setShowArchives] = useState(false);
   const [archiveSearch, setArchiveSearch] = useState("");
+  const [concertSearch, setConcertSearch] = useState("");
+  const [concertSort, setConcertSort] = useState("recent");
   const [archiveModal, setArchiveModal] = useState(null);
   const [mergeData, setMergeData] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -2532,6 +2551,14 @@ export default function App() {
   // CONCERTS LIST
   // ════════════════════════════════
   if (screen === "concerts") {
+    const q = concertSearch.trim().toLowerCase();
+    const activeConcerts = concerts.filter((c) => !c.archived);
+    let shownConcerts = q
+      ? activeConcerts.filter((c) => [c.titre, c.orchestre, c.lieu, c.chef, c.date].filter(Boolean).join(" ").toLowerCase().includes(q))
+      : activeConcerts;
+    if (concertSort === "recent") shownConcerts = [...shownConcerts].sort((a, b) => parseConcertDate(b.date) - parseConcertDate(a.date));
+    else if (concertSort === "ancien") shownConcerts = [...shownConcerts].sort((a, b) => parseConcertDate(a.date) - parseConcertDate(b.date));
+    const manualOrder = concertSort === "manuel" && !q;
     return (
       <div style={S.shell}>
         <div style={{ ...S.header, padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -2563,7 +2590,25 @@ export default function App() {
             + Nouveau concert
           </button>
 
-          {concerts.filter(c => !c.archived).map((c, ci, arr) => (
+          {(activeConcerts.length > 1 || q) && (
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <input value={concertSearch} onChange={(e) => setConcertSearch(e.target.value)}
+                placeholder="Rechercher un concert..."
+                style={{ flex: 1, padding: "8px 10px", fontSize: 13, border: "1px solid #D6D3D1", borderRadius: 8, outline: "none", background: "#fff" }} />
+              <select value={concertSort} onChange={(e) => setConcertSort(e.target.value)}
+                style={{ padding: "8px 10px", fontSize: 13, border: "1px solid #D6D3D1", borderRadius: 8, background: "#fff", color: "#1C1917" }}>
+                <option value="recent">Plus récents</option>
+                <option value="ancien">Plus anciens</option>
+                <option value="manuel">Ordre manuel</option>
+              </select>
+            </div>
+          )}
+
+          {shownConcerts.length === 0 && (
+            <div style={{ textAlign: "center", padding: "20px 0", color: "#A8A29E", fontSize: 14 }}>Aucun concert trouvé</div>
+          )}
+
+          {shownConcerts.map((c) => (
             <div key={c.id} onClick={() => goConcert(c.id)} style={{ ...S.card("#57534E"), marginBottom: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div style={{ flex: 1 }}>
@@ -2575,11 +2620,11 @@ export default function App() {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }} onClick={(e) => e.stopPropagation()}>
                   <span style={{ fontSize: 12, color: "#78716C", fontWeight: 600 }}>{c.pieces.length} pièce{c.pieces.length !== 1 ? "s" : ""}</span>
-                  <DragHandle onMove={(dir) => {
+                  {manualOrder && <DragHandle onMove={(dir) => {
                     const idx = concerts.findIndex(x => x.id === c.id);
                     if (dir === -1 && idx > 0) setConcerts(prev => { const a = [...prev]; const [m] = a.splice(idx, 1); a.splice(idx - 1, 0, m); return a; });
                     if (dir === 1 && idx < concerts.length - 1) setConcerts(prev => { const a = [...prev]; const [m] = a.splice(idx, 1); a.splice(idx + 1, 0, m); return a; });
-                  }} />
+                  }} />}
                   <button onClick={() => { setConcerts(prev => prev.map(x => x.id === c.id ? { ...x, archived: true } : x)); }}
                     style={{ background: "none", border: "none", fontSize: 16, color: "#A8A29E", cursor: "pointer", padding: "2px 4px" }} title="Archiver">📦</button>
                   <button onClick={() => { if (confirm("Supprimer ce concert ?")) setConcerts(prev => prev.filter(x => x.id !== c.id)); }}
