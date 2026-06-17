@@ -16,12 +16,9 @@ export default async function handler(req, res) {
   }
   if (!requireSession(req, res)) return;
 
-  const apiKey = process.env.GOOGLE_API_KEY;
+  const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({
-      error: "GOOGLE_API_KEY not configured on server",
-      debug: Object.keys(process.env).filter(k => k.includes("GOOGLE") || k.includes("KEY")).join(", ") || "no matching env vars"
-    });
+    return res.status(500).json({ error: "XAI_API_KEY not configured on server" });
   }
 
   const { image, mode } = req.body || {};
@@ -58,6 +55,10 @@ Fl/Flûte/Flöte, Picc/Petite flûte, Hb/Ob/Hautbois, CA/Cor anglais/Englischhor
 Baroque : Dessus, Tailles, Viole, Violone, Théorbe → GARDER tels quels.
 
 RÈGLES CRITIQUES :
+• Le CARTOUCHE (souvent en bas du plan) contient la ligne "Effectif" : lis-la EN PRIORITÉ, recopie-la, puis décode. Ignore les numéros de sièges/cotes/échelle.
+• Notations équivalentes : points (2.2.2.2), tirets (2-2-2-2), slashs (4/3/5/4), espaces (2 2 2 2), mots ("2 timb. 7 percs", "2 harpes", "cél/orgue"), cordes entre crochets ("Cordes[12.10.8.6.4]").
+• Dans le bloc percussions, un "T" seul ou "Timb" = Timbalier. Nombre de timbaliers = nombre de jeux de timbales ("2 timbales"/"2timb" → 2 Timbaliers). "perc"/"percs" = percussionnistes (poste distinct).
+• Les chiffres décodés (orchestre/percus) DOIVENT correspondre exactement à la ligne effectif du cartouche.
 • Timbalier = poste SÉPARÉ des Percu. Ne JAMAIS mélanger.
 • Chaque timbale = 1 item séparé ("Timbale 1", "Timbale 2"...), pas "4 Timbales".
 • W=0 dans Daniels → pas de pôle Timbalier.
@@ -90,31 +91,34 @@ Catégories percus : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pi�
   const prompt = concertPrompt;
 
   const body = {
-    contents: [{
-      parts: [
-        { text: prompt },
-        { inline_data: { mime_type: mimeType, data: base64 } }
-      ]
+    model: "grok-4.20-0309-non-reasoning",
+    temperature: 0.1,
+    max_tokens: 16384,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text: prompt },
+        { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+      ],
     }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 16384 }
   };
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const url = "https://api.x.ai/v1/chat/completions";
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify(body),
     });
 
     if (!resp.ok) {
       const err = await resp.text();
-      return res.status(resp.status).json({ error: `Gemini API error: ${err.slice(0, 200)}` });
+      return res.status(resp.status).json({ error: `xAI API error: ${err.slice(0, 200)}` });
     }
 
     const data = await resp.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    console.log("[extract-ai] Gemini response length:", text.length, "mode:", mode);
+    const text = data.choices?.[0]?.message?.content || "";
+    console.log("[extract-ai] xAI response length:", text.length, "mode:", mode);
     const jsonStr = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
     let parsed;
     try {
