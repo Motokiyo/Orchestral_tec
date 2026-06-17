@@ -77,6 +77,7 @@ RÈGLES CRITIQUES :
 • W=0 dans Daniels → pas de pôle Timbalier.
 • "Cel" entre crochets [Cel] ou près claviers/percus = Célesta. "Cel" dans section cordes = Violoncelle. VÉRIFIER LE CONTEXTE.
 • Baroque : clavecin/orgue → orchestre.continuo (pas orchestre.autres). Remplir continuo si basse continue visible.
+• ENSEMBLE HOMOGÈNE (consort de violes, ensemble d'un même instrument) : DÉDUIS l'effectif du NOMBRE de musiciens (noms/chaises) et de l'instrument commun. Ex : 7 musiciens tous violistes → effectif "7 violes de gambe", orchestre.cordes = ["7 Violes de gambe"]. Ne te contente pas de recopier les noms.
 • "Direction" = chef d'orchestre.
 • CHEF : mets sansChef=true s'il n'y a PAS de chef/podium de direction (récital, solo, petite formation jouée sans direction). NE SUPPOSE JAMAIS un chef : pas de podium visible et pas de "Direction" écrite → sansChef=true. Chef présent → sansChef=false.
 • Une SALLE (Pflimlin, Rémy Pflimlin, Auditorium, Philharmonie, CMPP...) n'est PAS un compositeur. Pour un récital, le nom du titre est l'interprète, pas le compositeur.
