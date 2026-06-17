@@ -6,6 +6,31 @@ import { exportLocalDataForRecovery, useConcerts, usePhotos, useOmrScores } from
 import { S } from "./styles.js";
 import JSZip from "jszip";
 
+// ── De-duplicate piece ids across all concerts so photos (which are stored in a
+// single map keyed by piece id) never bleed from one concert into another.
+// Keeps the FIRST occurrence of an id (the earliest / already-saved concert keeps
+// its pieces and their photos); any later concert reusing that id gets a fresh
+// unique id. Touches no photo data at all.
+function dedupePieceIds(concerts) {
+  const seen = new Set();
+  let changed = false;
+  const result = (concerts || []).map((c) => {
+    let pieceChanged = false;
+    const pieces = (c.pieces || []).map((p) => {
+      let id = p.id;
+      if (!id || seen.has(id)) {
+        do { id = uid(); } while (seen.has(id));
+        pieceChanged = true;
+        changed = true;
+      }
+      seen.add(id);
+      return id === p.id ? p : { ...p, id };
+    });
+    return pieceChanged ? { ...c, pieces } : c;
+  });
+  return { result, changed };
+}
+
 // ── Shared helper: import image file, return raw dataUrl (no watermark baked) ──
 function importImageFile() {
   return new Promise((resolve) => {
@@ -1098,6 +1123,17 @@ export default function App() {
       });
     return () => { alive = false; };
   }, []);
+
+  // One-time repair: make piece ids unique across concerts so photos (stored per
+  // piece id) stop appearing in the wrong concert. The first/already-saved concert
+  // keeps its ids and photos; later duplicates get fresh ids. No photo is touched.
+  const dedupeRanRef = useRef(false);
+  useEffect(() => {
+    if (!dbLoaded || dedupeRanRef.current) return;
+    dedupeRanRef.current = true;
+    const { result, changed } = dedupePieceIds(concerts);
+    if (changed) setConcerts(() => result);
+  }, [dbLoaded]);
 
   async function logout() {
     await postJson("/api/logout").catch(() => {});
