@@ -129,12 +129,12 @@ async function loadRemote(type) {
   return { available: true, data: payload.data };
 }
 
-async function saveRemote(type, data) {
+async function saveRemote(type, data, removedIds = []) {
   const resp = await fetch("/api/sync", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type, data }),
+    body: JSON.stringify({ type, data, removedIds }),
   });
   if (resp.status === 503) return false;
   if (!resp.ok) throw new Error(`Remote save failed: ${resp.status}`);
@@ -211,7 +211,10 @@ export function useConcerts(initialConcerts, userEmail) {
   const saveTimer = useRef(null);
   const email = normalizeEmail(userEmail);
 
-  const saveLocal = useCallback(async (data) => {
+  // Surgical save: upsert everything in `data`, and delete ONLY ids the user
+  // explicitly removed this session (removedIds). A stale/empty/reduced `data`
+  // can no longer wipe concerts it never knew about — that was the data-loss bug.
+  const saveLocal = useCallback(async (data, removedIds = []) => {
     if (!email) return;
     const db = await getDB();
     const tx = db.transaction(STORE, "readwrite");
@@ -222,10 +225,9 @@ export function useConcerts(initialConcerts, userEmail) {
       if (belongsToUser(existing, email)) existingForUser.push(withOwner(existing, email));
     }
     writeConcertsBackup(email, existingForUser);
-    const newIds = new Set(data.map((c) => c.id));
-    for (const key of existingKeys) {
-      const existing = await tx.store.get(key);
-      if (belongsToUser(existing, email) && !newIds.has(key)) await tx.store.delete(key);
+    for (const id of removedIds) {
+      const existing = await tx.store.get(id);
+      if (existing && belongsToUser(existing, email)) await tx.store.delete(id);
     }
     for (const c of data) {
       await tx.store.put(withOwner(c, email));
@@ -324,29 +326,32 @@ export function useConcerts(initialConcerts, userEmail) {
   }, [email, saveLocal]);
 
   // Auto-save to IndexedDB + account sync (debounced)
-  const save = useCallback(async (data) => {
+  const save = useCallback(async (data, removedIds = []) => {
     if (!email) return;
     const owned = data.map((item) => withOwner(item, email));
     writeConcertsBackup(email, owned);
     try {
-      await saveLocal(owned);
+      await saveLocal(owned, removedIds);
     } catch (err) {
       console.warn("[OrkMap] IndexedDB save failed:", err);
     }
     try {
-      await saveRemote(SYNC_TYPES.concerts, remoteConcertPayload(owned, email));
+      await saveRemote(SYNC_TYPES.concerts, remoteConcertPayload(owned, email), removedIds);
     } catch (err) {
       console.warn("[OrkMap] Concert sync save failed:", err);
     }
   }, [email, saveLocal]);
 
-  // Wrap setConcerts to trigger debounced save
+  // Wrap setConcerts to trigger debounced save. Deletions are derived from the
+  // previous in-memory list (prev -> next), so only genuinely removed concerts
+  // are deleted; never "everything not in the list".
   const setConcertsAndSave = useCallback((fn) => {
     setConcerts((prev) => {
       const next = typeof fn === "function" ? fn(prev) : fn;
-      // Debounced save
+      const nextIds = new Set(next.map((c) => c.id));
+      const removedIds = prev.filter((c) => c && c.id && !nextIds.has(c.id)).map((c) => c.id);
       clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => save(next), DEBOUNCE_MS);
+      saveTimer.current = setTimeout(() => save(next, removedIds), DEBOUNCE_MS);
       return next;
     });
   }, [save]);
@@ -463,15 +468,15 @@ export function useOmrScores(userEmail) {
   const saveTimer = useRef(null);
   const email = normalizeEmail(userEmail);
 
-  const saveLocal = useCallback(async (data) => {
+  // Surgical save (same safety as concerts): upsert `data`, delete only the
+  // explicitly removed score ids. Protects the score library from accidental wipes.
+  const saveLocal = useCallback(async (data, removedIds = []) => {
     if (!email) return;
     const db = await getDB();
     const tx = db.transaction(OMR_STORE, "readwrite");
-    const existingKeys = await tx.store.getAllKeys();
-    const newIds = new Set(data.map((score) => score.id));
-    for (const key of existingKeys) {
-      const existing = await tx.store.get(key);
-      if (belongsToUser(existing, email) && !newIds.has(key)) await tx.store.delete(key);
+    for (const id of removedIds) {
+      const existing = await tx.store.get(id);
+      if (existing && belongsToUser(existing, email)) await tx.store.delete(id);
     }
     for (const score of data) {
       await tx.store.put(withOwner(score, email));
@@ -538,17 +543,17 @@ export function useOmrScores(userEmail) {
     })();
   }, [email, saveLocal]);
 
-  const save = useCallback(async (data) => {
+  const save = useCallback(async (data, removedIds = []) => {
     if (!email) return;
     const owned = data.map((item) => withOwner(item, email));
     try {
-      await saveLocal(owned);
+      await saveLocal(owned, removedIds);
     } catch (err) {
       console.warn("[OrkMap] OMR scores save failed:", err);
     }
     if (ENABLE_REMOTE_OMR_SYNC) {
       try {
-        await saveRemote(SYNC_TYPES.omrScores, owned);
+        await saveRemote(SYNC_TYPES.omrScores, owned, removedIds);
       } catch (err) {
         console.warn("[OrkMap] OMR sync save failed:", err);
       }
@@ -558,8 +563,10 @@ export function useOmrScores(userEmail) {
   const setScoresAndSave = useCallback((fn) => {
     setScores((prev) => {
       const next = typeof fn === "function" ? fn(prev) : fn;
+      const nextIds = new Set(next.map((s) => s.id));
+      const removedIds = prev.filter((s) => s && s.id && !nextIds.has(s.id)).map((s) => s.id);
       clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => save(next), DEBOUNCE_MS);
+      saveTimer.current = setTimeout(() => save(next, removedIds), DEBOUNCE_MS);
       return next;
     });
   }, [save]);
