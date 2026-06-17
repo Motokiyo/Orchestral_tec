@@ -67,13 +67,17 @@ function missingFromIncoming(existingKeys, incomingKeys) {
   return Array.from(existingKeys).filter((key) => !incomingKeys.has(key));
 }
 
-function validateNonDestructiveSync(type, existingData, incomingData) {
+// Deletions are allowed ONLY for ids the client explicitly removed (removedIds).
+// Any other missing id means a stale/empty client tried to overwrite a richer
+// server state, so we refuse it (409) to protect the user's data.
+export function validateNonDestructiveSync(type, existingData, incomingData, removedIds = []) {
   if (!existingData) return;
+  const allowed = new Set((Array.isArray(removedIds) ? removedIds : []).map((id) => String(id)));
 
   if (type === "concerts" || type === "omr-scores") {
     const existingIds = idsFromArray(existingData);
     const incomingIds = idsFromArray(incomingData);
-    const missing = missingFromIncoming(existingIds, incomingIds);
+    const missing = missingFromIncoming(existingIds, incomingIds).filter((id) => !allowed.has(String(id)));
     if (missing.length > 0) {
       const error = new Error(`Refusing destructive ${type} sync; missing ids: ${missing.slice(0, 20).join(", ")}`);
       error.status = 409;
@@ -84,7 +88,7 @@ function validateNonDestructiveSync(type, existingData, incomingData) {
   if (type === "photos") {
     const existingKeys = objectKeys(existingData);
     const incomingKeys = objectKeys(incomingData);
-    const missing = missingFromIncoming(existingKeys, incomingKeys);
+    const missing = missingFromIncoming(existingKeys, incomingKeys).filter((id) => !allowed.has(String(id)));
     if (missing.length > 0) {
       const error = new Error(`Refusing destructive photo sync; missing groups: ${missing.slice(0, 20).join(", ")}`);
       error.status = 409;
@@ -141,7 +145,8 @@ export default async function handler(req, res) {
       );
       const existingRow = Array.isArray(existingRows) ? existingRows[0] : null;
       const incomingData = req.body?.data ?? null;
-      validateNonDestructiveSync(type, existingRow?.data ?? null, incomingData);
+      const removedIds = Array.isArray(req.body?.removedIds) ? req.body.removedIds : [];
+      validateNonDestructiveSync(type, existingRow?.data ?? null, incomingData, removedIds);
       await writeHistory(session.email, type, incomingData, "incoming");
       if (existingRow) await writeHistory(session.email, type, existingRow.data ?? null, "previous");
 
