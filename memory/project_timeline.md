@@ -9,6 +9,15 @@
 - **+** Déploiement Vercel déclenché : rattrapage des 4 commits (DCM Radio France, freeform parsing, mobilier chef conditionnel, correction percus)
 - **+** `git pull` (fast-forward vers 77d110b) puis `git commit --allow-empty` + `git push origin main` pour trigger build Vercel
 
+## 2026-05-24 (session 2)
+
+- **+** Analyse complète du parsing : lecture intégrale de `pdfParser.js` (1965 lignes), `App.jsx` (3116 lignes), `utils.js` (515 lignes)
+- **+** Correction 3 bugs :
+  - `utils.js` : `DEFAULT_MOBILIER` sans Podium/Pupitre chef ; `hasChef=false` par défaut
+  - `App.jsx` : `percus: []` à l'import PDF et création manuelle (plus de `Percu 1` vide)
+  - `pdfParser.js` : `buildPercuFromEffectif` vidée
+- **+** Commit 6dc9123 + push origin/main → Vercel auto-deploy déclenché
+
 ## 2026-06-13
 
 - **+** Branche `feature/omr-family-access` utilisée pour ajouter le module scores/OMR et l'accès familial.

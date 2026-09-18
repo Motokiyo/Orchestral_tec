@@ -17,6 +17,10 @@
 - 2026-06-14 — Toute synchro OrkMap doit être non destructive : fusion locale+serveur, payload complet, historique serveur à chaque sauvegarde, refus serveur `409` si un appareil tente d'écraser des données existantes avec moins d'identifiants.
 - 2026-06-14 — Les dumps de récupération utilisent une table séparée `orkmap_recovery_dumps` et ne doivent pas modifier `orkmap_user_data`.
 - 2026-05-24 — Déploiement Vercel via auto-deploy GitHub (push sur main). Validation : git commit vide (`--allow-empty`) déclenche bien le build. Pas besoin de token Vercel CLI sur le serveur.
+- 2026-05-24 — Correction 3 bugs auto-création :
+  - `DEFAULT_MOBILIER` : plus de Podium/Pupitre chef — ajoutés conditionnellement via `hasChef` (faux par défaut)
+  - `App.jsx` : `percus: []` à l'import PDF et création manuelle
+  - `pdfParser.js` : `buildPercuFromEffectif` vidée — les percussions viennent uniquement du parsing explicite (P1:, DCM, EIC, IA)
 
 ## ABANDONNÉ
 
