@@ -12,7 +12,9 @@ const REMOTE_LOAD_TIMEOUT_MS = 8000;
 const ENABLE_REMOTE_CONCERT_PULL = true;
 const ENABLE_REMOTE_PHOTO_SYNC = true;
 const ENABLE_REMOTE_OMR_SYNC = true;
-const ALEX_EMAIL = "<adresse d'Alexandre>";
+// Adresse du propriétaire historique (données locales sans ownerEmail) :
+// variable VITE_OWNER_EMAIL, injectée au build par Vite.
+const ALEX_EMAIL = String(import.meta.env.VITE_OWNER_EMAIL || "").trim().toLowerCase();
 
 const SYNC_TYPES = {
   concerts: "concerts",

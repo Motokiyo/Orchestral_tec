@@ -17,6 +17,7 @@ const localApiHandlers = {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   process.env.GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || env.GOOGLE_API_KEY
+  process.env.ALLOWED_EMAILS = process.env.ALLOWED_EMAILS || env.ALLOWED_EMAILS || ''
 
   return {
   plugins: [

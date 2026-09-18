@@ -1,10 +1,15 @@
 import crypto from "node:crypto";
 
-export const ALLOWED_EMAILS = new Set([
-  "<adresse d'Alexandre>",
-  "<adresse d'un membre de la famille>",
-  "<adresse Parédé>",
-]);
+// Liste d'accès du login par code : variable d'environnement ALLOWED_EMAILS
+// (adresses séparées par des virgules). Sans variable, personne ne passe.
+export function allowedEmails() {
+  return new Set(
+    String(process.env.ALLOWED_EMAILS || "")
+      .split(",")
+      .map(normalizeEmail)
+      .filter(Boolean),
+  );
+}
 
 const CHALLENGE_COOKIE = "orkmap_login_challenge";
 const SESSION_COOKIE = "orkmap_session";
@@ -17,7 +22,8 @@ export function normalizeEmail(email) {
 }
 
 export function isAllowedEmail(email) {
-  return ALLOWED_EMAILS.has(normalizeEmail(email));
+  const normalized = normalizeEmail(email);
+  return Boolean(normalized) && allowedEmails().has(normalized);
 }
 
 function secret() {
@@ -115,11 +121,12 @@ export function randomCode() {
 }
 
 export async function sendLoginCode(email, code) {
-  const from = process.env.AUTH_EMAIL_FROM || "OrkMap <adresse EIFFEL>";
+  const from = String(process.env.AUTH_EMAIL_FROM || "").trim();
   const subject = "Code de connexion OrkMap";
   const text = `Ton code de connexion OrkMap est ${code}. Il expire dans 10 minutes.`;
 
   if (process.env.RESEND_API_KEY) {
+    if (!from) throw new Error("AUTH_EMAIL_FROM is required to send login codes with Resend");
     const resp = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -153,9 +160,10 @@ export async function sendLoginCode(email, code) {
     }
 
     const { access_token: accessToken } = await tokenResp.json();
-    const gmailFrom = String(process.env.GMAIL_FROM || "OrkMap <adresse d'Alexandre>").trim();
+    const gmailFrom = String(process.env.GMAIL_FROM || "").trim();
+    // Sans GMAIL_FROM, Gmail utilise l'adresse du compte authentifié.
     const raw = [
-      `From: ${gmailFrom}`,
+      ...(gmailFrom ? [`From: ${gmailFrom}`] : []),
       `To: ${email}`,
       `Subject: ${subject}`,
       "MIME-Version: 1.0",

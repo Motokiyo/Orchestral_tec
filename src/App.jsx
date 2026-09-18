@@ -126,7 +126,7 @@ async function postJson(url, body = {}) {
 
 function RecoveryExportScreen() {
   const params = new URLSearchParams(window.location.search);
-  const email = String(params.get("email") || "<adresse d'Alexandre>").trim().toLowerCase();
+  const email = String(params.get("email") || import.meta.env.VITE_OWNER_EMAIL || "").trim().toLowerCase();
   const includePhotos = params.get("photos") !== "0";
   const [status, setStatus] = useState("Lecture de la base locale...");
   const [done, setDone] = useState(false);
