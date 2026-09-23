@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
-import { exportLocalDataForRecovery, useConcerts, usePhotos, useOmrScores } from "./useStorage.js";
+import { exportLocalDataForRecovery, useConcerts, usePhotos, useOmrScores, useSyncStatus, setSessionExpired, requestSyncRetry, requestPersistentStorage } from "./useStorage.js";
 import { S } from "./styles.js";
 import JSZip from "jszip";
 
@@ -110,6 +110,76 @@ function dataUrlToBlob(dataUrl) {
 // ── Helper: sanitize filename part ──
 function sanitize(str) {
   return (str || "Sans_titre").replace(/[/\\?%*:|"<>]/g, "_").replace(/\s+/g, "_");
+}
+
+// ── Offline session ──
+// The last account that logged in on this device is remembered, so the app
+// opens on its local data even when the server cannot be reached (concert hall
+// without network). Only a clear "not logged in" answer from the server asks
+// for a new login, and even then the local data stays reachable.
+const LAST_EMAIL_KEY = "orkmap-last-email";
+const SESSION_CHECK_TIMEOUT_MS = 4000;
+const OFFLINE_AI_MESSAGE = "Pas de réseau : la lecture par IA n'est pas disponible hors ligne. Réessaie quand le réseau revient.";
+
+function readLastEmail() {
+  try {
+    return String(localStorage.getItem(LAST_EMAIL_KEY) || "").trim().toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function rememberLastEmail(email) {
+  try {
+    if (email) localStorage.setItem(LAST_EMAIL_KEY, String(email).trim().toLowerCase());
+    else localStorage.removeItem(LAST_EMAIL_KEY);
+  } catch {
+    // Storage unavailable: the app still works, only offline reopening is lost.
+  }
+}
+
+function isOffline() {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+async function fetchSession() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SESSION_CHECK_TIMEOUT_MS);
+  try {
+    const resp = await fetch("/api/session", { credentials: "include", cache: "no-store", signal: controller.signal });
+    if (!resp.ok) throw new Error(`Session check failed: ${resp.status}`);
+    return await resp.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Small status pill: offline, changes waiting to be sent, or session to renew.
+// Hidden when everything is synced.
+export function SyncBanner() {
+  const { online, pending, sessionExpired } = useSyncStatus();
+  if (online && !pending && !sessionExpired) return null;
+  let text;
+  if (!online) text = pending ? "Hors ligne · modifications gardées, envoi au retour du réseau" : "Hors ligne · tes données restent sur le téléphone";
+  else if (sessionExpired) text = "Session expirée · touche pour te reconnecter";
+  else text = "Envoi des modifications…";
+  const color = !online ? "#92400E" : sessionExpired ? "#991B1B" : "#57534E";
+  const background = !online ? "#FFFBEB" : sessionExpired ? "#FEF2F2" : "#F5F5F4";
+  const onClick = sessionExpired && online
+    ? () => window.dispatchEvent(new Event("orkmap-reconnect"))
+    : () => requestSyncRetry();
+  return (
+    <div onClick={onClick} role="status" style={{
+      position: "fixed", left: "50%", transform: "translateX(-50%)",
+      bottom: "calc(10px + env(safe-area-inset-bottom))", zIndex: 9999,
+      maxWidth: "calc(100vw - 24px)", padding: "6px 12px", borderRadius: 999,
+      background, color, border: `1px solid ${color}33`, boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+      fontSize: 12, fontWeight: 700, fontFamily: "'DM Sans', sans-serif",
+      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer",
+    }}>
+      {text}
+    </div>
+  );
 }
 
 async function postJson(url, body = {}) {
@@ -261,7 +331,7 @@ function RecoveryExportScreen() {
   );
 }
 
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, onCancel }) {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [step, setStep] = useState("email");
@@ -319,6 +389,11 @@ function LoginScreen({ onLogin }) {
         <div style={{ fontSize: 13, lineHeight: 1.45, color: "#78716C", marginBottom: 18 }}>
           Entre ton adresse autorisée, puis le code reçu par email.
         </div>
+        {isOffline() && (
+          <div style={{ fontSize: 13, lineHeight: 1.45, color: "#92400E", background: "#FFFBEB", border: "1px solid #FCD34D", borderRadius: 8, padding: "8px 10px", marginBottom: 14 }}>
+            Pas de réseau. La connexion demande du réseau une seule fois : ensuite l'app s'ouvre même hors ligne.
+          </div>
+        )}
         <label style={{ display: "block", fontSize: 12, fontWeight: 800, color: "#57534E", marginBottom: 6 }}>
           Adresse email
         </label>
@@ -358,6 +433,11 @@ function LoginScreen({ onLogin }) {
         {step === "code" && (
           <button type="button" onClick={() => { setStep("email"); setCode(""); setMessage(""); }} style={{ ...S.btnSecondary, marginTop: 10 }}>
             Changer d'adresse
+          </button>
+        )}
+        {onCancel && (
+          <button type="button" onClick={onCancel} style={{ ...S.btnSecondary, marginTop: 10 }}>
+            Revenir à mes concerts
           </button>
         )}
       </form>
@@ -1091,7 +1171,9 @@ export default function App() {
   }
 
   const [authStatus, setAuthStatus] = useState("checking");
-  const [authEmail, setAuthEmail] = useState("");
+  const [authEmail, setAuthEmail] = useState(readLastEmail);
+  const [showLogin, setShowLogin] = useState(false);
+  const { online } = useSyncStatus();
   const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }], authEmail);
   const [screen, setScreen] = useState("start");
   const [concertId, setConcertId] = useState(null);
@@ -1125,22 +1207,36 @@ export default function App() {
   const [mobilierEditing, setMobilierEditing] = useState(null); // pieceId currently editing mob
   const [mobilierBackup, setMobilierBackup] = useState(null);
 
+  // Session check. With a remembered account the app is already open on local
+  // data (authEmail is pre-filled); this check runs in the background and never
+  // locks the user out: no network or a slow server simply means "offline".
   useEffect(() => {
     let alive = true;
-    fetch("/api/session", { credentials: "include" })
-      .then((resp) => resp.json())
+    requestPersistentStorage();
+    const remembered = readLastEmail();
+    fetchSession()
       .then((data) => {
         if (!alive) return;
         if (data.user?.email) {
+          rememberLastEmail(data.user.email);
+          setSessionExpired(false);
           setAuthEmail(data.user.email);
+          requestSyncRetry();
+        } else if (remembered) {
+          setSessionExpired(true);
         } else {
           setAuthStatus("anonymous");
         }
       })
       .catch(() => {
-        if (alive) setAuthStatus("anonymous");
+        if (alive && !remembered) setAuthStatus("anonymous");
       });
-    return () => { alive = false; };
+    const onReconnect = () => setShowLogin(true);
+    window.addEventListener("orkmap-reconnect", onReconnect);
+    return () => {
+      alive = false;
+      window.removeEventListener("orkmap-reconnect", onReconnect);
+    };
   }, []);
 
   // One-time repair: make piece ids unique across concerts so photos (stored per
@@ -1156,9 +1252,20 @@ export default function App() {
 
   async function logout() {
     await postJson("/api/logout").catch(() => {});
+    rememberLastEmail("");
+    setSessionExpired(false);
     setAuthEmail("");
     setAuthStatus("anonymous");
     goStart();
+  }
+
+  function handleLogin(email) {
+    rememberLastEmail(email);
+    setSessionExpired(false);
+    setShowLogin(false);
+    setAuthStatus("checking");
+    setAuthEmail(email);
+    requestSyncRetry();
   }
 
   const concert = concerts.find((c) => c.id === concertId);
@@ -1192,6 +1299,7 @@ export default function App() {
   // Used to pull in server-side corrections that local-priority merge would mask.
   // Photos live in a separate store and are NOT affected.
   async function reloadConcertsFromAccount() {
+    if (isOffline()) { alert("Pas de réseau : le rechargement depuis le compte attendra le retour du réseau. Tes concerts restent disponibles sur le téléphone."); return; }
     if (!confirm("Recharger les concerts depuis ton compte ?\nLes versions locales seront remplacées par celles du serveur. Tes photos ne sont pas touchées.")) return;
     try {
       const r = await fetch("/api/sync?type=concerts", { credentials: "include" });
@@ -1514,6 +1622,7 @@ export default function App() {
   }
 
   async function analyzeOmrImage(imageDataUrl) {
+    if (isOffline()) throw new Error("pas de réseau, relance la lecture quand le réseau revient");
     const prepared = await prepareScoreImageForOmr(imageDataUrl);
     const ai = await extractOmrWithAudiveris(prepared);
     if (!ai.notesText || parseOmrNotes(ai.notesText).length === 0) {
@@ -1530,6 +1639,7 @@ export default function App() {
     const score = omrScores.find((item) => item.id === scoreId);
     const page = score?.pages?.[0];
     if (!score || !page) return;
+    if (isOffline()) { alert("Pas de réseau : la lecture de partition n'est pas disponible hors ligne."); return; }
     setOmrAnalyzing(true);
     try {
       const ai = await analyzeOmrImage(page);
@@ -1869,6 +1979,12 @@ export default function App() {
       : (localData.planDataUrl ? [localData.planDataUrl] : []);
     // No image (e.g. plain text / TXT list) -> trust the local text parser.
     if (!images.length) return localData;
+    // Offline: keep the local reading and say so; the AI button on the piece
+    // can be used later, once the network is back.
+    if (isOffline()) {
+      alert("Pas de réseau : import fait avec la lecture locale seulement. Tu pourras relancer « Extraire les données par IA » sur la pièce quand le réseau reviendra.");
+      return localData;
+    }
     // Plans / photos: the AI vision reads the cartouche and IS the source of
     // truth; local parsing only fills gaps. The old local text parser fabricated
     // effectifs from plan numbers (seat/dimension digits), which made AutoCAD
@@ -1908,6 +2024,7 @@ export default function App() {
       alert("Ajoutez d'abord un plan à cette pièce.");
       return;
     }
+    if (isOffline()) { alert(OFFLINE_AI_MESSAGE); return; }
     setAiLoading(true);
     try {
       const extracted = await extractWithGemini(targetPiece.plans, "concert");
@@ -1994,7 +2111,11 @@ export default function App() {
   }
 
   if (authStatus !== "authenticated") {
-    return <LoginScreen onLogin={(email) => { setAuthStatus("checking"); setAuthEmail(email); }} />;
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
+  if (showLogin) {
+    return <LoginScreen onLogin={handleLogin} onCancel={() => setShowLogin(false)} />;
   }
 
   // ZONE SELECT (before standalone camera)
@@ -2937,8 +3058,8 @@ export default function App() {
 
           {(piece.plans || []).length > 0 && (
             <button onClick={() => handleAiExtract(piece.id)} disabled={aiLoading}
-              style={{ ...S.btnSecondary, marginBottom: 14, fontSize: 12, padding: "8px 10px", background: aiLoading ? "#F5F5F4" : "#FFFBEB", borderColor: "#FCD34D", color: "#92400E" }}>
-              {aiLoading ? "⏳ Extraction IA en cours..." : "🤖 Extraire les données par IA"}
+              style={{ ...S.btnSecondary, marginBottom: 14, fontSize: 12, padding: "8px 10px", background: aiLoading || !online ? "#F5F5F4" : "#FFFBEB", borderColor: online ? "#FCD34D" : "#D6D3D1", color: online ? "#92400E" : "#A8A29E" }}>
+              {aiLoading ? "⏳ Extraction IA en cours..." : online ? "🤖 Extraire les données par IA" : "🤖 Extraction IA indisponible hors ligne"}
             </button>
           )}
 

@@ -14,7 +14,9 @@ export function allowedEmails() {
 const CHALLENGE_COOKIE = "orkmap_login_challenge";
 const SESSION_COOKIE = "orkmap_session";
 const TEN_MINUTES = 10 * 60;
-const THIRTY_DAYS = 30 * 24 * 60 * 60;
+// Sliding session: renewed on every app opening (see api/session.js), so a
+// regular user is never logged out, even after a long offline tour.
+const SESSION_MAX_AGE = 90 * 24 * 60 * 60;
 const MAX_ATTEMPTS = 5;
 
 export function normalizeEmail(email) {
@@ -102,8 +104,8 @@ function bumpChallenge(payload) {
 }
 
 export function createSession(email) {
-  const expires = Date.now() + THIRTY_DAYS * 1000;
-  return cookie(SESSION_COOKIE, pack({ email: normalizeEmail(email), expires }), THIRTY_DAYS);
+  const expires = Date.now() + SESSION_MAX_AGE * 1000;
+  return cookie(SESSION_COOKIE, pack({ email: normalizeEmail(email), expires }), SESSION_MAX_AGE);
 }
 
 export function getSession(req) {

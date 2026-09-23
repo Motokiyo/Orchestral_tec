@@ -1,9 +1,10 @@
 # STATE.md — OrkMap
 
-> Snapshot projet. Mis à jour : 2026-06-17
+> Snapshot projet. Mis à jour : 2026-09-23
 
 ## P0 ouverts
 
+- **Hors ligne (23/09/2026)** : code prêt et testé (scénario Puppeteer de 21 contrôles : ouverture hors ligne, fermeture/réouverture, ajout/suppression, conflit 409 avec un autre appareil, session expirée, suppression puis fermeture immédiate). **Reste : déploiement en production, puis test réel en mode avion** sur Fairphone/Brave et iPhone. Après le déploiement, ouvrir l'app **une fois avec réseau** sur chaque appareil (mémorise le compte et met l'app de côté). Vérifier que Brave n'efface pas les données du site à la fermeture.
 - **Confirmer en vrai dans l'app** (connecté `<adresse d'Alexandre>`) : la reconnaissance xAI Grok sur un plan réel, le bouton « Recharger depuis le compte », le tri/recherche, et que les photos ne débordent plus entre concerts.
 - Vérifier depuis les appareils réels que la synchro fusionne `concerts`, `photos`, `omr-scores` sans suppression (la fusion donne priorité au LOCAL : une correction serveur peut être masquée par un local périmé → utiliser le bouton « Recharger depuis le compte »).
 - (Optionnel demandé) rendre général la **lecture du mobilier explicite** écrit sur les fiches (chaises/pupitres/podium) au lieu de le déduire de l'effectif.
