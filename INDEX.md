@@ -40,7 +40,7 @@
 
 ## API serverless — api/
 
-- `extract-ai.js` — reconnaissance documents via **xAI Grok** (clé `XAI_API_KEY`), envoie la légende `nomenclature-legend.js` (image 1) + toutes les pages ; renvoie effectif/orchestre(noms)/percus/sansChef
+- `extract-ai.js` — reconnaissance documents via **DeepSeek** `deepseek-flash` (clé `DEEPSEEK_API_KEY`), envoie la légende `nomenclature-legend.js` (image 1) + toutes les pages ; renvoie effectif/orchestre(noms)/percus/sansChef
 - `nomenclature-legend.js` — légende visuelle des symboles d'Alexandre (base64), embarquée et envoyée à l'IA
 - Auth familiale par code email : `request-code`, `verify-code`, session cookie signée
 - Envoi email production via Gmail OAuth ; pas de `AUTH_FALLBACK_CODE`

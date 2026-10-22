@@ -1,5 +1,9 @@
 /**
- * Vercel Serverless Function — Gemini Vision extraction
+ * Vercel Serverless Function — lecture IA des plans / fiches de production
+ * Moteur : DeepSeek (modèle `deepseek-flash`, vision, format OpenAI image_url),
+ * clé `DEEPSEEK_API_KEY`. Raisonnement DÉSACTIVÉ (thinking: disabled) : activé,
+ * une lecture prend 20 à 140 s et dépasse maxDuration (60 s) ; désactivé, ~3 s.
+ * Voir DECISIONS.md du 2026-10-22.
  * POST /api/extract-ai
  * Body: { image: "data:image/jpeg;base64,...", mode: "concert" }
  * Returns: { titre, compositeur, duree, salle, chef, date, effectif, orchestre, percus }
@@ -17,9 +21,9 @@ export default async function handler(req, res) {
   }
   if (!requireSession(req, res)) return;
 
-  const apiKey = process.env.XAI_API_KEY;
+  const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: "XAI_API_KEY not configured on server" });
+    return res.status(500).json({ error: "DEEPSEEK_API_KEY non configurée sur le serveur (variable d'environnement Vercel)" });
   }
 
   const { image, images: imagesIn, mode } = req.body || {};
@@ -111,7 +115,8 @@ Catégories percus : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pi�
     : concertPrompt;
 
   const body = {
-    model: "grok-4.20-0309-non-reasoning",
+    model: "deepseek-flash",
+    thinking: { type: "disabled" },
     temperature: 0.1,
     max_tokens: 16384,
     messages: [{
@@ -124,7 +129,7 @@ Catégories percus : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pi�
   };
 
   try {
-    const url = "https://api.x.ai/v1/chat/completions";
+    const url = "https://api.deepseek.com/chat/completions";
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -133,12 +138,12 @@ Catégories percus : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pi�
 
     if (!resp.ok) {
       const err = await resp.text();
-      return res.status(resp.status).json({ error: `xAI API error: ${err.slice(0, 200)}` });
+      return res.status(resp.status).json({ error: `DeepSeek API error: ${err.slice(0, 200)}` });
     }
 
     const data = await resp.json();
     const text = data.choices?.[0]?.message?.content || "";
-    console.log("[extract-ai] xAI response length:", text.length, "mode:", mode);
+    console.log("[extract-ai] DeepSeek response length:", text.length, "mode:", mode);
     const jsonStr = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
     let parsed;
     try {

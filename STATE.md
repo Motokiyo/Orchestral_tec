@@ -27,8 +27,7 @@
 
 ## Reconnaissance de documents (refonte 2026-06-17)
 
-- **Moteur = xAI Grok** (`grok-4.20-0309-non-reasoning`), endpoint `https://api.x.ai/v1/chat/completions`, format OpenAI `image_url`, clé **dédiée** `XAI_API_KEY` (suivi de dépense séparé, dans Vercel + coffre `api-keys/xai-orkmap.env`).
-- **DeepSeek écarté** : l'API officielle `api.deepseek.com` (standard ET `/beta`) refuse toute image → text-only en pratique. Vérifié.
+- **Moteur = DeepSeek `deepseek-flash`** (depuis le 2026-10-22), endpoint `https://api.deepseek.com/chat/completions`, format OpenAI `image_url`, raisonnement désactivé, clé `DEEPSEEK_API_KEY` (Vercel + coffre `api-keys/deepseek.env`). Ancien moteur xAI Grok (`XAI_API_KEY`, coffre `xai-orkmap.env`) : plus lu par le code, clé encore présente (décision d'Alexandre : la supprimer ou non). Voir DECISIONS.md 2026-10-22.
 - `/api/extract-ai` envoie : (1) la **légende visuelle d'Alexandre** embarquée (`api/nomenclature-legend.js`, base64) en image 1, puis (2) **toutes les pages** du document. Le client (`enrichWithAi`) rend l'IA **autorité pour les plans/photos** ; le parser texte local ne sert que pour les listes texte propres.
 - Capacités vérifiées sur 7+ plans réels : cartouche + effectif, percussion poste par poste (timbales/grosse caisse/cymbales lus sur le dessin), claviers non étiquetés (par forme), `sansChef` (pas de chef → pas de podium/pupitre/chaise haute), ensemble homogène déduit (consort → « 7 violes de gambe »), mobilier explicite lu sur fiche (« 7 chaises + 7 pupitres bas »).
 
