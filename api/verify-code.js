@@ -1,4 +1,4 @@
-import { clearCookie, createSession, isAllowedEmail, noStore, normalizeEmail, verifyChallenge } from "./auth-utils.js";
+import { clearCookie, consumeLoginChallenge, createSession, isAllowedEmail, noStore, normalizeEmail } from "./auth-utils.js";
 
 export default async function handler(req, res) {
   noStore(res);
@@ -8,7 +8,14 @@ export default async function handler(req, res) {
   const code = String(req.body?.code || "").trim();
   if (!isAllowedEmail(email)) return res.status(403).json({ error: "Adresse non autorisée." });
   if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: "Code invalide." });
-  const result = verifyChallenge(req, email, code);
+
+  let result;
+  try {
+    result = await consumeLoginChallenge(req, email, code);
+  } catch (err) {
+    console.error("[orkmap-auth] challenge store unavailable:", err.message);
+    return res.status(503).json({ error: "Connexion momentanément indisponible. Réessaie dans quelques minutes." });
+  }
   if (!result.ok) {
     if (result.nextCookie) res.setHeader("Set-Cookie", result.nextCookie);
     return res.status(401).json({ error: "Code expiré ou incorrect." });

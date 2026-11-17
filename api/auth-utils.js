@@ -45,10 +45,22 @@ function pack(payload) {
   return `${body}.${sign(body)}`;
 }
 
+// Comparaison en temps constant (évite de deviner une signature octet par octet).
+// timingSafeEqual lève une exception si les longueurs diffèrent : on les égalise d'abord.
+export function safeEqual(a, b) {
+  const x = Buffer.from(String(a ?? ""));
+  const y = Buffer.from(String(b ?? ""));
+  if (x.length !== y.length) {
+    crypto.timingSafeEqual(x, x);
+    return false;
+  }
+  return crypto.timingSafeEqual(x, y);
+}
+
 function unpack(token) {
   if (!token || !token.includes(".")) return null;
   const [body, mac] = token.split(".");
-  if (!body || !mac || sign(body) !== mac) return null;
+  if (!body || !mac || !safeEqual(sign(body), mac)) return null;
   try {
     return JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
   } catch {
@@ -79,28 +91,164 @@ export function clearCookie(name) {
   return cookie(name, "", 0);
 }
 
-export function createChallenge(email, code) {
+// ── Code de connexion : l'état vit côté serveur (table orkmap_login_challenges) ──
+// Le cookie ne contient que l'identifiant du défi (signé). Le code, le nombre
+// d'essais et l'usage unique sont comptés dans la base : rejouer un ancien
+// cookie ne remet donc plus rien à zéro. Voir supabase/migrations/004_*.sql.
+const CHALLENGES = "orkmap_login_challenges";
+const MIN_INTERVAL_MS = 60 * 1000;
+const MAX_PER_HOUR = 5;
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+function supabaseConfig() {
+  const url = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (!url || !key) return null;
+  return { url, key };
+}
+
+// Appel PostgREST avec la clé service_role (jamais côté navigateur).
+async function supabaseRest(path, options = {}) {
+  const config = supabaseConfig();
+  if (!config) {
+    const error = new Error("Supabase is not configured");
+    error.status = 503;
+    error.supabase = true;
+    throw error;
+  }
+  const resp = await fetch(`${config.url}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      apikey: config.key,
+      Authorization: `Bearer ${config.key}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    const error = new Error(`Supabase ${resp.status}: ${body.slice(0, 200)}`);
+    error.status = resp.status;
+    error.supabase = true;
+    throw error;
+  }
+  // return=minimal : 201 ou 204 sans corps.
+  const text = await resp.text();
+  return text ? JSON.parse(text) : null;
+}
+
+function challengeCookieValue(id, email, expires) {
+  return cookie(CHALLENGE_COOKIE, pack({ id, email: normalizeEmail(email), expires }), TEN_MINUTES);
+}
+
+function codeHash(id, email, code) {
+  return sign(`${id}:${normalizeEmail(email)}:${String(code || "").trim()}`);
+}
+
+// Limite de débit par adresse : 1 par minute, 5 par heure.
+// Renvoie { limited: false } ou { limited: true, retryAfter: secondes }.
+export async function checkRequestRate(email) {
+  const norm = normalizeEmail(email);
+  const since = new Date(Date.now() - ONE_HOUR_MS).toISOString();
+  const rows = await supabaseRest(
+    `${CHALLENGES}?email=eq.${encodeURIComponent(norm)}&created_at=gte.${encodeURIComponent(since)}&select=created_at&order=created_at.desc&limit=20`,
+  );
+  const recent = (Array.isArray(rows) ? rows : []).map((row) => Date.parse(row.created_at)).filter(Number.isFinite);
+  const now = Date.now();
+  let wait = 0;
+  if (recent.length > 0 && now - recent[0] < MIN_INTERVAL_MS) wait = Math.max(wait, MIN_INTERVAL_MS - (now - recent[0]));
+  if (recent.length >= MAX_PER_HOUR) wait = Math.max(wait, recent[MAX_PER_HOUR - 1] + ONE_HOUR_MS - now);
+  if (wait > 0) return { limited: true, retryAfter: Math.max(1, Math.ceil(wait / 1000)) };
+  return { limited: false };
+}
+
+// Crée le défi dans la base. Le code n'est jamais stocké en clair.
+export async function createLoginChallenge(email, code) {
+  const norm = normalizeEmail(email);
+  const id = crypto.randomUUID();
   const expires = Date.now() + TEN_MINUTES * 1000;
-  const codeHash = sign(`${normalizeEmail(email)}:${code}`);
-  return cookie(CHALLENGE_COOKIE, pack({ email: normalizeEmail(email), codeHash, expires, attempts: 0 }), TEN_MINUTES);
+  await supabaseRest(CHALLENGES, {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      id,
+      email: norm,
+      code_hash: codeHash(id, norm, code),
+      attempts: 0,
+      expires_at: new Date(expires).toISOString(),
+    }),
+  });
+  return { id, expires, cookie: challengeCookieValue(id, norm, expires) };
 }
 
-export function verifyChallenge(req, email, code) {
-  const token = readCookies(req)[CHALLENGE_COOKIE];
-  const payload = unpack(token);
-  if (!payload || payload.expires < Date.now()) return { ok: false, expired: true };
-  if (payload.email !== normalizeEmail(email)) return { ok: false, nextCookie: bumpChallenge(payload) };
-  if (payload.attempts >= MAX_ATTEMPTS) return { ok: false, expired: true };
-  const expected = sign(`${normalizeEmail(email)}:${String(code || "").trim()}`);
-  if (payload.codeHash === expected) return { ok: true };
-  return { ok: false, nextCookie: bumpChallenge(payload) };
+// Rend un défi inutilisable (envoi du courriel raté, nouveau code demandé).
+export async function burnLoginChallenges(email, exceptId = null) {
+  const norm = normalizeEmail(email);
+  const except = exceptId ? `&id=neq.${encodeURIComponent(exceptId)}` : "";
+  await supabaseRest(`${CHALLENGES}?email=eq.${encodeURIComponent(norm)}&used_at=is.null${except}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ used_at: new Date().toISOString() }),
+  });
 }
 
-function bumpChallenge(payload) {
-  const attempts = Number(payload.attempts || 0) + 1;
-  if (attempts >= MAX_ATTEMPTS) return clearCookie(CHALLENGE_COOKIE);
-  const secondsLeft = Math.max(1, Math.floor((payload.expires - Date.now()) / 1000));
-  return cookie(CHALLENGE_COOKIE, pack({ ...payload, attempts }), secondsLeft);
+export async function burnLoginChallenge(id) {
+  await supabaseRest(`${CHALLENGES}?id=eq.${encodeURIComponent(id)}&used_at=is.null`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ used_at: new Date().toISOString() }),
+  });
+}
+
+// Ménage : les défis de plus d'un jour ne servent plus à rien (best effort).
+export async function purgeOldLoginChallenges() {
+  const before = new Date(Date.now() - ONE_DAY_MS).toISOString();
+  await supabaseRest(`${CHALLENGES}?created_at=lt.${encodeURIComponent(before)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
+// Vérifie un code. Chaque essai est compté AVANT la comparaison, par une
+// écriture conditionnelle (attempts doit être encore à la valeur lue) : deux
+// requêtes simultanées ne peuvent pas obtenir le même essai gratuit. Le succès
+// consomme le défi par une écriture conditionnelle (used_at encore vide) : un
+// code ne sert qu'une fois.
+// Renvoie { ok: true } | { ok: false, nextCookie? } ; lève une erreur Supabase si la base est injoignable.
+export async function consumeLoginChallenge(req, email, code) {
+  const norm = normalizeEmail(email);
+  const payload = unpack(readCookies(req)[CHALLENGE_COOKIE]);
+  if (!payload?.id || payload.email !== norm || payload.expires < Date.now()) return { ok: false };
+
+  const rows = await supabaseRest(`${CHALLENGES}?id=eq.${encodeURIComponent(payload.id)}&select=*&limit=1`);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row || row.used_at || normalizeEmail(row.email) !== norm) return { ok: false };
+  if (Date.parse(row.expires_at) < Date.now()) return { ok: false };
+  const attempts = Number(row.attempts || 0);
+  if (attempts >= MAX_ATTEMPTS) return { ok: false, nextCookie: clearCookie(CHALLENGE_COOKIE) };
+
+  const counted = await supabaseRest(
+    `${CHALLENGES}?id=eq.${encodeURIComponent(row.id)}&used_at=is.null&attempts=eq.${attempts}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ attempts: attempts + 1 }),
+    },
+  );
+  if (!Array.isArray(counted) || counted.length === 0) return { ok: false };
+
+  if (!safeEqual(codeHash(row.id, norm, code), row.code_hash)) {
+    return { ok: false, nextCookie: attempts + 1 >= MAX_ATTEMPTS ? clearCookie(CHALLENGE_COOKIE) : undefined };
+  }
+
+  const used = await supabaseRest(`${CHALLENGES}?id=eq.${encodeURIComponent(row.id)}&used_at=is.null`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ used_at: new Date().toISOString() }),
+  });
+  if (!Array.isArray(used) || used.length === 0) return { ok: false };
+  return { ok: true };
 }
 
 export function createSession(email) {

@@ -1,4 +1,4 @@
-import { isAllowedEmail, noStore, normalizeEmail } from "./auth-utils.js";
+import { noStore, normalizeEmail, requireSession } from "./auth-utils.js";
 
 const TABLE = "orkmap_recovery_dumps";
 const ALLOWED_ORIGINS = new Set([
@@ -55,13 +55,20 @@ async function supabaseFetch(path, options = {}) {
 export default async function handler(req, res) {
   noStore(res);
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+  // Session obligatoire : sans elle, n'importe qui connaissant une adresse autorisée
+  // pourrait écrire dans la base avec la clé service_role.
+  const session = requireSession(req, res);
+  if (!session) return;
   if (!supabaseConfig()) return res.status(503).json({ error: "Supabase is not configured" });
 
-  const origin = String(req.headers.origin || req.body?.sourceOrigin || "");
+  // L'origine vient uniquement de l'en-tête que pose le navigateur, jamais du corps de la requête.
+  const origin = String(req.headers?.origin || "");
   if (origin && !ALLOWED_ORIGINS.has(origin)) return res.status(403).json({ error: "Origin not allowed" });
 
+  // On ne dépose que sur son propre compte.
   const email = normalizeEmail(req.body?.email);
-  if (!isAllowedEmail(email)) return res.status(403).json({ error: "Email not allowed" });
+  if (email !== normalizeEmail(session.email)) return res.status(403).json({ error: "Email not allowed" });
 
   const dumpType = String(req.body?.dumpType || "").slice(0, 80);
   const recordKey = String(req.body?.recordKey || "").slice(0, 240);

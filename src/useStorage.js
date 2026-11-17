@@ -8,6 +8,14 @@ const PHOTOS_STORE = "photos";
 const OMR_STORE = "omr-scores";
 const DEBOUNCE_MS = 500;
 const LOCAL_LOAD_TIMEOUT_MS = 4000;
+// Si IndexedDB ne répond pas dans le délai ci-dessus, on passe en mode dégradé
+// (lecture seule côté serveur) et on relit patiemment : jamais d'envoi ni
+// d'écriture dans IndexedDB tant qu'une lecture n'a pas réussi.
+export const LOCAL_RETRY_TIMEOUTS_MS = [15000, 30000, 60000];
+const LOCAL_RETRY_PAUSE_MS = 5000;
+// Vercel refuse tout corps de requête au-delà de 4,5 Mo : on s'arrête à 4 Mo
+// (mesure en octets) et on le dit, au lieu d'un faux « Envoi en cours ».
+export const MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
 const REMOTE_LOAD_TIMEOUT_MS = 8000;
 const REMOTE_SAVE_TIMEOUT_MS = 90000;
 const RETRY_INTERVAL_MS = 60000;
@@ -50,16 +58,70 @@ function concertsBackupKey(email) {
   return `orkmap-concerts-backup:${email}`;
 }
 
-function writeConcertsBackup(email, data) {
-  if (!email || !Array.isArray(data) || data.length === 0) return;
+function concertsBackupPrevKey(email) {
+  return `orkmap-concerts-backup-prev:${email}`;
+}
+
+// ── État partagé lu par le bandeau (voir useSyncStatus) ──
+// backupFailed : le téléphone n'arrive plus à écrire dans son stockage de secours
+//   (quota plein) : la copie de secours ou la file d'attente peut être périmée.
+// degraded : IndexedDB est lent ou en échec ; rien n'est envoyé au serveur.
+// oversize : types de données trop volumineux pour l'envoi (limite Vercel).
+const syncFlags = { backupFailed: false, degraded: false };
+const oversize = new Map();
+
+function setSyncFlag(name, value) {
+  if (syncFlags[name] === value) return;
+  syncFlags[name] = value;
+  notifySyncStatus();
+}
+
+const backupIdsCache = new Map();
+
+function idsOf(list) {
+  return new Set((Array.isArray(list) ? list : []).map((item) => item?.id).filter(Boolean));
+}
+
+// Copie de secours des concerts. Jamais écrasée en silence :
+// - un échec d'écriture (quota) est exposé via l'état « backupFailed » ;
+// - si la nouvelle liste perd des concerts sans suppression explicite, l'ancienne
+//   copie est gardée dans une seconde clé (« -prev ») avant d'être remplacée.
+export function writeConcertsBackup(email, data, { removedIds = [] } = {}) {
+  if (!email || !Array.isArray(data) || data.length === 0) return { ok: true, skipped: true };
+  const key = concertsBackupKey(email);
   try {
-    localStorage.setItem(concertsBackupKey(email), JSON.stringify(data));
+    const nextIds = idsOf(data);
+    let previousIds = backupIdsCache.get(email);
+    if (!previousIds) {
+      try {
+        const rawPrevious = localStorage.getItem(key);
+        previousIds = idsOf(rawPrevious ? JSON.parse(rawPrevious) : []);
+      } catch {
+        previousIds = new Set();
+      }
+    }
+    const explicit = new Set(removedIds.map(String));
+    const lost = Array.from(previousIds).filter((id) => !nextIds.has(id) && !explicit.has(String(id)));
+    if (lost.length > 0) {
+      try {
+        const rawPrevious = localStorage.getItem(key);
+        if (rawPrevious) localStorage.setItem(concertsBackupPrevKey(email), rawPrevious);
+      } catch {
+        // pas de place pour la génération précédente : on continue, l'échec principal sera signalé s'il y en a un
+      }
+    }
+    localStorage.setItem(key, JSON.stringify(data));
+    backupIdsCache.set(email, nextIds);
+    setSyncFlag("backupFailed", false);
+    return { ok: true };
   } catch (err) {
     console.warn("[OrkMap] Concert backup failed:", err);
+    setSyncFlag("backupFailed", true);
+    return { ok: false, reason: String(err?.name || err?.message || err) };
   }
 }
 
-function readConcertsBackup(email) {
+export function readConcertsBackup(email) {
   if (!email) return [];
   try {
     const raw = localStorage.getItem(concertsBackupKey(email));
@@ -115,12 +177,13 @@ function mergePhotoGroups(localData, remoteData) {
 }
 
 function withTimeout(promise, ms, label) {
+  let timer;
   return Promise.race([
     promise,
     new Promise((_, reject) => {
-      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
     }),
-  ]);
+  ]).finally(() => clearTimeout(timer));
 }
 
 async function loadRemote(type) {
@@ -133,7 +196,19 @@ async function loadRemote(type) {
   return { available: true, data: payload.data };
 }
 
+export function measureBytes(text) {
+  return new TextEncoder().encode(String(text)).byteLength;
+}
+
 async function saveRemote(type, data, removedIds = []) {
+  const body = JSON.stringify({ type, data, removedIds });
+  const bytes = measureBytes(body);
+  if (bytes > MAX_PAYLOAD_BYTES) {
+    const error = new Error(`Payload too large: ${bytes} bytes`);
+    error.tooLarge = true;
+    error.bytes = bytes;
+    throw error;
+  }
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), REMOTE_SAVE_TIMEOUT_MS) : null;
   try {
@@ -141,7 +216,7 @@ async function saveRemote(type, data, removedIds = []) {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, data, removedIds }),
+      body,
       signal: controller?.signal,
     });
     if (resp.status === 503) return false;
@@ -168,25 +243,36 @@ function pendingKey(email, type) {
   return `${PENDING_PREFIX}${email}:${type}`;
 }
 
-function readPending(email, type) {
+// Si l'écriture dans localStorage échoue (quota plein), la marque reste en
+// mémoire pour la session en cours : l'envoi a lieu quand même, et l'état
+// « backupFailed » prévient que la marque ne survivra pas à une fermeture.
+const memoryPending = new Map();
+
+export function readPending(email, type) {
   try {
     const raw = localStorage.getItem(pendingKey(email, type));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return { rev: Number(parsed.rev || 0), removedIds: Array.isArray(parsed.removedIds) ? parsed.removedIds : [] };
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { rev: Number(parsed.rev || 0), removedIds: Array.isArray(parsed.removedIds) ? parsed.removedIds : [] };
+    }
   } catch {
-    return null;
+    // illisible : on regarde la copie mémoire
   }
+  return memoryPending.get(pendingKey(email, type)) || null;
 }
 
-function markPending(email, type, removedIds = []) {
+export function markPending(email, type, removedIds = []) {
   if (!email) return;
   const current = readPending(email, type) || { rev: 0, removedIds: [] };
   const ids = Array.from(new Set([...current.removedIds, ...removedIds.map(String)]));
+  const record = { rev: current.rev + 1, removedIds: ids };
   try {
-    localStorage.setItem(pendingKey(email, type), JSON.stringify({ rev: current.rev + 1, removedIds: ids, since: Date.now() }));
+    localStorage.setItem(pendingKey(email, type), JSON.stringify({ ...record, since: Date.now() }));
+    memoryPending.delete(pendingKey(email, type));
   } catch (err) {
     console.warn("[OrkMap] Pending mark failed:", err);
+    memoryPending.set(pendingKey(email, type), record);
+    setSyncFlag("backupFailed", true);
   }
   notifySyncStatus();
 }
@@ -199,10 +285,18 @@ function settlePending(email, type, sent) {
   try {
     if (current.rev === sent.rev) {
       localStorage.removeItem(pendingKey(email, type));
+      memoryPending.delete(pendingKey(email, type));
     } else {
       const sentIds = new Set(sent.removedIds);
       const rest = current.removedIds.filter((id) => !sentIds.has(id));
-      localStorage.setItem(pendingKey(email, type), JSON.stringify({ rev: current.rev, removedIds: rest, since: Date.now() }));
+      const record = { rev: current.rev, removedIds: rest };
+      memoryPending.delete(pendingKey(email, type));
+      try {
+        localStorage.setItem(pendingKey(email, type), JSON.stringify({ ...record, since: Date.now() }));
+      } catch (err) {
+        memoryPending.set(pendingKey(email, type), record);
+        throw err;
+      }
     }
   } catch (err) {
     console.warn("[OrkMap] Pending clear failed:", err);
@@ -223,6 +317,9 @@ function isOffline() {
 // One upload at a time per (email, type); a request arriving meanwhile is
 // replayed once the current one ends.
 const inflight = new Map();
+export function hasUploadInFlight(email, type) {
+  return inflight.has(`${email}:${type}`);
+}
 async function runExclusive(key, fn) {
   const state = inflight.get(key);
   if (state) {
@@ -241,21 +338,40 @@ async function runExclusive(key, fn) {
   }
 }
 
+function setOversize(email, type, bytes, rev) {
+  oversize.set(`${email}:${type}`, { type, bytes, rev });
+  notifySyncStatus();
+}
+
+function clearOversize(email, type) {
+  if (oversize.delete(`${email}:${type}`)) notifySyncStatus();
+}
+
 // Send the latest full state + pending deletions. On 409 (the server knows
 // records this device does not have yet), pull them in with `absorbRemote`,
 // then try once more. Never throws.
-function pushPending({ email, type, getPayload, absorbRemote }) {
+// Trop volumineux (> MAX_PAYLOAD_BYTES) : rien n'est envoyé, la marque « en
+// attente » est gardée (les données restent sur l'appareil) et l'état est exposé.
+// Tant que rien n'a changé (même révision), on ne recalcule pas toutes les minutes.
+export function pushPending({ email, type, getPayload, absorbRemote }) {
   return runExclusive(`${email}:${type}`, async () => {
     const pending = readPending(email, type);
     if (!pending || isOffline()) return;
+    if (oversize.get(`${email}:${type}`)?.rev === pending.rev) return;
     // Payload is null while this account's local data is still loading: never
     // send another account's (or an empty) list in its place.
     const payload = getPayload();
     if (payload === null) return;
     try {
       await saveRemote(type, payload, pending.removedIds);
+      clearOversize(email, type);
       settlePending(email, type, pending);
     } catch (err) {
+      if (err.tooLarge) {
+        console.warn(`[OrkMap] ${type} too large to sync (${err.bytes} bytes), kept on device`);
+        setOversize(email, type, err.bytes, pending.rev);
+        return;
+      }
       if (err.status !== 409 || !absorbRemote) {
         console.warn(`[OrkMap] ${type} sync deferred:`, err.message);
         return;
@@ -266,8 +382,13 @@ function pushPending({ email, type, getPayload, absorbRemote }) {
         const merged = getPayload();
         if (merged === null) return;
         await saveRemote(type, merged, pending.removedIds);
+        clearOversize(email, type);
         settlePending(email, type, pending);
       } catch (retryErr) {
+        if (retryErr.tooLarge) {
+          setOversize(email, type, retryErr.bytes, pending.rev);
+          return;
+        }
         console.warn(`[OrkMap] ${type} sync conflict unresolved:`, retryErr.message);
       }
     }
@@ -349,13 +470,20 @@ function countPending() {
       if (String(localStorage.key(index)).startsWith(PENDING_PREFIX)) count += 1;
     }
   } catch {
-    return 0;
+    return memoryPending.size;
   }
-  return count;
+  return count + memoryPending.size;
 }
 
-function readSyncStatus() {
-  return { online: !isOffline(), pending: countPending(), sessionExpired };
+export function readSyncStatus() {
+  return {
+    online: !isOffline(),
+    pending: countPending(),
+    sessionExpired,
+    backupFailed: syncFlags.backupFailed,
+    degraded: syncFlags.degraded,
+    oversize: Array.from(oversize.values()).map(({ type, bytes }) => ({ type, bytes })),
+  };
 }
 
 export function useSyncStatus() {
@@ -441,6 +569,316 @@ export async function exportLocalDataForRecovery() {
   };
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Export local SANS envoi : un fichier JSON complet de ce que contient l'appareil
+// (concerts + photos + partitions), pour garder une sauvegarde à la main.
+// Contrairement à exportLocalDataForRecovery, rien n'est dupliqué dans le fichier
+// et rien n'est envoyé au serveur.
+// ───────────────────────────────────────────────────────────────────────────
+export async function buildLocalSnapshot(db) {
+  const database = db || (await getDB());
+  const concerts = await database.getAll(STORE);
+  const photoKeys = await database.getAllKeys(PHOTOS_STORE);
+  const photos = [];
+  for (const key of photoKeys) {
+    photos.push({ key, value: await database.get(PHOTOS_STORE, key) });
+  }
+  const omrScores = await database.getAll(OMR_STORE);
+  return {
+    kind: "orkmap-local-export",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    origin: typeof window !== "undefined" ? window.location?.origin : undefined,
+    userAgent: typeof navigator !== "undefined" ? navigator.userAgent : undefined,
+    dbName: DB_NAME,
+    dbVersion: DB_VERSION,
+    counts: { concerts: concerts.length, photos: photos.length, omrScores: omrScores.length },
+    concerts,
+    photos,
+    omrScores,
+  };
+}
+
+function pad(n) {
+  return String(n).padStart(2, "0");
+}
+
+export function localExportFilename(date = new Date()) {
+  const d = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const t = `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  return `orkmap-sauvegarde-locale-${d}-${t}.json`;
+}
+
+// Déclenche le téléchargement d'un fichier texte dans le navigateur.
+export function downloadTextFile(filename, text, mime = "application/json") {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+export async function exportLocalDataToFile({ db, download = downloadTextFile } = {}) {
+  const snapshot = await buildLocalSnapshot(db);
+  const text = JSON.stringify(snapshot);
+  const filename = localExportFilename();
+  download(filename, text);
+  return { filename, bytes: measureBytes(text), counts: snapshot.counts };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// C1 : « Recharger depuis le compte » sans jamais rien détruire.
+// Règles : refuser si la réponse serveur est vide/invalide, refuser s'il reste
+// des modifications à envoyer, mettre la version locale de côté AVANT tout
+// remplacement, ne remplacer que les concerts présents des deux côtés, garder
+// les concerts locaux absents du serveur, ne calculer aucun removedIds.
+// ───────────────────────────────────────────────────────────────────────────
+function refuse(raison) {
+  return { refus: true, raison };
+}
+
+export function planSafeReload({ serverData, localConcerts, email }) {
+  if (!Array.isArray(serverData)) return refuse("Réponse du serveur invalide : rien n'a été changé.");
+  if (serverData.length === 0) return refuse("Le compte ne contient aucun concert : rien n'a été changé (tes concerts locaux sont intacts).");
+  for (const item of serverData) {
+    if (!item || typeof item !== "object" || item.id === undefined || item.id === null || item.id === "") {
+      return refuse("Réponse du serveur invalide (concert sans identifiant) : rien n'a été changé.");
+    }
+  }
+  const serverById = new Map(serverData.map((item) => [String(item.id), item]));
+  const local = Array.isArray(localConcerts) ? localConcerts : [];
+  const localIds = new Set();
+  const merged = [];
+  let remplaces = 0;
+  let conserves = 0;
+  for (const item of local) {
+    if (!item || item.id === undefined || item.id === null) continue;
+    const id = String(item.id);
+    localIds.add(id);
+    const fromServer = serverById.get(id);
+    if (fromServer) {
+      merged.push(withOwner(fromServer, email));
+      remplaces += 1;
+    } else {
+      merged.push(item);
+      conserves += 1;
+    }
+  }
+  let ajoutes = 0;
+  for (const [id, item] of serverById) {
+    if (localIds.has(id)) continue;
+    merged.push(withOwner(item, email));
+    ajoutes += 1;
+  }
+  return { refus: false, merged, "remplacés": remplaces, "conservés": conserves, "ajoutés": ajoutes };
+}
+
+// Copie de secours horodatée, jamais écrasée (clé unique à chaque appel).
+// Dans IndexedDB d'abord (grand quota, relue pour vérifier) ; localStorage
+// seulement si IndexedDB refuse, pour ne pas manger le quota de la copie courante.
+let safetyCopyCounter = 0;
+export async function saveSafetyCopy(email, concerts, { db } = {}) {
+  safetyCopyCounter += 1;
+  const savedAt = new Date().toISOString();
+  const cle = `orkmap-safety-copy:${email}:${savedAt}:${safetyCopyCounter}`;
+  const record = { kind: "orkmap-safety-copy", email, savedAt, count: concerts.length, concerts };
+  let idb = false;
+  let ls = false;
+  try {
+    const database = db || (await getDB());
+    await database.put(PHOTOS_STORE, record, cle);
+    const back = await database.get(PHOTOS_STORE, cle);
+    idb = Boolean(back) && Array.isArray(back.concerts) && back.concerts.length === concerts.length;
+  } catch (err) {
+    console.warn("[OrkMap] Safety copy (IndexedDB) failed:", err);
+  }
+  if (!idb) {
+    try {
+      localStorage.setItem(cle, JSON.stringify(record));
+      ls = true;
+    } catch (err) {
+      console.warn("[OrkMap] Safety copy (localStorage) failed:", err);
+    }
+  }
+  if (!idb && !ls) throw new Error("Impossible de mettre la version locale de côté.");
+  return { cle, idb, ls, copies: concerts.length };
+}
+
+export async function runSafeReload({
+  email, isOffline: offline, hasUnsavedEdits, hasPending, getLocal,
+  fetchServer, saveSafetyCopy: saveCopy, download, apply,
+}) {
+  if (offline()) return refuse("Pas de réseau : le rechargement attendra le retour du réseau. Tes concerts restent sur le téléphone.");
+  const busy = () => (hasUnsavedEdits() ? "Une modification vient d'être faite et n'est pas encore enregistrée : réessaie dans un instant." : hasPending() ? "Des modifications n'ont pas encore été envoyées au compte : attends la fin de l'envoi (ou le retour du réseau), puis réessaie. Rien n'a été changé." : "");
+  let why = busy();
+  if (why) return refuse(why);
+
+  let serverData;
+  try {
+    serverData = await fetchServer();
+  } catch (err) {
+    return refuse(`Le compte est injoignable (${err?.message || err}) : rien n'a été changé.`);
+  }
+  why = busy();
+  if (why) return refuse(why);
+
+  const local = getLocal();
+  const plan = planSafeReload({ serverData, localConcerts: local, email });
+  if (plan.refus) return plan;
+
+  let copie = null;
+  if (local.length > 0) {
+    try {
+      copie = await saveCopy(local);
+    } catch (err) {
+      return refuse(`Impossible de mettre ta version locale de côté (${err?.message || err}) : rien n'a été changé.`);
+    }
+  }
+  let fichier = null;
+  if (download) {
+    try {
+      fichier = await download(local);
+    } catch (err) {
+      console.warn("[OrkMap] Export file before reload failed:", err);
+    }
+  }
+  why = busy();
+  if (why) return refuse(why);
+
+  try {
+    await apply(plan.merged);
+  } catch (err) {
+    return refuse(`Écriture locale impossible (${err?.message || err}) : rien n'a été changé.`);
+  }
+  return {
+    "remplacés": plan["remplacés"],
+    "conservés": plan["conservés"],
+    "ajoutés": plan["ajoutés"],
+    copie: copie?.cle ?? null,
+    fichier,
+  };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// I1 : chargement local, mode dégradé et relecture patiente.
+// ───────────────────────────────────────────────────────────────────────────
+// `read` lit IndexedDB et renvoie { localData, canSeed }. Si la lecture échoue ou
+// dépasse le délai, on passe en mode dégradé : on affiche la copie de secours,
+// mais elle ne sert JAMAIS à alimenter le serveur (canSeed = false).
+export async function loadLocalWithFallback({
+  email, read, timeoutMs = LOCAL_LOAD_TIMEOUT_MS,
+  readBackup = () => readConcertsBackup(email).map((item) => withOwner(item, email)),
+  removedIds = readPending(email, SYNC_TYPES.concerts)?.removedIds || [],
+}) {
+  try {
+    const result = await withTimeout(read(), timeoutMs, "Concert IndexedDB load");
+    return { degraded: false, localData: result.localData, canSeed: result.canSeed };
+  } catch (error) {
+    console.warn("[OrkMap] IndexedDB load failed, degraded mode:", error);
+    return { degraded: true, localData: withoutRemoved(readBackup(), removedIds), canSeed: false, error };
+  }
+}
+
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Relit IndexedDB avec des délais de plus en plus patients. Renvoie le résultat de
+// `read`, ou null si le compte affiché a changé entre-temps (isCurrent faux).
+export async function retryLocalRead({
+  read, isCurrent, timeouts = LOCAL_RETRY_TIMEOUTS_MS, sleep = defaultSleep, pauseMs = LOCAL_RETRY_PAUSE_MS,
+}) {
+  for (let attempt = 0; ; attempt += 1) {
+    if (!isCurrent()) return null;
+    const timeout = timeouts[Math.min(attempt, timeouts.length - 1)];
+    try {
+      const result = await withTimeout(read(), timeout, "Concert IndexedDB retry");
+      return isCurrent() ? result : null;
+    } catch (err) {
+      console.warn("[OrkMap] IndexedDB retry failed:", err?.message || err);
+    }
+    await sleep(pauseMs);
+  }
+}
+
+export function signaturesOf(list) {
+  const map = new Map();
+  for (const item of Array.isArray(list) ? list : []) {
+    if (item?.id) map.set(String(item.id), JSON.stringify(item));
+  }
+  return map;
+}
+
+// Ids créés ou modifiés depuis l'affichage de départ (base = signaturesOf(copie affichée)).
+export function changedIds(baseSig, current) {
+  const out = [];
+  for (const item of Array.isArray(current) ? current : []) {
+    if (!item?.id) continue;
+    if (baseSig.get(String(item.id)) !== JSON.stringify(item)) out.push(String(item.id));
+  }
+  return out;
+}
+
+// Réunit ce que contient IndexedDB et ce qui a été fait pendant le mode dégradé :
+// ce qui a été modifié/créé à ce moment-là gagne, tout le reste vient d'IndexedDB,
+// et rien de ce qu'IndexedDB contient ne disparaît (hors suppression explicite).
+export function reconcileAfterDegraded({ editedIds, current, idb, removedIds = [] }) {
+  const edited = new Set(Array.from(editedIds || []).map(String));
+  const removed = new Set((removedIds || []).map(String));
+  const byId = new Map();
+  for (const item of idb || []) if (item?.id) byId.set(String(item.id), item);
+  for (const item of current || []) {
+    if (!item?.id) continue;
+    const id = String(item.id);
+    if (edited.has(id) || !byId.has(id)) byId.set(id, item);
+  }
+  return Array.from(byId.values()).filter((item) => !removed.has(String(item.id)));
+}
+
+// Marqueur persistant : ce qui a été modifié pendant un mode dégradé et qui n'est
+// pas encore revenu dans IndexedDB (survit à la fermeture de l'application).
+function degradedMarkerKey(email) {
+  return `orkmap-degraded-edits:${email}`;
+}
+
+export function readDegradedMarker(email) {
+  try {
+    const raw = localStorage.getItem(degradedMarkerKey(email));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      editedIds: Array.isArray(parsed.editedIds) ? parsed.editedIds.map(String) : [],
+      removedIds: Array.isArray(parsed.removedIds) ? parsed.removedIds.map(String) : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeDegradedMarker(email, { editedIds = [], removedIds = [] }) {
+  try {
+    localStorage.setItem(degradedMarkerKey(email), JSON.stringify({
+      editedIds: Array.from(new Set(editedIds.map(String))),
+      removedIds: Array.from(new Set(removedIds.map(String))),
+      at: Date.now(),
+    }));
+  } catch (err) {
+    console.warn("[OrkMap] Degraded marker write failed:", err);
+    setSyncFlag("backupFailed", true);
+  }
+}
+
+export function clearDegradedMarker(email) {
+  try {
+    localStorage.removeItem(degradedMarkerKey(email));
+  } catch {
+    // rien à faire
+  }
+}
+
 /**
  * Hook: persistent concerts state backed by IndexedDB.
  * Returns [concerts, setConcerts, loaded] — same API as useState.
@@ -454,6 +892,11 @@ export function useConcerts(initialConcerts, userEmail) {
   const latestRef = useRef([]);
   const removalsRef = useRef([]);
   const readyRef = useRef("");
+  // Mode dégradé (IndexedDB lent ou en échec) : rien n'est envoyé au serveur ni
+  // écrit dans IndexedDB tant qu'une lecture n'a pas réussi.
+  const degradedRef = useRef(false);
+  const degradedBaseRef = useRef(new Map());
+  const loadTokenRef = useRef(0);
   const email = normalizeEmail(userEmail);
   const setConcerts = useCallback((data) => {
     latestRef.current = data;
@@ -463,17 +906,12 @@ export function useConcerts(initialConcerts, userEmail) {
   // Surgical save: upsert everything in `data`, and delete ONLY ids the user
   // explicitly removed this session (removedIds). A stale/empty/reduced `data`
   // can no longer wipe concerts it never knew about — that was the data-loss bug.
+  // (La copie de secours localStorage est écrite par `save` et `absorbRemote`
+  // avec la liste à jour ; elle n'est plus réécrite ici avec l'ancien état.)
   const saveLocal = useCallback(async (data, removedIds = []) => {
     if (!email) return;
     const db = await getDB();
     const tx = db.transaction(STORE, "readwrite");
-    const existingKeys = await tx.store.getAllKeys();
-    const existingForUser = [];
-    for (const key of existingKeys) {
-      const existing = await tx.store.get(key);
-      if (belongsToUser(existing, email)) existingForUser.push(withOwner(existing, email));
-    }
-    writeConcertsBackup(email, existingForUser);
     for (const id of removedIds) {
       const existing = await tx.store.get(id);
       if (existing && belongsToUser(existing, email)) await tx.store.delete(id);
@@ -486,6 +924,9 @@ export function useConcerts(initialConcerts, userEmail) {
 
   // Load from IndexedDB first, then prefer the account sync when available.
   useEffect(() => {
+    const token = loadTokenRef.current + 1;
+    loadTokenRef.current = token;
+    const isCurrent = () => loadTokenRef.current === token;
     (async () => {
       if (!email) {
         setConcerts([]);
@@ -497,12 +938,15 @@ export function useConcerts(initialConcerts, userEmail) {
       // list under the new account while this one loads.
       if (readyRef.current && readyRef.current !== email) setConcerts([]);
       readyRef.current = "";
+      degradedRef.current = false;
+      setSyncFlag("degraded", false);
       setLoaded(false);
       setLoadedFor("");
-      let localData = [];
-      let canSeedRemoteFromLocal = false;
-      try {
-        await withTimeout((async () => {
+
+      // Lecture d'IndexedDB (migration et concert de démonstration compris).
+      const readIdb = async () => {
+        let localData = [];
+        let canSeedRemoteFromLocal = false;
         const db = await getDB();
         const all = await db.getAll(STORE);
         const matching = all.filter((item) => belongsToUser(item, email));
@@ -525,34 +969,34 @@ export function useConcerts(initialConcerts, userEmail) {
           }
           await tx.done;
         }
-        })(), LOCAL_LOAD_TIMEOUT_MS, "Concert IndexedDB load");
-        if (localData.length === 0) {
-          localData = readConcertsBackup(email).map((item) => withOwner(item, email));
-          canSeedRemoteFromLocal = localData.length > 0;
+        return { localData, canSeed: canSeedRemoteFromLocal };
+      };
+
+      // Ce qui a été fait pendant un mode dégradé précédent et pas encore revenu
+      // dans IndexedDB (application fermée entre-temps) est réintégré ici.
+      const reintegrate = async (idbList) => {
+        const marker = readDegradedMarker(email);
+        if (!marker) return idbList;
+        const merged = reconcileAfterDegraded({
+          editedIds: marker.editedIds,
+          current: readConcertsBackup(email).map((item) => withOwner(item, email)),
+          idb: idbList,
+          removedIds: marker.removedIds,
+        });
+        try {
+          await withTimeout(saveLocal(merged, marker.removedIds), LOCAL_LOAD_TIMEOUT_MS, "Concert degraded merge save");
+          markPending(email, SYNC_TYPES.concerts, marker.removedIds);
+          clearDegradedMarker(email);
+        } catch (err) {
+          // Écriture impossible pour l'instant : on affiche quand même le résultat
+          // réuni, et le marqueur reste en place pour une prochaine tentative.
+          console.warn("[OrkMap] Degraded edits could not be written back yet:", err);
         }
-        // A deletion made offline and not yet sent must not come back through
-        // the backup copy (e.g. after deleting the last concert).
-        localData = withoutRemoved(localData, readPending(email, SYNC_TYPES.concerts)?.removedIds || []);
-        // Keep anything edited while the local database was opening.
-        if (latestRef.current.length) localData = mergeConcerts(latestRef.current, localData, email);
-        writeConcertsBackup(email, localData);
-        setConcerts(localData);
-      } catch (err) {
-        console.warn("[OrkMap] IndexedDB load failed, using memory:", err);
-        localData = readConcertsBackup(email).map((item) => withOwner(item, email));
-        if (localData.length > 0) {
-          canSeedRemoteFromLocal = true;
-          setConcerts(localData);
-        }
-        if (email === ALEX_EMAIL && initialConcerts) {
-          const fallback = initialConcerts.map((item) => withOwner(item, email));
-          if (localData.length === 0) {
-            localData = fallback;
-            setConcerts(localData);
-          }
-        }
-      }
-      if (ENABLE_REMOTE_CONCERT_PULL && !isOffline()) {
+        return merged;
+      };
+
+      const pullRemote = async (canSeedRemoteFromLocal, localCount) => {
+        if (!ENABLE_REMOTE_CONCERT_PULL || isOffline()) return;
         try {
           const remote = await withTimeout(loadRemote(SYNC_TYPES.concerts), REMOTE_LOAD_TIMEOUT_MS, "Concert sync load");
           if (remote.available && Array.isArray(remote.data)) {
@@ -560,18 +1004,78 @@ export function useConcerts(initialConcerts, userEmail) {
             if (canSeedRemoteFromLocal && JSON.stringify(remote.data) !== JSON.stringify(remoteConcertPayload(latestRef.current, email))) {
               markPending(email, SYNC_TYPES.concerts);
             }
-          } else if (remote.available && canSeedRemoteFromLocal && localData.length > 0) {
+          } else if (remote.available && canSeedRemoteFromLocal && localCount > 0) {
             markPending(email, SYNC_TYPES.concerts);
           }
         } catch (err) {
           console.warn("[OrkMap] Concert sync load failed, using local cache:", err);
         }
+      };
+
+      const first = await loadLocalWithFallback({ email, read: readIdb });
+      let localData = first.localData;
+      let canSeedRemoteFromLocal = first.canSeed;
+
+      if (first.degraded) {
+        // Mode dégradé : on montre la copie de secours (jamais le concert de
+        // démonstration), on n'envoie rien, on n'écrit pas dans IndexedDB, et on
+        // relit IndexedDB patiemment en arrière-plan.
+        degradedRef.current = true;
+        degradedBaseRef.current = signaturesOf(localData);
+        setSyncFlag("degraded", true);
+        if (latestRef.current.length) localData = mergeConcerts(latestRef.current, localData, email);
+        setConcerts(localData);
+        readyRef.current = email;
+        setLoaded(true);
+        setLoadedFor(email);
+        (async () => {
+          const result = await retryLocalRead({ read: readIdb, isCurrent });
+          if (!result || !isCurrent()) return;
+          try {
+            const marker = readDegradedMarker(email) || { editedIds: [], removedIds: [] };
+            const merged = reconcileAfterDegraded({
+              editedIds: marker.editedIds,
+              current: latestRef.current,
+              idb: result.localData,
+              removedIds: marker.removedIds,
+            });
+            await withTimeout(saveLocal(merged, marker.removedIds), LOCAL_LOAD_TIMEOUT_MS * 4, "Concert degraded recovery save");
+            setConcerts(merged);
+            writeConcertsBackup(email, merged, { removedIds: marker.removedIds });
+            if (marker.editedIds.length || marker.removedIds.length) markPending(email, SYNC_TYPES.concerts, marker.removedIds);
+            clearDegradedMarker(email);
+            degradedRef.current = false;
+            setSyncFlag("degraded", false);
+            await pullRemote(result.canSeed, merged.length);
+            flush();
+          } catch (err) {
+            // Écriture impossible : on reste en mode dégradé, rien n'est perdu (copie + marqueur).
+            console.warn("[OrkMap] Degraded recovery failed, staying degraded:", err);
+          }
+        })();
+        return;
       }
+
+      localData = await reintegrate(localData);
+      if (localData.length === 0) {
+        localData = readConcertsBackup(email).map((item) => withOwner(item, email));
+        canSeedRemoteFromLocal = localData.length > 0;
+      }
+      // A deletion made offline and not yet sent must not come back through
+      // the backup copy (e.g. after deleting the last concert).
+      localData = withoutRemoved(localData, readPending(email, SYNC_TYPES.concerts)?.removedIds || []);
+      // Keep anything edited while the local database was opening.
+      if (latestRef.current.length) localData = mergeConcerts(latestRef.current, localData, email);
+      writeConcertsBackup(email, localData);
+      setConcerts(localData);
+
+      await pullRemote(canSeedRemoteFromLocal, localData.length);
       readyRef.current = email;
       setLoaded(true);
       setLoadedFor(email);
       flush();
     })();
+    return () => { loadTokenRef.current += 1; };
   }, [email, saveLocal]);
 
   // Bring server records into the current list (local version wins on the same
@@ -581,14 +1085,14 @@ export function useConcerts(initialConcerts, userEmail) {
     if (!Array.isArray(remoteData)) return;
     const mergedData = mergeConcerts(latestRef.current, withoutRemoved(remoteData, removedIds), email);
     setConcerts(mergedData);
-    writeConcertsBackup(email, mergedData);
+    writeConcertsBackup(email, mergedData, { removedIds });
     await withTimeout(saveLocal(mergedData), LOCAL_LOAD_TIMEOUT_MS, "Concert cache save");
   }, [email, saveLocal, setConcerts]);
 
   const flush = useCallback(() => pushPending({
     email,
     type: SYNC_TYPES.concerts,
-    getPayload: () => (readyRef.current === email ? remoteConcertPayload(latestRef.current, email) : null),
+    getPayload: () => (readyRef.current === email && !degradedRef.current ? remoteConcertPayload(latestRef.current, email) : null),
     absorbRemote,
   }), [email, absorbRemote]);
 
@@ -598,7 +1102,18 @@ export function useConcerts(initialConcerts, userEmail) {
   const save = useCallback(async (data, removedIds = []) => {
     if (!email) return;
     const owned = data.map((item) => withOwner(item, email));
-    writeConcertsBackup(email, owned);
+    writeConcertsBackup(email, owned, { removedIds });
+    if (degradedRef.current) {
+      // Mode dégradé : IndexedDB n'a pas été relu, on n'y écrit pas (cela pourrait
+      // écraser des données plus récentes avec la copie de secours) et on n'envoie
+      // rien. Ce qui a changé est noté pour être réintégré dès que IndexedDB répond.
+      const previous = readDegradedMarker(email) || { editedIds: [], removedIds: [] };
+      writeDegradedMarker(email, {
+        editedIds: [...previous.editedIds, ...changedIds(degradedBaseRef.current, owned)],
+        removedIds: [...previous.removedIds, ...removedIds],
+      });
+      return;
+    }
     try {
       await saveLocal(owned, removedIds);
     } catch (err) {
@@ -631,15 +1146,56 @@ export function useConcerts(initialConcerts, userEmail) {
     // Deletions are recorded at once (not at the debounced save), so a quick
     // second edit cannot make them disappear from the queue.
     if (removedIds.length) {
-      markPending(email, SYNC_TYPES.concerts, removedIds);
       removalsRef.current = [...removalsRef.current, ...removedIds];
-      deleteLocalNow(STORE, removedIds, email);
+      if (degradedRef.current) {
+        // Mode dégradé : pas de marque « en attente » ni d'écriture IndexedDB ; la
+        // suppression est notée dans le marqueur et appliquée à la relecture réussie.
+        const previous = readDegradedMarker(email) || { editedIds: [], removedIds: [] };
+        writeDegradedMarker(email, { editedIds: previous.editedIds, removedIds: [...previous.removedIds, ...removedIds] });
+      } else {
+        markPending(email, SYNC_TYPES.concerts, removedIds);
+        deleteLocalNow(STORE, removedIds, email);
+      }
     }
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(runSaveNow, DEBOUNCE_MS);
   }, [email, setConcerts, runSaveNow]);
 
-  return [concerts, setConcertsAndSave, loaded && loadedFor === email];
+  // C1 : « Recharger depuis le compte » SANS rien détruire (voir runSafeReload).
+  // Options : { download: false } pour ne pas proposer le fichier de sauvegarde.
+  // Renvoie { remplacés, conservés, ajoutés, copie, fichier } ou { refus: true, raison }.
+  const reloadFromAccountSafe = useCallback(async (options = {}) => {
+    if (!email || readyRef.current !== email) return refuse("Les données de ce compte ne sont pas encore chargées.");
+    if (degradedRef.current) return refuse("Le stockage du téléphone répond lentement : attends un instant, rien n'a été changé.");
+    const result = await runSafeReload({
+      email,
+      isOffline,
+      hasUnsavedEdits: () => saveTimer.current !== null,
+      hasPending: () => readPending(email, SYNC_TYPES.concerts) !== null || hasUploadInFlight(email, SYNC_TYPES.concerts),
+      getLocal: () => latestRef.current,
+      fetchServer: async () => {
+        const remote = await withTimeout(loadRemote(SYNC_TYPES.concerts), REMOTE_LOAD_TIMEOUT_MS * 2, "Concert reload");
+        if (!remote.available) throw new Error("synchronisation indisponible");
+        return remote.data;
+      },
+      saveSafetyCopy: (list) => saveSafetyCopy(email, list),
+      download: options.download === false ? null : async () => (await exportLocalDataToFile()).filename,
+      apply: async (merged) => {
+        // Écriture sans aucune suppression (aucun removedIds), puis seulement ensuite l'état affiché.
+        await withTimeout(saveLocal(merged), LOCAL_LOAD_TIMEOUT_MS * 4, "Concert reload save");
+        setConcerts(merged);
+        writeConcertsBackup(email, merged);
+      },
+    });
+    // Les concerts gardés parce qu'absents du compte partent vers le compte (ajout, jamais suppression).
+    if (!result.refus && result["conservés"] > 0) {
+      markPending(email, SYNC_TYPES.concerts);
+      flush();
+    }
+    return result;
+  }, [email, saveLocal, setConcerts, flush]);
+
+  return [concerts, setConcertsAndSave, loaded && loadedFor === email, { reloadFromAccountSafe }];
 }
 
 /**
