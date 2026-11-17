@@ -2,7 +2,7 @@
 // Le VRAI useConcerts (hooks et IndexedDB en mémoire, tests/support/lot3-*.mjs) parle aux VRAIES routes
 // api/sync.js et api/plan-image.js, elles-mêmes branchées sur le faux Supabase en mémoire.
 // Aucun appel réseau réel. Lancer : node --test tests/lot5-images.mjs
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -44,11 +44,31 @@ async function sessionCookie(email) {
 }
 
 // Le téléphone (fetch relatif « /api/… ») parle aux vraies routes ; les routes parlent au faux Supabase.
-async function setupWorld() {
+// Ordre des clés tel que le rend un vrai Postgres jsonb (longueur, puis octets) : sert à vérifier
+// que le téléphone ne compare pas du texte JSON brut.
+function jsonbOrder(v) {
+  if (Array.isArray(v)) return v.map(jsonbOrder);
+  if (v && typeof v === "object") {
+    const o = {};
+    for (const k of Object.keys(v).sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0))) o[k] = jsonbOrder(v[k]);
+    return o;
+  }
+  return v;
+}
+
+async function setupWorld({ jsonb = false } = {}) {
   reset();
   setEnv();
   const fake = installFakeSupabase({ delay: false });
-  const supa = globalThis.fetch;
+  const supaInner = globalThis.fetch;
+  const supa = jsonb ? async (url, init = {}) => {
+    const r = await supaInner(url, init);
+    if (String(url).includes("orkmap_user_data") && (!init.method || init.method === "GET")) {
+      const rows = await r.json();
+      return new Response(JSON.stringify(rows.map((row) => ({ ...row, data: jsonbOrder(row.data) }))), { status: 200 });
+    }
+    return r;
+  } : supaInner;
   const sync = (await imp("api/sync.js")).default;
   const planImage = (await imp("api/plan-image.js")).default;
   const cookie = await sessionCookie(EMAIL);
@@ -88,7 +108,9 @@ async function setupWorld() {
 
 const seedLocal = (list) => { for (const c of list) world.stores.concerts.set(c.id, structuredClone(c)); };
 const idbConcert = (id) => world.stores.concerts.get(id);
-const posts = (log, p) => log.filter((e) => e.path === p && e.method === "POST");
+// Envois réels (les demandes « lesquelles as-tu ? » { have } sont comptées à part).
+const posts = (log, p) => log.filter((e) => e.path === p && e.method === "POST" && !e.body?.have);
+const haves = (log) => log.filter((e) => e.path === "/api/plan-image" && e.method === "POST" && e.body?.have);
 const noInlineImage = (value) => !JSON.stringify(value).includes("data:image/");
 
 // ───────────── Extraction des références ─────────────
@@ -140,8 +162,8 @@ test("envoi : chaque image part seule, puis les concerts allégés ; le stockage
     const imagePosts = posts(w.log, "/api/plan-image");
     assert.equal(imagePosts.length, 3, "3 images distinctes, 3 requêtes (a n'est envoyée qu'une fois)");
     for (const e of imagePosts) assert.equal(Object.keys(e.body).sort().join(","), "dataUrl,hash", "une seule image par requête");
-    const order = w.log.filter((e) => e.method === "POST").map((e) => e.path);
-    assert.deepEqual(order, ["/api/plan-image", "/api/plan-image", "/api/plan-image", "/api/sync"], "images d'abord, concerts ensuite");
+    const order = w.log.filter((e) => e.method === "POST").map((e) => (e.body?.have ? "have" : e.path));
+    assert.deepEqual(order, ["have", "/api/plan-image", "/api/plan-image", "/api/plan-image", "/api/sync"], "le compte dit ce qu'il a, puis les images, puis les concerts");
     const sent = w.serverConcerts();
     assert.ok(noInlineImage(sent), "le JSON envoyé ne contient plus d'image");
     assert.deepEqual(sent.find((x) => x.id === "c1").pieces[0].plans, [ref(a), ref(b)]);
@@ -151,7 +173,7 @@ test("envoi : chaque image part seule, puis les concerts allégés ; le stockage
   } finally { w.restore(); }
 });
 
-test("échec d'une image : les concerts ne partent pas ; au réessai, seules les images manquantes partent", async () => {
+test("échec passager d'une image : concerts en attente, pastille, un seul essai par période, reprise après l'attente", async () => {
   const w = await setupWorld();
   try {
     const a = image(); const b = image();
@@ -159,18 +181,70 @@ test("échec d'une image : les concerts ne partent pas ; au réessai, seules les
     seedLocal([owned("c1", { pieces: [piece("p1", [a, b])] })]);
     const m = await freshStorage();
     const h = renderHook(m.useConcerts, [[], EMAIL]);
-    await waitFor(() => h.result[2] && posts(w.log, "/api/plan-image").length >= 2, 8000, "tentative d'envoi");
-    await sleep(150);
+    await waitFor(() => h.result[2] && m.readSyncStatus().imageRetry, 8000, "échec signalé");
     assert.equal(posts(w.log, "/api/sync").length, 0, "aucun envoi de concerts (pas de référence orpheline)");
-    assert.equal(w.serverConcerts(), null);
     assert.ok(localStorage.getItem(pendingKey), "la modification reste en file");
-    w.ctl.failImagePost = null;
+    const { bannerInfo } = await imp("src/syncUi.js");
+    assert.equal(bannerInfo(m.readSyncStatus()).text, "Sauvegarde en ligne en échec, nouvel essai plus tard");
     const before = posts(w.log, "/api/plan-image").length;
-    m.requestSyncRetry();
-    await waitFor(() => w.serverConcerts() && localStorage.getItem(pendingKey) === null, 8000, "réessai");
-    const retried = posts(w.log, "/api/plan-image").slice(before).map((e) => e.hash);
-    assert.deepEqual(retried, [sha(b)], "a, déjà acceptée, n'est pas renvoyée");
+    for (let i = 0; i < 4; i += 1) { m.requestSyncRetry(); await sleep(80); }
+    assert.equal(posts(w.log, "/api/plan-image").length, before, "pendant l'attente : ni b ni a ne repartent");
+    w.ctl.failImagePost = null;
+    mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    try {
+      mock.timers.tick(61_000); // la première attente (1 min) est passée
+      m.requestSyncRetry();
+      await waitFor(() => w.serverConcerts() && localStorage.getItem(pendingKey) === null, 8000, "réessai");
+    } finally { mock.timers.reset(); }
+    assert.deepEqual(posts(w.log, "/api/plan-image").slice(before).map((e) => e.hash), [sha(b)], "a, déjà sur le compte, n'est pas renvoyée");
     assert.deepEqual(w.serverConcerts()[0].pieces[0].plans, [ref(a), ref(b)]);
+    assert.equal(m.readSyncStatus().imageRetry, false);
+  } finally { w.restore(); }
+});
+
+test("S2 : une image refusée par le serveur pour sa forme n'est jamais renvoyée en boucle", async () => {
+  const w = await setupWorld();
+  try {
+    const bonne = image(60_000);
+    const raw = image(3_000_000);
+    const cassee = raw.slice(0, 1000) + "\r\n" + raw.slice(1000); // retour à la ligne dans le base64
+    seedLocal([owned("c1", { pieces: [piece("p1", [bonne, cassee])] })]);
+    localStorage.setItem(pendingKey, JSON.stringify({ rev: 1, removedIds: [] }));
+    const m = await freshStorage();
+    const h = renderHook(m.useConcerts, [[], EMAIL]);
+    await waitFor(() => h.result[2] && w.serverConcerts() && localStorage.getItem(pendingKey) === null, 8000, "envoi");
+    for (let i = 0; i < 5; i += 1) { m.requestSyncRetry(); await sleep(60); }
+    const imgs = posts(w.log, "/api/plan-image");
+    assert.equal(imgs.length, 2, "une fois chacune : la cassée part en copie nettoyée (validée avant envoi)");
+    const nettoyee = cassee.replace("\r\n", "");
+    assert.deepEqual(w.serverConcerts()[0].pieces[0].plans, [ref(bonne), ref(nettoyee)]);
+    assert.deepEqual(idbConcert("c1").pieces[0].plans, [bonne, cassee], "l'original reste intact sur le téléphone");
+    assert.equal(posts(w.log, "/api/sync").length, 1);
+  } finally { w.restore(); }
+});
+
+test("refus définitif (400) : l'image n'est plus renvoyée, les concerts partent quand même", async () => {
+  const w = await setupWorld();
+  try {
+    const a = image(); const b = image();
+    const routed = globalThis.fetch;
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url) === "/api/plan-image" && init.body && JSON.parse(init.body).hash === sha(b)) {
+        w.log.push({ path: "/api/plan-image", method: "POST", body: { hash: sha(b), dataUrl: "x" }, hash: sha(b), bytes: init.body.length });
+        return new Response(JSON.stringify({ error: "x" }), { status: 400 });
+      }
+      return routed(url, init);
+    };
+    seedLocal([owned("c1", { pieces: [piece("p1", [a, b])] })]);
+    const m = await freshStorage();
+    const h = renderHook(m.useConcerts, [[], EMAIL]);
+    await waitFor(() => h.result[2] && w.serverConcerts() && localStorage.getItem(pendingKey) === null, 8000, "envoi");
+    h.result[1]((list) => list.map((c) => ({ ...c, titre: "modifié" })));
+    await waitFor(() => w.serverConcerts()[0].titre === "modifié", 8000, "second envoi");
+    assert.equal(posts(w.log, "/api/plan-image").filter((e) => e.hash === sha(b)).length, 1, "un seul essai pour b");
+    const plans = w.serverConcerts()[0].pieces[0].plans;
+    assert.equal(plans[0], ref(a));
+    assert.equal(plans[1], b, "dernier recours : l'image reste dans le JSON, puisque ça tient");
   } finally { w.restore(); }
 });
 
@@ -252,19 +326,20 @@ test("téléchargement plus tard : hors ligne d'abord, l'image arrive au retour 
     w.setServerConcerts([owned("c2", { pieces: [piece("p2", [ref(distante)])] })]);
     w.putServerImage(distante);
     const m = await freshStorage();
-    w.ctl.offline = true;
-    // Le chargement initial lit le compte ; on coupe juste après pour le téléchargement.
+    // Le chargement initial lit le compte ; le téléphone passe hors ligne juste après.
     let first = true;
     const routed = globalThis.fetch;
     globalThis.fetch = async (url, init) => {
-      if (first && String(url).startsWith("/api/sync")) { first = false; w.ctl.offline = false; const r = await routed(url, init); w.ctl.offline = true; return r; }
-      return routed(url, init);
+      const r = await routed(url, init);
+      if (first && String(url).startsWith("/api/sync")) { first = false; navigator.onLine = false; }
+      return r;
     };
     const h = renderHook(m.useConcerts, [[], EMAIL]);
     await waitFor(() => h.result[2] && h.result[0].length === 1, 4000, "chargement");
     await sleep(200);
     assert.deepEqual(h.result[0][0].pieces[0].plans, [ref(distante)], "hors ligne : cadre « Plan non disponible »");
-    w.ctl.offline = false;
+    assert.equal(w.log.filter((e) => e.method === "GET" && e.path === "/api/plan-image").length, 0, "rien tenté hors ligne");
+    navigator.onLine = true;
     m.requestSyncRetry();
     await waitFor(() => h.result[0][0].pieces[0].plans[0] === distante, 4000, "téléchargement au retour du réseau");
   } finally { w.restore(); }
@@ -350,18 +425,68 @@ test("20 Mo de concerts dont 19,8 Mo d'images : envoi des concerts < 300 Ko, cha
   } finally { w.restore(); }
 });
 
-test("une image seule de plus de 4 Mo : rien ne part, bandeau « un plan est trop lourd »", async () => {
+test("plan déjà stocké de plus de 4 Mo : une copie réduite part sous SON empreinte, l'original reste, rien ne bloque", async () => {
   const w = await setupWorld();
+  const pi = await imp("src/planImages.js");
+  const petites = new Map();
+  pi.setImageShrinker(async (dataUrl) => {
+    if (!petites.has(dataUrl)) petites.set(dataUrl, image(1.5 * MO));
+    return petites.get(dataUrl);
+  });
   try {
-    seedLocal([owned("c1", { pieces: [piece("p1", [image(4.2 * MO)])] })]);
+    const grosse = image(4.2 * MO);
+    seedLocal([owned("c1", { pieces: [piece("p1", [grosse])] })]);
     const m = await freshStorage();
     const h = renderHook(m.useConcerts, [[], EMAIL]);
-    await waitFor(() => h.result[2] && m.readSyncStatus().oversize.length === 1, 8000, "état trop lourd");
-    assert.equal(w.log.filter((e) => e.method === "POST").length, 0);
-    assert.equal(m.readSyncStatus().oversize[0].what, "plan");
+    await waitFor(() => h.result[2] && w.serverConcerts() && localStorage.getItem(pendingKey) === null, 8000, "envoi");
+    const copie = petites.get(grosse);
+    assert.deepEqual(posts(w.log, "/api/plan-image").map((e) => e.hash), [sha(copie)]);
+    assert.deepEqual(w.serverConcerts()[0].pieces[0].plans, [ref(copie)]);
+    for (const e of w.log) assert.ok(e.bytes < 4 * MO);
+    assert.deepEqual(idbConcert("c1").pieces[0].plans, [grosse], "l'original reste intact");
+    assert.equal(m.readSyncStatus().oversize.length, 0);
+    // Réouverture : la copie du compte retrouve l'ORIGINAL (table copie → original), sans téléchargement ni renvoi.
+    unmountAll();
+    const m2 = await freshStorage();
+    const before = w.log.length;
+    const h2 = renderHook(m2.useConcerts, [[], EMAIL]);
+    await waitFor(() => h2.result[2], 4000, "réouverture");
+    await sleep(300);
+    const after = w.log.slice(before);
+    assert.equal(after.filter((e) => e.method === "GET" && e.path === "/api/plan-image").length, 0, "pas de téléchargement de la copie");
+    assert.equal(after.filter((e) => e.method === "POST").length, 0, "rien renvoyé");
+    assert.deepEqual(h2.result[0][0].pieces[0].plans, [grosse]);
+    // Un autre téléphone qui reçoit la référence de la copie la retrouve par la même table : ici le
+    // même compte reçoit c2 (venu d'ailleurs) qui cite la copie ; le téléphone y met l'original.
+    const rec = await m2.resolveImagesFromDevice([owned("c2", { pieces: [piece("p2", [ref(copie)])] })], h2.result[0], EMAIL);
+    assert.deepEqual(rec[0].pieces[0].plans, [grosse]);
+  } finally { pi.setImageShrinker(null); w.restore(); }
+});
+
+test("plan illisible et trop lourd : concerts envoyés quand même, référence « non envoyée » et pastille", async () => {
+  const w = await setupWorld();
+  try {
+    const grosse = image(4.2 * MO); // Node n'a pas de canvas : réduction impossible, dernier recours
+    const a = image();
+    seedLocal([owned("c1", { pieces: [piece("p1", [a, grosse])] })]);
+    const m = await freshStorage();
+    const h = renderHook(m.useConcerts, [[], EMAIL]);
+    await waitFor(() => h.result[2] && w.serverConcerts() && localStorage.getItem(pendingKey) === null, 8000, "envoi");
+    assert.deepEqual(w.serverConcerts()[0].pieces[0].plans, [ref(a), `orkimg-local:${sha(grosse)}`]);
+    assert.deepEqual(posts(w.log, "/api/plan-image").map((e) => e.hash), [sha(a)], "la grosse n'est jamais tentée");
+    assert.equal(m.readSyncStatus().unsentPlans, 1);
     const { bannerInfo } = await imp("src/syncUi.js");
-    assert.match(bannerInfo(m.readSyncStatus()).text, /^Un plan est trop lourd/);
-    assert.ok(localStorage.getItem(pendingKey), "la modification reste en file");
+    assert.equal(bannerInfo(m.readSyncStatus()).text, "1 plan non sauvegardé en ligne (trop lourd)");
+    assert.deepEqual(idbConcert("c1").pieces[0].plans, [a, grosse], "l'image reste sur le téléphone");
+    // Réouverture : rien n'est renvoyé, rien n'est téléchargé, l'image locale reste affichée.
+    unmountAll();
+    const before = w.log.length;
+    const m2 = await freshStorage();
+    const h2 = renderHook(m2.useConcerts, [[], EMAIL]);
+    await waitFor(() => h2.result[2], 4000, "réouverture");
+    await sleep(300);
+    assert.equal(w.log.slice(before).filter((e) => e.method === "POST" || (e.method === "GET" && e.path === "/api/plan-image")).length, 0);
+    assert.deepEqual(h2.result[0][0].pieces[0].plans, [a, grosse]);
   } finally { w.restore(); }
 });
 
@@ -387,8 +512,10 @@ test("route plan-image : session obligatoire, empreinte vérifiée, taille, idem
     assert.equal(fake.calls.length, 0, "aucune lecture ni écriture sans session");
     assert.equal((await routeCall(handler, { body: { hash: "abc", dataUrl: a } })).statusCode, 400, "empreinte mal formée");
     assert.equal((await routeCall(handler, { body: { hash: sha(image()), dataUrl: a } })).statusCode, 400, "empreinte d'une autre image");
-    const texte = `data:text/html;base64,${Buffer.from("x".repeat(5000)).toString("base64")}`;
-    assert.equal((await routeCall(handler, { body: { hash: sha(texte), dataUrl: texte } })).statusCode, 400, "pas une image");
+    const cassee = `data:image/jpeg;base64,${"A".repeat(3000)}\r\n${"B".repeat(3000)}`;
+    assert.equal((await routeCall(handler, { body: { hash: sha(cassee), dataUrl: cassee } })).statusCode, 400, "base64 mal formé");
+    const pasDataUrl = `https://exemple.invalid/${"x".repeat(3000)}`;
+    assert.equal((await routeCall(handler, { body: { hash: sha(pasDataUrl), dataUrl: pasDataUrl } })).statusCode, 400, "pas un data URL");
     const heic = image().replace("image/jpeg", "image/heic");
     assert.equal((await routeCall(handler, { body: { hash: sha(heic), dataUrl: heic } })).statusCode, 200, "HEIC d'iPhone accepté (même règle que le téléphone)");
     fake.table("orkmap_plan_images").length = 0;
@@ -413,6 +540,16 @@ test("route plan-image : session obligatoire, empreinte vérifiée, taille, idem
     // Le même contenu envoyé par un autre compte est rangé à part (clé email + empreinte).
     assert.equal((await routeCall(handler, { body: { hash: sha(a), dataUrl: a }, email: OTHER })).body.already, false);
     assert.equal(fake.table("orkmap_plan_images").length, 2);
+    // « Lesquelles as-tu ? » : seulement les images du compte connecté.
+    const z = image();
+    const known = await routeCall(handler, { body: { have: [sha(a), sha(z)] } });
+    assert.equal(known.statusCode, 200);
+    assert.deepEqual(known.body.known, [sha(a)]);
+    fake.table("orkmap_plan_images").splice(0, fake.table("orkmap_plan_images").length, ...fake.table("orkmap_plan_images").filter((r) => r.email === OTHER));
+    assert.deepEqual((await routeCall(handler, { body: { have: [sha(a)] } })).body.known, [], "celle d'un autre compte ne compte pas");
+    assert.equal((await routeCall(handler, { body: { have: [sha(a)] }, email: null })).statusCode, 401);
+    assert.equal((await routeCall(handler, { body: { have: ["pas-une-empreinte"] } })).statusCode, 400);
+    assert.equal((await routeCall(handler, { body: { have: Array.from({ length: 201 }, (_, i) => sha(String(i))) } })).statusCode, 400, "limite de taille");
     assert.equal((await routeCall(handler, { method: "PUT", body: {} })).statusCode, 405);
   } finally { fake.restore(); console.error = quiet; }
 });
@@ -496,4 +633,182 @@ test("bandeau : des photos trop lourdes ne laissent pas « Envoi des modificatio
   assert.ok(m.readPending(EMAIL, "photos"), "la marque reste (rien n'est perdu)");
   const { bannerInfo } = await imp("src/syncUi.js");
   assert.equal(bannerInfo(status).kind, "oversizePhotos");
+});
+
+// ───────────── Relecture hostile (scripts S1 à S4, points 5, 6, 7) ─────────────
+
+test("S1 : le compte (jsonb) réordonne les clés ; trois ouvertures sans modification ne renvoient rien", async () => {
+  for (const jsonb of [false, true]) {
+    const w = await setupWorld({ jsonb });
+    try {
+      const a = image();
+      const c = owned("c1", { titre: "Concert", date: "2026-12-01", pieces: [piece("p1", [a], { couleur: "rouge" })] });
+      seedLocal([c]);
+      w.setServerConcerts([{ ...c, pieces: [piece("p1", [ref(a)], { couleur: "rouge" })] }]);
+      w.putServerImage(a);
+      for (let launch = 1; launch <= 3; launch += 1) {
+        const m = await freshStorage();
+        const h = renderHook(m.useConcerts, [[], EMAIL]);
+        await waitFor(() => h.result[2], 4000, "ouverture");
+        await sleep(200);
+        unmountAll();
+      }
+      assert.equal(posts(w.log, "/api/sync").length, 0, `jsonb=${jsonb} : aucun renvoi`);
+      assert.equal(w.fake.table("orkmap_sync_history").length, 0, `jsonb=${jsonb} : aucune ligne d'historique`);
+      assert.equal(localStorage.getItem(pendingKey), null);
+    } finally { w.restore(); }
+  }
+});
+
+test("S1 : forme canonique (clés triées à tous les niveaux)", async () => {
+  reset();
+  const m = await freshStorage();
+  assert.ok(m.sameData({ b: 1, a: [{ y: 2, x: 1 }] }, { a: [{ x: 1, y: 2 }], b: 1 }));
+  assert.ok(!m.sameData({ a: [1, 2] }, { a: [2, 1] }), "l'ordre des listes compte toujours");
+});
+
+test("S3 : liste locale perdue (stockage plein ou neuf) : le compte dit ce qu'il a, rien n'est renvoyé", async () => {
+  const pi = await imp("src/planImages.js");
+  const onServer = new Set();
+  const imgs = Array.from({ length: 6 }, () => image(400_000));
+  const data = [{ id: "c1", pieces: [{ id: "p1", plans: imgs }] }];
+  const counts = [];
+  for (let launch = 1; launch <= 2; launch += 1) {
+    let sent = 0;
+    await pi.prepareConcertsUpload(EMAIL, data, {
+      maxBytes: 4 * MO,
+      registry: pi.createImageRegistry(), // nouveau lancement, rien de mémorisé sur le téléphone
+      check: async (hashes) => new Set(Array.from(hashes).filter((h) => onServer.has(h))),
+      upload: async (hash) => { sent += 1; onServer.add(hash); },
+    });
+    counts.push(sent);
+  }
+  assert.deepEqual(counts, [6, 0]);
+});
+
+test("S4 : table des images vidée côté compte : les images repartent avant les concerts", async () => {
+  const w = await setupWorld();
+  try {
+    const a = image();
+    seedLocal([owned("c1", { pieces: [piece("p1", [a])] })]);
+    const m = await freshStorage();
+    const h = renderHook(m.useConcerts, [[], EMAIL]);
+    await waitFor(() => h.result[2] && w.serverConcerts() && localStorage.getItem(pendingKey) === null, 8000, "premier envoi");
+    w.fake.table("orkmap_plan_images").length = 0; // base remise à zéro
+    h.result[1]((list) => list.map((c) => ({ ...c, titre: "modifié" })));
+    await waitFor(() => w.serverConcerts()[0].titre === "modifié" && localStorage.getItem(pendingKey) === null, 8000, "second envoi");
+    assert.equal(posts(w.log, "/api/plan-image").filter((e) => e.hash === sha(a)).length, 2, "renvoyée parce que le compte ne l'a plus");
+    assert.equal(w.serverImages().length, 1, "plus de référence orpheline");
+  } finally { w.restore(); }
+});
+
+test("point 6 : reconnaissance des images (paramètres, octet-stream, tout data: dans les plans)", async () => {
+  const pi = await imp("src/planImages.js");
+  const jpegB64 = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), crypto.randomBytes(6000)]).toString("base64");
+  const avecNom = `data:image/jpeg;name=plan.jpg;base64,${jpegB64}`;
+  const octet = `data:application/octet-stream;base64,${jpegB64}`;
+  const heic = `data:application/octet-stream;base64,${Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypheic"), crypto.randomBytes(6000)]).toString("base64")}`;
+  const pdfDansPlans = `data:application/pdf;base64,${crypto.randomBytes(6000).toString("base64")}`;
+  const binaireHorsPlans = `data:application/octet-stream;base64,${Buffer.concat([Buffer.from("PK"), crypto.randomBytes(6000)]).toString("base64")}`;
+  assert.ok(pi.isExternalImage(avecNom));
+  assert.ok(pi.isExternalImage(octet), "octet-stream avec signature JPEG");
+  assert.ok(pi.isExternalImage(heic), "octet-stream avec signature HEIC");
+  assert.ok(!pi.isExternalImage(binaireHorsPlans), "binaire qui n'est pas une image, hors des plans : pas touché");
+  assert.ok(!pi.isExternalImage(pdfDansPlans), "hors des plans, un PDF n'est pas une image");
+  assert.ok(pi.isExternalImage(pdfDansPlans, true), "dans les plans, tout data: de plus de 2 Ko");
+  const data = [{ id: "c1", logo: octet, fichier: binaireHorsPlans, pieces: [{ id: "p1", plans: [avecNom, pdfDansPlans], planDataUrl: pdfDansPlans }] }];
+  const { data: out } = await pi.externalizeImages(data);
+  assert.deepEqual(out[0].pieces[0].plans, [ref(avecNom), ref(pdfDansPlans)]);
+  assert.equal(out[0].pieces[0].planDataUrl, ref(pdfDansPlans));
+  assert.equal(out[0].logo, ref(octet));
+  assert.equal(out[0].fichier, binaireHorsPlans);
+  assert.ok(pi.isValidImageDataUrl(avecNom) && pi.isValidImageDataUrl(pdfDansPlans));
+  assert.ok(!pi.isValidImageDataUrl(avecNom.slice(0, 500) + "\n" + avecNom.slice(500)));
+});
+
+test("point 1a : à l'import, le plan est réduit si besoin (original gardé si la réduction échoue)", async () => {
+  const pi = await imp("src/planImages.js");
+  const grosse = image(5 * MO);
+  const petite = image(1 * MO);
+  const vus = [];
+  pi.setImageShrinker(async (dataUrl, opts) => { vus.push(opts); return petite; });
+  try {
+    assert.equal(await pi.shrinkPlanForStorage(grosse), petite);
+    assert.deepEqual([vus[0].maxSide, vus[0].quality, vus[0].keepIfFits], [2400, 0.85, true]);
+    assert.ok(vus[0].maxBytes <= 3 * MO, "largement sous la limite d'envoi");
+    pi.setImageShrinker(async () => null);
+    assert.equal(await pi.shrinkPlanForStorage(grosse), grosse, "illisible : on garde l'original");
+  } finally { pi.setImageShrinker(null); }
+});
+
+test("point 5 : un téléchargement en échec ne bloque pas les suivants ; il attend avant un nouvel essai", async () => {
+  reset();
+  const m = await freshStorage();
+  const imgs = [image(), image(), image()];
+  const calls = [];
+  let failFirst = true;
+  globalThis.fetch = async (url) => {
+    const hash = new URL(String(url), "https://t.invalid").searchParams.get("hash");
+    calls.push(hash);
+    if (hash === sha(imgs[0]) && failFirst) return new Response("{}", { status: 500 });
+    const dataUrl = imgs.find((d) => sha(d) === hash);
+    return new Response(JSON.stringify({ hash, dataUrl }), { status: 200 });
+  };
+  const quiet = console.warn;
+  console.warn = () => {};
+  try {
+    let t = 1_000_000;
+    const found = await m.downloadMissingImages(imgs.map(sha), { email: EMAIL, now: () => t });
+    assert.deepEqual(Array.from(found.keys()), [sha(imgs[1]), sha(imgs[2])], "les suivantes arrivent");
+    failFirst = false;
+    calls.length = 0;
+    await m.downloadMissingImages([sha(imgs[0])], { email: EMAIL, now: () => t + 30_000 });
+    assert.equal(calls.length, 0, "pas de nouvel essai avant 1 min");
+    const later = await m.downloadMissingImages([sha(imgs[0])], { email: EMAIL, now: () => t + 61_000 });
+    assert.equal(later.get(sha(imgs[0])), imgs[0]);
+  } finally { console.warn = quiet; }
+});
+
+test("point 7 : mode mémoire lente, la copie de secours avec référence ne remplace pas l'image d'IndexedDB", async () => {
+  const w = await setupWorld();
+  try {
+    const a = image();
+    seedLocal([owned("c1", { titre: "avant", pieces: [piece("p1", [a])] })]);
+    // Fermé pendant un mode dégradé : la copie de secours porte la modification, mais une référence.
+    localStorage.setItem(`orkmap-concerts-backup:${EMAIL}`, JSON.stringify([owned("c1", { titre: "modifié en mode lent", pieces: [piece("p1", [ref(a)])] })]));
+    localStorage.setItem(`orkmap-degraded-edits:${EMAIL}`, JSON.stringify({ editedIds: ["c1"], removedIds: [] }));
+    w.ctl.offline = true;
+    navigator.onLine = false;
+    const m = await freshStorage();
+    const h = renderHook(m.useConcerts, [[], EMAIL]);
+    await waitFor(() => h.result[2], 4000, "chargement");
+    await sleep(150);
+    assert.equal(h.result[0][0].titre, "modifié en mode lent", "la modification est réintégrée");
+    assert.deepEqual(h.result[0][0].pieces[0].plans, [a], "l'image d'IndexedDB est gardée");
+    assert.deepEqual(idbConcert("c1").pieces[0].plans, [a]);
+  } finally { w.restore(); }
+});
+
+test("point 7 : « Recharger depuis le compte » avec un plan non téléchargeable garde la version du téléphone et le dit", async () => {
+  const w = await setupWorld();
+  try {
+    const a = image(); const absente = image();
+    seedLocal([owned("c1", { titre: "local", pieces: [piece("p1", [a])] }), owned("c2", { titre: "local 2", pieces: [] })]);
+    const m = await freshStorage();
+    const h = renderHook(m.useConcerts, [[], EMAIL]);
+    await waitFor(() => h.result[2] && w.serverConcerts() && localStorage.getItem(pendingKey) === null, 8000, "envoi");
+    w.setServerConcerts([
+      owned("c1", { titre: "compte", pieces: [piece("p1", [ref(absente)])] }),
+      owned("c2", { titre: "compte 2", pieces: [] }),
+    ]);
+    const r = await h.result[3].reloadFromAccountSafe({ download: false });
+    assert.ok(!r.refus, JSON.stringify(r));
+    assert.equal(r.plansManquants, 1);
+    const c1 = h.result[0].find((c) => c.id === "c1");
+    assert.equal(c1.titre, "local");
+    assert.deepEqual(c1.pieces[0].plans, [a], "jamais une référence à la place de l'image du téléphone");
+    assert.equal(h.result[0].find((c) => c.id === "c2").titre, "compte 2", "les autres sont rechargés");
+    const { reloadReportText } = await imp("src/syncUi.js");
+    assert.match(reloadReportText(r), /1 gardé en version du téléphone \(plans du compte non téléchargés/);
+  } finally { w.restore(); }
 });

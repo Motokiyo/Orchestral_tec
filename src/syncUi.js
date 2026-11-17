@@ -44,7 +44,7 @@ function oversizeText(list) {
   return `Tes données sont trop lourdes pour être envoyées au compte (${mo} Mo). Elles restent sur ce téléphone. Exporte-les.`;
 }
 
-export function bannerInfo({ online, pending, sessionExpired, oversize, backupFailed, degraded } = {}) {
+export function bannerInfo({ online, pending, sessionExpired, oversize, backupFailed, degraded, imageRetry, unsentPlans } = {}) {
   const network = networkInfo({ online, pending, sessionExpired });
   const withNetwork = (info) => (network ? { ...info, also: network } : info);
   const list = Array.isArray(oversize) ? oversize.filter(Boolean) : [];
@@ -61,7 +61,19 @@ export function bannerInfo({ online, pending, sessionExpired, oversize, backupFa
     });
   }
   if (network) return network;
+  // Une image de plan a été refusée pour une raison passagère : les concerts attendent son nouvel essai
+  // (1, 5, 15, puis 60 min). On le dit, au lieu d'un « Envoi des modifications… » qui ne finit jamais.
+  if (pending && imageRetry) {
+    return { kind: "imageRetry", tone: "warn", action: "retry", card: false, text: "Sauvegarde en ligne en échec, nouvel essai plus tard" };
+  }
   if (pending) return { kind: "pending", tone: "neutral", action: "retry", card: false, text: "Envoi des modifications…" };
+  // Plans gardés sur ce téléphone seulement (trop lourds ou illisibles pour le compte), le reste est parti.
+  if (unsentPlans > 0) {
+    return {
+      kind: "unsentPlans", tone: "neutral", action: "export", card: false,
+      text: `${plural(unsentPlans, "plan non sauvegardé", "plans non sauvegardés")} en ligne (trop lourd${unsentPlans > 1 ? "s" : ""})`,
+    };
+  }
   if (photosBig.length > 0) {
     const bytes = photosBig.reduce((max, o) => Math.max(max, Number(o?.bytes) || 0), 0);
     return {
@@ -90,6 +102,8 @@ export function reloadReportText(r) {
   const parts = [`${plural(remplaces, "concert remplacé", "concerts remplacés")}`];
   if (ajoutes > 0) parts.push(`${plural(ajoutes, "ajouté", "ajoutés")} depuis le compte`);
   if (gardes > 0) parts.push(`${plural(gardes, "gardé", "gardés")} (${gardes > 1 ? "absents" : "absent"} du compte)`);
+  const manquants = r.plansManquants || 0;
+  if (manquants > 0) parts.push(`${plural(manquants, "gardé", "gardés")} en version du téléphone (plans du compte non téléchargés, réessaie plus tard)`);
   parts.push(r.copie ? "copie de sécurité faite" : "pas de copie nécessaire (rien en local)");
   let text = parts.join(", ");
   if (r.fichier) text += `.\nFichier téléchargé : ${r.fichier}`;

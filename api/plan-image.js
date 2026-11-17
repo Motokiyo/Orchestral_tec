@@ -1,19 +1,21 @@
 // Images des plans, une par requête (lot 5). Le JSON des concerts ne porte plus que des références
 // « orkimg:<sha256 hex du data URL> » ; l'image elle-même est rangée ici, par compte.
 //   POST { hash, dataUrl } : range l'image du compte connecté. Idempotent (déjà là = ok).
+//   POST { have: [hash…] } : « lesquelles as-tu ? » → { known: [...] } (le compte fait foi, le
+//                            téléphone n'a qu'un cache). Au plus MAX_HAVE_HASHES empreintes.
 //   GET ?hash=…            : rend l'image SI elle appartient au compte connecté (404 sinon).
 // Table : orkmap_plan_images (supabase/migrations/007_orkmap_plan_images.sql), clé (email, hash).
 import crypto from "node:crypto";
 import { noStore, requireSession } from "./auth-utils.js";
 import { supabaseConfig, supabaseFetch } from "./sync.js";
+// Une seule définition de « image acceptable », partagée avec le téléphone : ce que le téléphone
+// juge envoyable est exactement ce que le serveur accepte (pas de refus en boucle).
+import { isValidImageDataUrl, MAX_HAVE_HASHES, MAX_IMAGE_BYTES as SHARED_MAX_IMAGE_BYTES } from "../src/planImages.js";
 
 const TABLE = "orkmap_plan_images";
 // La plateforme refuse un corps de plus de 4,5 Mo : une image au-delà de 4 Mo est refusée franchement.
-export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = SHARED_MAX_IMAGE_BYTES;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
-// Même définition d'« image » que le téléphone (src/planImages.js) : tout type image/… en base64
-// (HEIC d'iPhone compris). Une image refusée ici bloquerait l'envoi des concerts pour toujours.
-const DATA_URL_PATTERN = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]+=*$/i;
 
 export const config = {
   api: {
@@ -59,6 +61,21 @@ export default async function handler(req, res) {
     }
   }
 
+  if (req.method === "POST" && req.body && Object.prototype.hasOwnProperty.call(req.body, "have")) {
+    const have = req.body.have;
+    if (!Array.isArray(have) || have.length > MAX_HAVE_HASHES) return res.status(400).json({ error: `Liste invalide (au plus ${MAX_HAVE_HASHES} empreintes)` });
+    const hashes = Array.from(new Set(have.map(parseHash)));
+    if (hashes.some((h) => !h)) return res.status(400).json({ error: "Empreinte invalide" });
+    if (!hashes.length) return res.status(200).json({ known: [] });
+    try {
+      const rows = await supabaseFetch(`${TABLE}?email=eq.${encodeURIComponent(session.email)}&hash=in.(${hashes.join(",")})&select=hash`);
+      return res.status(200).json({ known: (Array.isArray(rows) ? rows : []).map((r) => r.hash) });
+    } catch (err) {
+      console.error("[orkmap-plan-image] check failed:", err);
+      return res.status(err.status || 500).json({ error: "Impossible de vérifier les images." });
+    }
+  }
+
   if (req.method === "POST") {
     const hash = parseHash(req.body?.hash);
     const dataUrl = req.body?.dataUrl;
@@ -66,7 +83,7 @@ export default async function handler(req, res) {
     if (typeof dataUrl !== "string") return res.status(400).json({ error: "Image absente" });
     const bytes = Buffer.byteLength(dataUrl, "utf8");
     if (bytes > MAX_IMAGE_BYTES) return res.status(413).json({ error: "Image trop lourde", bytes });
-    if (!DATA_URL_PATTERN.test(dataUrl)) return res.status(400).json({ error: "Ce n'est pas une image" });
+    if (!isValidImageDataUrl(dataUrl)) return res.status(400).json({ error: "Image mal formée (data URL base64 attendu)" });
     if (sha256Hex(dataUrl) !== hash) return res.status(400).json({ error: "L'empreinte ne correspond pas à l'image" });
     try {
       const existing = await supabaseFetch(`${TABLE}?${rowFilter(session.email, hash)}&select=hash&limit=1`);

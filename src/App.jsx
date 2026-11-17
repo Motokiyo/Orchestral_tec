@@ -8,7 +8,7 @@ import { S } from "./styles.js";
 import { optionsMobilier, recalculerMobilier, appliquerReglages, ajouterPoles } from "./mobilierUi.js";
 import { LignesMobilierPlus, InfosMobilier, EcartsPlan, ReglagesMobilier } from "./MobilierBlocs.jsx";
 import { bannerInfo, reloadReportText, exportReportText } from "./syncUi.js";
-import { isImageRef } from "./planImages.js";
+import { isAnyImageRef, isUnsentRef, shrinkPlanForStorage } from "./planImages.js";
 import JSZip from "jszip";
 
 // ── De-duplicate piece ids across all concerts so photos (which are stored in a
@@ -2030,8 +2030,9 @@ export default function App() {
           setPdfLoading(false);
           return;
         } else {
-          // Image file — convert to dataUrl
-          planDataUrl = await fileToDataUrl(file);
+          // Image file — convert to dataUrl, réduite pour tenir largement sous la limite d'envoi au compte
+          // (côté max 2400 px, qualité 0,85, puis resserre ; illisible = original gardé).
+          planDataUrl = await shrinkPlanForStorage(await fileToDataUrl(file));
         }
         if (planDataUrl) {
           updatePiece(targetPieceId, (p) => {
@@ -2141,7 +2142,7 @@ export default function App() {
     }
     if (isOffline()) { alert(OFFLINE_AI_MESSAGE); return; }
     // Seuls les plans dont l'image est sur ce téléphone partent à la lecture (pas les références « orkimg: »).
-    const plansLisibles = targetPiece.plans.filter((p) => !isImageRef(p));
+    const plansLisibles = targetPiece.plans.filter((p) => !isAnyImageRef(p));
     if (!plansLisibles.length) {
       alert("Les plans de cette pièce ne sont pas encore téléchargés sur ce téléphone. Réessaie dans un instant.");
       return;
@@ -3177,11 +3178,12 @@ export default function App() {
             <div style={{ marginBottom: 10 }}>
               {(piece.plans || []).map((planUrl, idx) => (
                 <div key={idx} style={{ marginBottom: 6, borderRadius: 8, overflow: "hidden", border: `2px solid ${col.hex}33`, position: "relative" }}>
-                  {isImageRef(planUrl) ? (
+                  {isAnyImageRef(planUrl) ? (
                     // Plan venu du compte dont l'image n'est pas encore sur ce téléphone (hors ligne) :
                     // un cadre au lieu d'une image cassée ; elle se télécharge au retour du réseau.
+                    // « orkimg-local: » : plan trop lourd pour le compte, resté sur le téléphone qui l'a importé.
                     <div data-testid="plan-indisponible" style={{ padding: "28px 12px", textAlign: "center", background: "#F5F5F4", color: "#78716C", fontSize: 13, fontWeight: 600 }}>
-                      Plan non disponible hors ligne
+                      {isUnsentRef(planUrl) ? "Plan resté sur un autre téléphone (trop lourd pour le compte)" : "Plan non disponible hors ligne"}
                     </div>
                   ) : (
                     <img

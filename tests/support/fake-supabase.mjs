@@ -13,6 +13,7 @@ export function installFakeSupabase({ failTables = [], delay = true } = {}) {
       const [op, ...rest] = expr.split(".");
       const val = rest.join(".");
       const cell = row[col];
+      if (op === "in") return val.replace(/^\(|\)$/g, "").split(",").includes(String(cell));
       if (op === "is") return val === "null" ? cell == null : cell != null;
       if (op === "eq") return String(cell) === val;
       if (op === "neq") return String(cell) !== val;

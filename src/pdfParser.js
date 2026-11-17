@@ -5,6 +5,7 @@
  */
 
 import * as pdfjs from "pdfjs-dist/build/pdf.mjs";
+import { shrinkPlanForStorage } from "./planImages.js";
 import {
   AiExtractionError, AI_CLIENT_TIMEOUT_MS, UNKNOWN_POLE_NAME, UNKNOWN_CAT, MAX_AI_BODY_BYTES,
   planAiPages, noPageError, formatMo,
@@ -1974,8 +1975,9 @@ export async function extractFromImage(file) {
     sourceFormat: "image",
   };
 
-  // Convert file to dataUrl for plan display
-  const dataUrl = await fileToDataUrlLocal(file);
+  // Convert file to dataUrl for plan display, réduite pour tenir largement sous la limite d'envoi au compte
+  // (voir planImages.js ; la lecture OCR ci-dessous lit le fichier d'origine, pas cette copie).
+  const dataUrl = await shrinkPlanForStorage(await fileToDataUrlLocal(file));
   result.planDataUrl = dataUrl;
   result.planDataUrls = [dataUrl];
 
