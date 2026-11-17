@@ -5,6 +5,10 @@
  */
 
 import * as pdfjs from "pdfjs-dist/build/pdf.mjs";
+import {
+  AiExtractionError, AI_CLIENT_TIMEOUT_MS, UNKNOWN_POLE_NAME, UNKNOWN_CAT, MAX_AI_BODY_BYTES,
+  planAiPages, noPageError, formatMo,
+} from "./aiImport.js";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -123,13 +127,21 @@ export async function extractFromPdf(file) {
   console.log("[OrkMap] Lines:", lines);
 
   // ── 2. Render all pages as images for plan display ──
+  // Toutes les pages sont comptées : celles qui ne peuvent pas être rendues sont listées (pagesFailed),
+  // jamais perdues en silence. planPageNumbers = numéro de page d'origine de chaque image de planDataUrls.
   let planDataUrl = null;
   let planDataUrls = [];
+  let planPageNumbers = [];
+  let pagesFailed = [];
   try {
-    planDataUrls = await renderAllPages(pdf);
+    const rendered = await renderAllPages(pdf);
+    planDataUrls = rendered.urls;
+    planPageNumbers = rendered.pageNumbers;
+    pagesFailed = rendered.failed;
     planDataUrl = planDataUrls[0] || null;
   } catch (err) {
     console.warn("[OrkMap] Could not render plan:", err);
+    pagesFailed = Array.from({ length: pdf.numPages }, (_, i) => i + 1);
   }
 
   // ── 3. Detect format & parse ──
@@ -146,6 +158,9 @@ export async function extractFromPdf(file) {
     percus: [],
     planDataUrl,
     planDataUrls,
+    pageCount: pdf.numPages,
+    planPageNumbers,
+    pagesFailed,
   };
 
   const format = detectFormat(lines);
@@ -167,15 +182,9 @@ export async function extractFromPdf(file) {
     parseGeneric(lines, result);
   }
 
-  // ── Fallback: determine sansChef from effectif if parseur didn't set it ──
-  // Si le parseur n'a pas explicitement géré sansChef, on le déduit de l'effectif :
-  // si effectif vide ou pas une nomenclature Daniels (pas de tirets/points/chiffres),
-  // alors pas de chef par défaut.
-  if (result.sansChef === undefined) {
-    if (!result.effectif || !/\d/.test(result.effectif)) {
-      result.sansChef = true;
-    }
-  }
+  // sansChef n'est JAMAIS déduit d'une absence (effectif vide, pas de nomenclature, pas de chef écrit) :
+  // sans mention explicite il reste inconnu (null). Voir DECISIONS.md et le LOT 2.
+  if (typeof result.sansChef !== "boolean") result.sansChef = null;
 
   console.log("[OrkMap] Extracted:", {
     titre: result.titre, compositeur: result.compositeur, effectif: result.effectif,
@@ -213,15 +222,19 @@ async function renderPageToImage(pdf, pageNum = 1) {
 
 async function renderAllPages(pdf) {
   const urls = [];
+  const pageNumbers = [];
+  const failed = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     try {
       const url = await renderPageToImage(pdf, i);
       urls.push(url);
+      pageNumbers.push(i);
     } catch (err) {
       console.warn(`[OrkMap] Could not render page ${i}:`, err);
+      failed.push(i);
     }
   }
-  return urls;
+  return { urls, pageNumbers, failed };
 }
 
 // ══════════════════════════════════════════
@@ -523,14 +536,9 @@ function parseDcm(lines, result) {
     result.effectif = effParts.join(", ");
   }
 
-  // ── Chef: DCM consorts/chamber music may or may not have a conductor ──
-  // "Chef d'équipe" in contacts is a technical crew role, not a music director
-  // If effectif is a full orchestra notation (Daniels-style), assume a conductor.
-  // Otherwise (consort, chamber), no conductor.
+  // ── Chef: "Chef d'équipe" in contacts is a technical crew role, not a music director.
+  // Un ensemble de chambre « peut ou non » avoir un chef : on ne le déduit pas, sansChef reste inconnu.
   result.chef = "";
-  if (!result.effectif || !/\d[\.\-]/.test(result.effectif)) {
-    result.sansChef = true;
-  }
 
   // ── Orchestre: build from detected instruments/count ──
   if (instruments.length > 0 && count > 0) {
@@ -1178,6 +1186,7 @@ const PLURALS = {
   "Timbales": "Timbales", "Harpe": "Harpes", "Percussion": "Percussions", "Clavier": "Claviers",
   "Violon I": "Violons I", "Violon II": "Violons II", "Alto": "Altos",
   "Violoncelle": "Violoncelles", "Contrebasse": "Contrebasses",
+  "Guitare basse": "Guitares basses", "Accordéon": "Accordéons", "Soprano": "Sopranos",
 };
 
 function pluralize(name, count) {
@@ -1230,6 +1239,13 @@ export function orchestreFromEffectif(detail) {
     }
   }
 
+  // Autres musiciens nommés dans la nomenclature (guitare basse, accordéon, soprano...)
+  if (detail.autres) {
+    for (const [name, count] of Object.entries(detail.autres)) {
+      if (count > 0) orchestre.autres.push(formatEntry(name, count));
+    }
+  }
+
   return orchestre;
 }
 
@@ -1243,94 +1259,247 @@ export function orchestreFromEffectif(detail) {
 // Percussions: Timb . Perc . Hp . Clav  [Cel/Pno]
 // Cordes:      Vl1 . Vl2 . Alt . Vlc . Cb
 //
-// Separators: "/" or " - " between groups, "." or "-" within groups
+// Separators: "/" or " - " between groups, "." or "-" within groups.
+// Notations acceptées : points + tirets (espacés ou collés), slashs (espacés ou collés), tirets dans les
+// groupes + slashs entre eux, crochets [Cel/Pno], « Cordes[…] », format mixte « 3.3.3.3/4.3.3.1 - 14.12.10.8.6 »,
+// points traînants. Tout le reste (mots, nombre de groupes inattendu) donne null : on ne devine pas.
 
-export function decodeEffectif(notation) {
-  let clean = notation.trim()
-    .replace(/\.(?=\s*[\/\-–])/g, "")
-    .replace(/\.$/g, "")
-    .replace(/\s*-\s*cordes?\s+/gi, " - ")
-    .replace(/\s*-\s*strings?\s+/gi, " - ");
-  const withoutBrackets = clean.replace(/\[[^\]]*\]/g, "").trim();
+// Un groupe numérique = des nombres séparés par « . », « - » ou des espaces, avec suffixes éventuels :
+// "3.3.3.3", "1-1-1-2sax", "2(pic).2(eh)", "*1+eh", "6+2.2.5+2" (« +N » = N auxiliaires), "1-1-1-SaxTénor".
+const DANIELS_TOKEN = String.raw`(?:\*?\d+(?:\+\d+)?(?:\s?\([A-Za-zéèà]{1,6}\)|\+[A-Za-zéèà]{1,6})?(?:sax|picc?|afl|eh|ca|bcl|ecl|cbn|cfg)?|sax[A-Za-zéèà]{0,9})`;
+const DANIELS_GROUP_RE = new RegExp(`^${DANIELS_TOKEN}(?:[\\s.\\-\u2013\u2014]+${DANIELS_TOKEN})*$`, "i");
+const BRACKET_MARK = /\u0001(\d+)\u0002/g;
+const DASHES = "\\-\u2013\u2014";
 
-  // Detect separator style and split into 4 groups
-  let groups;
-  if (withoutBrackets.includes("/") && /\d\s*[\-\u2013\u2014]\s*\d/.test(withoutBrackets)) {
-    // Mixed slash + dash format: "3.3.3.3/4.3.3.1 - 14.12.10.8.6"
-    const slashParts = clean.split("/").map(g => g.trim());
-    const lastPart = slashParts[slashParts.length - 1];
-    const dashInLast = lastPart.match(/^(.+?)\s*[\-\u2013\u2014]\s*(.+)$/);
-    if (dashInLast) {
-      groups = [...slashParts.slice(0, -1), dashInLast[1].trim(), dashInLast[2].trim()];
-    } else {
-      groups = slashParts;
-    }
-  } else if (/\d\.\d/.test(withoutBrackets) && /\d\s*[\-\u2013\u2014]\s*\d/.test(withoutBrackets)) {
-    // Dot notation with dash separators: "3.3.3.3 - 4.3.3.1 - 2.4.0.1 - 14.12.10.8.6"
-    groups = clean.split(/\s*[\-\u2013\u2014]\s*(?=\d)/).map(g => g.trim());
-  } else if (withoutBrackets.includes("/")) {
-    // Slash notation: "1-1-1-2sax/2-2-2-1/1-0-1-0/6-4-2-2-1"
-    groups = clean.split("/").map(g => g.trim());
-  } else {
-    return null;
+const stripAccents = (w) => w.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+function saxLabel(word) {
+  const q = stripAccents(word.slice(3));
+  if (!q) return "Saxophone";
+  if (q === "a" || q === "alto") return "Saxophone alto";
+  if (q === "t" || q === "tenor") return "Saxophone ténor";
+  if (q === "b" || q === "bar" || q === "baryton") return "Saxophone baryton";
+  if (q === "s" || q === "sop" || q === "soprano") return "Saxophone soprano";
+  return "Saxophone";
+}
+
+/**
+ * Éléments nommés d'une ligne d'effectif (« T+2 », « 2hp », « cel », « orgue », « 3Perc », « SaxA »,
+ * « guitbasse », « 1timb.1perc.1harpe »). Un nom seul vaut 1 musicien (convention de la nomenclature).
+ * Renvoie false (refus) si un mot est inconnu ou ambigu (« 2 timb. » : 2 timbaliers ou 2 timbales ?).
+ */
+function parseLabelledElements(text, acc) {
+  const re = /(\d+)?\s*([A-Za-zÀ-ÿ]+)\.?(?:\+(\d+))?/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const hasN = m[1] !== undefined;
+    const n = hasN ? parseInt(m[1], 10) : 1;
+    const raw = m[2];
+    const w = stripAccents(raw);
+    if (w === "t" || /^timb/.test(w)) {
+      if (hasN && n > 1) return false; // « 2 timb. » : nombre de timbaliers ou de timbales ? on ne devine pas
+      acc.timbales += n;
+      if (m[3] !== undefined) acc.percussion += parseInt(m[3], 10); // T+2 = 1 timbalier + 2 percussionnistes
+    } else if (/^perc/.test(w)) acc.percussion += n;
+    else if (/^(?:hp|harpes?)$/.test(w)) acc.harpe += n;
+    else if (/^(?:cel|celesta|orgue|piano|pno|clavecin|cembalo)$/.test(w) || /^clav/.test(w)) { acc.clavier += n; acc.clavierNoms.push(raw); }
+    else if (/^acc/.test(w)) acc.autres["Accordéon"] = (acc.autres["Accordéon"] || 0) + n;
+    else if (/^sax/.test(w)) { const l = saxLabel(w.length === raw.length ? w : raw.toLowerCase()); acc.saxes[l] = (acc.saxes[l] || 0) + n; }
+    else if (/^guit/.test(w)) { const l = /bass/.test(w) ? "Guitare basse" : "Guitare"; acc.autres[l] = (acc.autres[l] || 0) + n; }
+    else if (/^sop/.test(w)) acc.autres["Soprano"] = (acc.autres["Soprano"] || 0) + n;
+    else if (/^(?:banda|soliste|solo)$/.test(w)) acc.remarques.push(raw);
+    else return false;
   }
+  return true;
+}
 
-  if (groups.length < 3) return null;
+const newLabelled = () => ({ timbales: 0, percussion: 0, harpe: 0, clavier: 0, clavierNoms: [], saxes: {}, autres: {}, remarques: [] });
 
-  const detail = { raw: notation, bois: null, cuivres: null, percussions: null, cordes: null, extras: null, summary: [] };
+/** Fabrique le résultat commun aux deux formes de notation. */
+function buildDetail(notation, { boisG, cuivresG, percG, cordesG, lab, extras, remarques }) {
+  const detail = { raw: notation, bois: null, cuivres: null, percussions: null, cordes: null, extras: null, autres: null, remarques: [], summary: [] };
 
-  // ── Bois: Fl . Hb . Cl . Bn ──
-  const boisParts = parseGroup(groups[0]);
-  const boisNames = ["Flûte", "Hautbois", "Clarinette", "Basson"];
-  detail.bois = mapPartsWithDoublings(boisParts, boisNames);
-  addSummary(detail.summary, detail.bois);
+  const sw = boisG ? saxWordsOut(boisG) : { text: "", saxes: {} };
+  detail.bois = mapPartsWithDoublings(boisG ? parseGroup(sw.text) : [], ["Flûte", "Hautbois", "Clarinette", "Basson"]);
+  for (const [name, n] of Object.entries(sw.saxes)) detail.bois[name] = (detail.bois[name] || 0) + n;
+  detail.cuivres = mapPartsWithDoublings(cuivresG ? parseGroup(cuivresG) : [], ["Cor", "Trompette", "Trombone", "Tuba"]);
+  for (const [name, n] of Object.entries(lab.saxes)) if (n > 0) detail.bois[name] = (detail.bois[name] || 0) + n;
+  if (boisG === null) detail.bois = null;
+  if (cuivresG === null) detail.cuivres = null;
+  if (detail.bois) addSummary(detail.summary, detail.bois);
+  if (detail.cuivres) addSummary(detail.summary, detail.cuivres);
 
-  // ── Cuivres: Cor . Tp . Trb . Tuba ──
-  if (groups[1]) {
-    const cuivresParts = parseGroup(groups[1]);
-    const cuivresNames = ["Cor", "Trompette", "Trombone", "Tuba"];
-    detail.cuivres = mapPartsWithDoublings(cuivresParts, cuivresNames);
-    addSummary(detail.summary, detail.cuivres);
+  // Percussions : groupe numérique (Timb . Perc . Hp . Clav) + éléments nommés
+  const hasLab = lab.timbales || lab.percussion || lab.harpe || lab.clavier;
+  if (percG !== null || hasLab) {
+    const percParts = percG ? parseGroup(percG) : [];
+    const perc = mapParts(percParts, ["Timbales", "Percussion", "Harpe", "Clavier"]);
+    const add = (k, n) => { if (n > 0) perc[k] = (perc[k] || 0) + n; };
+    add("Timbales", lab.timbales); add("Percussion", lab.percussion); add("Harpe", lab.harpe); add("Clavier", lab.clavier);
+    perc.total = ["Timbales", "Percussion", "Harpe", "Clavier"].reduce((s, k) => s + (perc[k] || 0), 0);
+    detail.percussions = perc;
   }
+  if (extras) { detail.extras = extras; detail.summary.push(extras); }
+  else if (lab.clavierNoms.length) detail.extras = lab.clavierNoms.join(", ");
+  if (detail.percussions) addSummary(detail.summary, detail.percussions);
 
-  // ── Percussions: Timb . Perc . Hp . Clav [Cel/Pno] ──
-  // Daniels order: Timpani . Percussion . Harp . Keyboard
-  if (groups[2]) {
-    const bracketMatch = groups[2].match(/\[([^\]]+)\]/);
-    const percClean = groups[2].replace(/\[.*?\]/, "").trim();
-    const percParts = parseGroup(percClean);
-    const percNames = ["Timbales", "Percussion", "Harpe", "Clavier"];
-    detail.percussions = mapParts(percParts, percNames);
-    detail.percussions.total = percParts.reduce((s, p) => s + (p.count || 0), 0);
-    if (bracketMatch) {
-      detail.extras = bracketMatch[1];
-      detail.summary.push(bracketMatch[1]);
-    }
-    addSummary(detail.summary, detail.percussions);
-  }
-
-  // ── Cordes: Vl1 . Vl2 . Alt . Vlc . Cb ──
-  if (groups[3]) {
-    const cordesParts = parseGroup(groups[3]);
-    const cordesNames = ["Violon I", "Violon II", "Alto", "Violoncelle", "Contrebasse"];
-    detail.cordes = mapParts(cordesParts, cordesNames);
+  if (cordesG) {
+    detail.cordes = mapParts(parseGroup(cordesG), ["Violon I", "Violon II", "Alto", "Violoncelle", "Contrebasse"]);
     addSummary(detail.summary, detail.cordes);
   }
-
+  if (Object.keys(lab.autres).length) detail.autres = lab.autres;
+  detail.remarques = [...remarques, ...lab.remarques];
   return detail;
+}
+
+// Notation anglaise du LSO : « 2220 / 0400 / 0T 2P 2 x Vibraphones 0H 2Pno / 1BassGuitar / 10.8.6.6.0 ».
+// Lettres collées aux chiffres (T timbales, P percussionnistes, H harpes, Pno pianos, Kb claviers).
+// Des exposants aplatis (« 104 2sopsax 0 ») ne sont PAS devinés : ce groupe reste null.
+function decodeLetterNotation(notation, s0) {
+  const remarques = [];
+  let t = s0.replace(/\(([^)]*)\)/g, (_, inner) => { remarques.push(inner.trim()); return /\d\s?Kb\b/.test(inner) ? ` ${inner} ` : " "; });
+  const ens = /ENSEMBLE\s*:\s*[\d.]+/i.exec(t);
+  if (ens) { remarques.push(ens[0].replace(/\s+/g, " ")); t = t.replace(ens[0], " "); }
+  let cordesG = null;
+  const lab1 = /(?:FULL ORCHESTRA\s*)?STRINGS?\s*:?\s*(\d+(?:\.\d+){4})/i.exec(t);
+  const lab2 = /(?:^|[\s/])(\d+(?:\.\d+){4})\s*$/.exec(t);
+  const none = /(?:^|[\s/])(?:-\.){4}-\s*$/.exec(t);
+  if (lab1) { cordesG = lab1[1]; t = t.replace(lab1[0], " "); }
+  else if (lab2) { cordesG = lab2[1]; t = t.slice(0, lab2.index) + " "; }
+  else if (none) { t = t.slice(0, none.index) + " "; }
+  const segs = t.split("/").map((x) => x.trim()).filter(Boolean);
+  const quad = (x) => (x && /^\d{4}$/.test(x) ? x.split("").join(".") : null);
+  const boisG = quad(segs[0]);
+  const cuivresG = quad(segs[1]);
+  if (!boisG) remarques.push("bois non lus : exposants aplatis dans le texte");
+  if (!cuivresG) remarques.push("cuivres non lus : exposants aplatis dans le texte");
+  const lab = newLabelled();
+  const tokRe = /(?<![A-Za-z\d.])(\d+)\s?(T|P|H|Pno|Kb|BassGuitar)(?![A-Za-z])/g;
+  let m; let found = 0;
+  while ((m = tokRe.exec(t)) !== null) {
+    const n = parseInt(m[1], 10); found++;
+    if (m[2] === "T") lab.timbales += n;
+    else if (m[2] === "P") lab.percussion += n;
+    else if (m[2] === "H") lab.harpe += n;
+    else if (m[2] === "BassGuitar") lab.autres["Guitare basse"] = (lab.autres["Guitare basse"] || 0) + n;
+    else { lab.clavier += n; if (n > 0) lab.clavierNoms.push(m[2] === "Pno" ? `${n} piano${n > 1 ? "s" : ""}` : `${n} clavier${n > 1 ? "s" : ""}`); }
+  }
+  if (!found) return null;
+  const d = buildDetail(notation, { boisG, cuivresG, percG: null, cordesG, lab, extras: null, remarques });
+  if (d.percussions === null) d.percussions = { total: 0 };
+  return d;
+}
+
+/**
+ * Décode une nomenclature d'effectif (Daniels : Bois / Cuivres / Percussions / Cordes, et variantes).
+ * Renvoie null plutôt que deviner : mots inconnus, nombre de groupes inattendu, nombre ambigu.
+ * Notations acceptées : points + tirets (espacés ou collés), slashs, tirets dans les groupes + slashs entre
+ * eux, espaces, tirets longs, crochets [Cel/Pno], « Cordes[…] » ou « [Cordes …] », cordes en dernier groupe
+ * ou en 5 nombres collés (« 6-5-4-3-1 », « 0/0/0/0/0 »), doublures (pic) (eh) [pic et sol], auxiliaires
+ * « 6+2 », percussions nommées (« T+2 -2hp -cel -orgue »), saxophones (« 2sax », « SaxTénor »), points
+ * traînants, cordes en premier (« 7.6.5.4.3 / 2.1.2.1 / 3.2.2.0 / 1timb.1perc.1harpe ») et notation LSO.
+ */
+export function decodeEffectif(notation) {
+  if (typeof notation !== "string") return null;
+  const remarques = [];
+  let s = notation.trim()
+    .replace(/^(?:effectif|nomenclature|daniels)\s*:?\s*/i, "")        // étiquette recopiée du cartouche
+    .replace(/\s*\((?:daniels|nomenclature)[^)]*\)\s*$/i, "")          // remarque finale « (Daniels) »
+    .replace(/\.(?=\s*[\/\-\u2013\u2014])/g, "")                         // points traînants avant un séparateur
+    .replace(/[\s.]+$/, "");                                              // et en fin de ligne
+  if (!s) return null;
+
+  if ((s.match(/(?<![A-Za-z\d.])\d+\s?(?:T|P|H|Pno|Kb)(?![A-Za-z])/g) || []).length >= 2) return decodeLetterNotation(notation, s);
+
+  // Cordes données à part : « Cordes[12.10.8.6.4] », « [Cordes 8.8.6.5.3] », « - cordes 16.14… »
+  let cordesG = null;
+  const takeCordes = (inner) => { const nums = String(inner).match(/\d+/g); if (nums && nums.length >= 1) cordesG = nums.join("."); };
+  s = s.replace(/\[\s*(?:cordes?|strings?)\s*:?\s*([\d.\-\s\/]+)\]/i, (_, inner) => { takeCordes(inner); return " "; });
+  if (cordesG === null) s = s.replace(/(?:cordes?|strings?)\s*:?\s*\[([\d.\-\s\/]+)\]/i, (_, inner) => { takeCordes(inner); return " "; });
+  // Prose après « ; » (ex. cordes écrites en toutes lettres) et remarques entre parenthèses précédées d'un espace
+  const semi = s.indexOf(";");
+  if (semi >= 0) { remarques.push(s.slice(semi + 1).trim()); s = s.slice(0, semi); }
+  s = s.replace(/\s+\(([^)]*)\)/g, (_, inner) => { remarques.push(inner.trim()); return " "; });
+  s = s.replace(/\s*\+\s*soliste\w*\s*$/i, () => { remarques.push("soliste"); return ""; });
+  // Cordes en dernier : 5 nombres reliés par « . », « - » ou « / » (ex. « 16.14.12.10.8 », « 6-5-4-3-1 », « 0/0/0/0/0 »)
+  if (cordesG === null) {
+    const m = /(?:^|[\s\/])(\d+(?:\.\d+){4,}|\d+(?:-\d+){4,}|\d+(?:\s*\/\s*\d+){4,})\s*\+?\s*$/.exec(s);
+    if (m) { takeCordes(m[1]); s = s.slice(0, m.index) + " "; }
+  }
+  s = s.replace(/(?:cordes?|strings?)\s*$/i, "").replace(/(?:^|[\s\/\-\u2013\u2014])[\s\/\-\u2013\u2014]+$/, " ");
+  // Doublures écrites contre un chiffre : « 1[pic et sol] », « 3[III+Pic] » (information gardée en remarque)
+  s = s.replace(/(\d)\[([^\]]*)\]/g, (_, d, inner) => { remarques.push(`${d}[${inner}]`); return d; });
+  // Crochets restants (« [Cel/Pno] ») : mis de côté, leur « / » n'est pas un séparateur de groupe
+  const brackets = [];
+  s = s.replace(/\[([^\]]*)\]/g, (_, inner) => { brackets.push(inner.trim()); return `\u0001${brackets.length - 1}\u0002`; });
+  s = s.replace(/^[\s\/\-\u2013\u2014]+|[\s\/\-\u2013\u2014]+$/g, "");
+
+  const hasDots = /\d\.\d/.test(s);
+  const sepRe = hasDots
+    ? new RegExp(`\\s*[/${DASHES}]\\s*`)                         // points dans les groupes : tout tiret sépare
+    : new RegExp(`\\s*/\\s*|\\s*[\u2013\u2014]\\s*|\\s+-\\s*|\\s*-\\s+`); // sinon : « / », tirets longs, tiret espacé
+  const items = s.split(sepRe).map((x) => x.trim()).filter(Boolean);
+
+  const extrasFound = [];
+  const numerics = []; const labelled = [];
+  for (const it of items) {
+    const bare = it.replace(BRACKET_MARK, (_, i) => { extrasFound.push(brackets[Number(i)]); return ""; }).trim();
+    if (!bare) continue;
+    // Groupe numérique : au moins un chiffre, et soit plusieurs nombres, soit un nombre seul (« 1 »).
+    // « 3sax », « 2hp », « 3perc » (un seul nombre collé à un mot) sont des éléments nommés.
+    const isGroup = /\d/.test(bare) && DANIELS_GROUP_RE.test(bare) && (tokCount(bare) >= 2 || /^\d+$/.test(bare));
+    (isGroup ? numerics : labelled).push(bare);
+  }
+  const tok = tokCount;
+
+  // Cordes en premier (7.6.5.4.3 / 2.1.2.1 / 3.2.2.0 / 1timb.1perc.1harpe) : un groupe à 5 nombres en tête,
+  // alors que la dernière ligne est nommée.
+  if (cordesG === null && numerics.length >= 3 && tok(numerics[0]) === 5 && labelled.length > 0) cordesG = numerics.shift();
+  // 4 groupes numériques : le dernier est celui des cordes
+  if (cordesG === null && numerics.length === 4) cordesG = numerics.pop();
+  // 3 groupes numériques dont le dernier a 5 pupitres ou plus : cordes (bois/cuivres + cordes)
+  if (cordesG === null && numerics.length === 3 && tok(numerics[2]) >= 5) cordesG = numerics.pop();
+  if (numerics.length < 2 || numerics.length > 3) return null;
+  if (tok(cordesG || "") > 5) return null;
+  const boisG = numerics[0]; const cuivresG = numerics[1]; const percG = numerics[2] || null;
+  if (tok(boisG) > 4 && !/sax/i.test(boisG)) return null;
+  if (tok(cuivresG) > 4 || (percG && tok(percG) > 4)) return null;
+  const lab = newLabelled();
+  for (const l of labelled) if (!parseLabelledElements(l, lab)) return null;
+  // Trois groupes au moins : bois, cuivres, + percussions (numériques ou nommées) ou cordes
+  const hasLab = lab.timbales || lab.percussion || lab.harpe || lab.clavier || Object.keys(lab.saxes).length || Object.keys(lab.autres).length;
+  if (numerics.length + (cordesG ? 1 : 0) + (percG === null && hasLab ? 1 : 0) < 3) return null;
+
+  const extras = extrasFound.find(Boolean) || null;
+  return buildDetail(notation, { boisG, cuivresG, percG, cordesG, lab, extras, remarques: remarques.filter(Boolean) });
+}
+
+// Nombre de pupitres d'un groupe : « 6+2 » compte pour un seul (le « +2 » sont des auxiliaires).
+const tokCount = (g) => (String(g).replace(/\+\d+/g, "").match(/\d+/g) || []).length;
+
+function saxWordsOut(str) {
+  // Sort les mots « SaxTénor », « SaxBaryton » d'un groupe numérique ; renvoie { text, saxes }
+  const saxes = {};
+  const text = str.replace(/sax[A-Za-zéèà]{0,9}/gi, (w, offset, whole) => {
+    // « 2sax » (chiffre collé) est un suffixe géré plus loin ; seuls les mots seuls sont retirés ici
+    if (offset > 0 && /\d/.test(whole[offset - 1])) return w;
+    const l = saxLabel(w); saxes[l] = (saxes[l] || 0) + 1; return " ";
+  });
+  return { text, saxes };
 }
 
 function parseGroup(str) {
   const parts = [];
-  // Split by . or - (within a group), handle suffixes like "2sax", "(pic)", "+eh"
-  const regex = /(\*?)(\d+)\s*(?:\(([^)]+)\)|\+([a-zA-Zéèà]+))?([a-zA-ZéèàÀ-Ü]*)/g;
+  // Split by . or - (within a group), handle suffixes like "2sax", "(pic)", "+eh", "+2" (auxiliaires)
+  const regex = /(\*?)(\d+)(?:\+(\d+))?(?:\s*(?:\(([^)]+)\)|\+([a-zA-Zéèà]+)))?([a-zA-ZéèàÀ-Ü]*)/g;
   let m;
   while ((m = regex.exec(str)) !== null) {
     parts.push({
       count: parseInt(m[2]),
       dedicated: m[1] === "*",  // * = dedicated auxiliary player
-      doubling: m[3] || m[4] || "", // (pic) or +eh
-      suffix: m[5] || "",  // 2sax → suffix="sax"
+      plus: m[3] ? parseInt(m[3], 10) : 0, // 6+2 : 6 + 2 auxiliaires
+      doubling: m[4] || m[5] || "", // (pic) or +eh
+      suffix: m[6] || "",  // 2sax → suffix="sax"
     });
   }
   return parts;
@@ -1351,6 +1520,14 @@ function mapPartsWithDoublings(parts, names) {
   const result = {};
   parts.forEach((p, i) => {
     const baseName = i < names.length ? names[i] : `Pupitre ${i + 1}`;
+
+    // « 6+2 » : 6 musiciens + 2 auxiliaires dédiés ; « 2+3sax » : 2 + 3 saxophones
+    if (p.plus > 0) {
+      if (p.count > 0) result[baseName] = p.count;
+      const aux = p.suffix ? (DOUBLING_NAMES[p.suffix.toLowerCase()] || `${baseName} (${p.suffix})`) : `${baseName} (auxiliaire)`;
+      result[aux] = (result[aux] || 0) + p.plus;
+      return;
+    }
 
     // Handle suffix like "2sax"
     let label = baseName;
@@ -1387,6 +1564,7 @@ function mapParts(parts, names) {
     const name = i < names.length ? names[i] : `Pupitre ${i + 1}`;
     const label = p.suffix ? `${name} (${p.suffix})` : name;
     if (p.count > 0) result[label] = p.count;
+    if (p.plus > 0) result[`${name} (auxiliaire)`] = p.plus;
   });
   return result;
 }
@@ -1798,7 +1976,7 @@ function parseFreeForm(lines, result, all, allLower) {
     const percMatch = all.match(/(?:percussions?|perc)\s*:\s*(.+?)(?=\s*[-–|]\s*|\s+(?:Direction|Chef|Effectif|Lieu|Date|Titre|Compositeur|Orchestre|\d+[\.:])\s*|$)/i);
     if (percMatch) {
       const percText = percMatch[1].trim();
-      const items = percText.split(/[,;]/).map(s => s.trim()).filter(Boolean);
+      const items = splitWrittenItems(percText);
       if (items.length > 0) {
         const categorizedItems = items.map(nom => {
           const cat = categorizeInstrument(nom);
@@ -1808,26 +1986,32 @@ function parseFreeForm(lines, result, all, allLower) {
       }
     }
 
-    // Look for "Timbales : ..." and "Percussion : ..." on separate lines
+    // Look for "Timbales : ..." and "Percussion : ..." on separate lines.
+    // Seul ce qui est ÉCRIT est repris : aucun instrument n'est ajouté (plus de « 4 Timbales » en dur),
+    // et « Timbales : aucune » ne crée rien.
     if (result.percus.length === 0) {
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const timbMatch = line.match(/timbales?\s*:\s*(.+)/i);
         if (timbMatch) {
-          const items = timbMatch[1].split(/[,;]/).map(s => s.trim()).filter(Boolean);
-          result.percus.push({
-            nom: "Timbalier",
-            items: [{ cat: "Timbales & Peaux", nom: "4 Timbales" }, ...items.map(nom => ({ cat: categorizeInstrument(nom), nom }))],
-          });
+          const items = splitWrittenItems(timbMatch[1]);
+          if (items.length > 0) {
+            result.percus.push({
+              nom: "Timbalier",
+              items: items.map(nom => ({ cat: categorizeInstrument(nom), nom })),
+            });
+          }
         }
         const percLineMatch = line.match(/percussions?\s*\d*\s*:\s*(.+)/i);
         if (percLineMatch && !timbMatch) {
           const percNum = line.match(/percussions?\s*(\d+)\s*:/i);
-          const items = percLineMatch[1].split(/[,;]/).map(s => s.trim()).filter(Boolean);
-          result.percus.push({
-            nom: percNum ? `Percu ${percNum[1]}` : "Percussion",
-            items: items.map(nom => ({ cat: categorizeInstrument(nom), nom })),
-          });
+          const items = splitWrittenItems(percLineMatch[1]);
+          if (items.length > 0) {
+            result.percus.push({
+              nom: percNum ? `Percu ${percNum[1]}` : "Percussion",
+              items: items.map(nom => ({ cat: categorizeInstrument(nom), nom })),
+            });
+          }
         }
       }
     }
@@ -1854,6 +2038,15 @@ function parseFreeForm(lines, result, all, allLower) {
     const dateMatch = all.match(/Date\s*:\s*(.+?)(?=\s*[-–|]|\s+(?:Compositeur|Titre|Durée|Effectif|Chef|Lieu|Direction)\s*:|\n|$)/i);
     if (dateMatch) result.date = dateMatch[1].trim();
   }
+}
+
+/**
+ * Découpe une liste écrite « a, b ; c » en éléments, en écartant les marqueurs d'absence
+ * (« aucune », « néant », « sans », « non », « 0 », « - ») : une absence écrite n'est pas un instrument.
+ */
+function splitWrittenItems(text) {
+  return String(text || "").split(/[,;]/).map(s => s.trim()).filter(Boolean)
+    .filter(s => !/^(?:aucune?s?|n[ée]ant|sans|non|pas de .*|0|[-–—])$/i.test(s));
 }
 
 /**
@@ -1905,41 +2098,105 @@ function fileToDataUrlLocal(file) {
 // GEMINI AI EXTRACTION
 // ══════════════════════════════════════════
 
+const AI_ERROR_MESSAGES = {
+  401: "Session expirée : reconnecte-toi puis relance la lecture IA.",
+  413: `Envoi refusé : le plan est trop volumineux pour le serveur (limite de la plateforme : 4,5 Mo par envoi). Réduis le PDF (moins de pages ou résolution plus faible) puis réessaie.`,
+};
+
+const isRecord = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const asText = (v) => (typeof v === "string" ? v.trim() : "");
+
 /**
  * Extract data from a plan image via serverless endpoint (/api/extract-ai).
  * The API key stays server-side only — never exposed to the browser.
+ *
+ * Avant l'envoi : contrôle du nombre de pages, des formats et de la taille (sous la limite de 4,5 Mo de la
+ * plateforme), sans jamais compresser. Toute page non envoyée est comptée dans result.aiMeta.pages.
+ * Toute erreur est une AiExtractionError (kind : too_large, no_page, network, timeout, payload_too_large,
+ * truncated, invalid, …) : un échec ne passe jamais pour une lecture vide.
+ * options : { pageNumbers, totalPages, failedPages, timeoutMs }
  */
-export async function extractWithGemini(imageDataUrls, mode) {
+export async function extractWithGemini(imageDataUrls, mode, options = {}) {
   if (!mode) throw new Error("Mode d'extraction IA manquant");
   // Accept a single dataURL (string) or several pages (array).
   const images = Array.isArray(imageDataUrls)
     ? imageDataUrls.filter(Boolean)
     : (imageDataUrls ? [imageDataUrls] : []);
-  const resp = await fetch("/api/extract-ai", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ images, mode }),
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err.error || `Erreur serveur ${resp.status}`);
+  const plan = planAiPages(images, options);
+  if (plan.sent === 0) throw noPageError(plan);
+
+  const timeoutMs = options.timeoutMs > 0 ? options.timeoutMs : AI_CLIENT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let resp; let parsed;
+  try {
+    try {
+      resp = await fetch("/api/extract-ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ images: plan.images, pageNumbers: plan.pageNumbers, mode }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (err && err.name === "AbortError") throw new AiExtractionError(`Délai dépassé : la lecture IA n'a pas répondu en ${Math.round(timeoutMs / 1000)} s.`, { kind: "timeout" });
+      throw new AiExtractionError("Réseau indisponible ou serveur injoignable : la lecture IA n'a pas pu être faite.", { kind: "network" });
+    }
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      const body = isRecord(err) ? err : {};
+      const kind = resp.status === 413 ? "payload_too_large" : (typeof body.code === "string" ? body.code : "server");
+      throw new AiExtractionError(AI_ERROR_MESSAGES[resp.status] || body.error || `Erreur serveur ${resp.status}`, {
+        kind, status: resp.status, code: body.code || null,
+        warnings: Array.isArray(body.warnings) ? body.warnings.filter((w) => typeof w === "string") : [],
+        pages: plan.total > 0 ? { total: plan.total, analysed: 0, skipped: plan.skipped } : null,
+      });
+    }
+    try {
+      parsed = await resp.json();
+    } catch (err) {
+      if (err && err.name === "AbortError") throw new AiExtractionError(`Délai dépassé : la lecture IA n'a pas répondu en ${Math.round(timeoutMs / 1000)} s.`, { kind: "timeout" });
+      throw new AiExtractionError("Réponse du serveur illisible.", { kind: "invalid" });
+    }
+  } finally {
+    clearTimeout(timer);
   }
-  const parsed = await resp.json();
+  if (!isRecord(parsed)) throw new AiExtractionError("Réponse du serveur illisible (objet attendu).", { kind: "invalid" });
+
+  // Adaptateur : on ne remplace JAMAIS une donnée absente par une valeur plausible.
   const result = {
-    titre: parsed.titre || "", compositeur: parsed.compositeur || "",
-    duree: parsed.duree || "", salle: parsed.salle || "",
-    chef: parsed.chef || "", date: parsed.date || "",
-    sansChef: parsed.sansChef === true,
-    effectif: parsed.effectif || "", effectifDetail: null,
-    orchestre: parsed.orchestre || null,
-    percus: (parsed.percus || []).map(p => ({
-      nom: p.nom || "Percu", items: (p.items || []).map(it => ({ cat: it.cat || "Accessoires", nom: it.nom || "" })).filter(it => it.nom)
+    titre: asText(parsed.titre), compositeur: asText(parsed.compositeur),
+    duree: asText(parsed.duree), salle: asText(parsed.salle),
+    chef: asText(parsed.chef), date: asText(parsed.date),
+    sansChef: typeof parsed.sansChef === "boolean" ? parsed.sansChef : null,
+    effectif: asText(parsed.effectif), effectifDetail: null,
+    orchestre: isRecord(parsed.orchestre) ? parsed.orchestre : null,
+    percus: (Array.isArray(parsed.percus) ? parsed.percus : []).filter(isRecord).map((p) => ({
+      nom: asText(p.nom) || UNKNOWN_POLE_NAME,
+      items: (Array.isArray(p.items) ? p.items : []).filter(isRecord)
+        .map((it) => ({ cat: asText(it.cat) || UNKNOWN_CAT, nom: asText(it.nom) }))
+        .filter((it) => it.nom),
     })),
+    // Mobilier lu sur le plan : champ séparé, jamais mélangé au mobilier calculé (piece.mobilier).
+    mobilierObserve: (Array.isArray(parsed.mobilierObserve) ? parsed.mobilierObserve : [])
+      .filter((m) => isRecord(m) && typeof m.type === "string" && m.type.trim()),
   };
   if (result.effectif) {
     result.effectifDetail = decodeEffectif(result.effectif);
     if (result.effectifDetail && !result.orchestre) result.orchestre = orchestreFromEffectif(result.effectifDetail);
   }
+
+  // Décompte des pages : celles écartées avant l'envoi + celles que le serveur a écartées.
+  const meta = isRecord(parsed.meta) ? parsed.meta : {};
+  const serverPages = isRecord(meta.pages) ? meta.pages : {};
+  const serverSkipped = (Array.isArray(serverPages.skipped) ? serverPages.skipped : [])
+    .filter((s) => isRecord(s) && Number.isInteger(s.page) && typeof s.reason === "string");
+  const skipped = [...plan.skipped, ...serverSkipped].sort((a, b) => a.page - b.page);
+  const analysed = Number.isInteger(serverPages.analysed) ? serverPages.analysed : plan.sent - serverSkipped.length;
+  result.aiMeta = {
+    warnings: (Array.isArray(parsed.warnings) ? parsed.warnings : []).filter((w) => typeof w === "string"),
+    percusStatut: ["lues", "aucune", "inconnu"].includes(meta.percusStatut) ? meta.percusStatut : "inconnu",
+    pages: { total: plan.total, analysed, skipped },
+  };
   return result;
 }
 

@@ -42,11 +42,52 @@ export function uid() {
   return Math.random().toString(36).slice(2, 8);
 }
 
-// ── Extract leading number from orchestral item string ──
+// ── Extract the written quantity of an orchestral item string ──
+// "14 Violons I" → 14, "4Flûtes" → 4, "Violons I : 16" → 16, "Un piano" → 1.
+// Une quantité qui n'est pas écrite reste INCONNUE (null) : "Flûte" n'est plus compté 1.
+// Une notation brute ("4.3.3.1") n'est pas une quantité non plus.
 export function extractNumberFromItem(item) {
-  // Parse "14 Violons I" → 14, "3 Flûtes" → 3, "Flûte" → 1
-  const m = (typeof item === "string" ? item : "").match(/^(\d+)\s/);
-  return m ? parseInt(m[1], 10) : 1;
+  if (typeof item !== "string") return null;
+  const s = item.trim();
+  let m = /^(\d+)(?![\d.,\-\/])/.exec(s);
+  if (m) return parseInt(m[1], 10);
+  m = /[:：]\s*(\d+)\s*$/.exec(s) || /\s[x×]\s*(\d+)\s*$/i.exec(s);
+  if (m) return parseInt(m[1], 10);
+  if (/^(?:un|une|one)\s/i.test(s)) return 1;
+  return null;
+}
+
+// ── Total d'une liste de lignes d'effectif : quantités lues + nombre de lignes sans quantité ──
+export function sumItemQuantities(items) {
+  let total = 0;
+  let unknown = 0;
+  for (const it of items || []) {
+    if (typeof it !== "string" || !it.trim()) continue;
+    const n = extractNumberFromItem(it);
+    if (n === null) unknown++; else total += n;
+  }
+  return { total, unknown };
+}
+
+// Total de musiciens de l'orchestre (bois, cuivres, cordes, autres) : { total, unknown }.
+export function countOrchestreMusicians(orchestre) {
+  let total = 0;
+  let unknown = 0;
+  if (orchestre) {
+    for (const section of ["bois", "cuivres", "cordes", "autres"]) {
+      const r = sumItemQuantities(orchestre[section]);
+      total += r.total;
+      unknown += r.unknown;
+    }
+  }
+  return { total, unknown };
+}
+
+// "76", "76 + ? (2 lignes sans quantité)", "? (1 ligne sans quantité)"
+export function formatMusicianTotal({ total, unknown }) {
+  if (!unknown) return String(total);
+  const lignes = `${unknown} ligne${unknown > 1 ? "s" : ""} sans quantité`;
+  return total > 0 ? `${total} + ? (${lignes})` : `? (${lignes})`;
 }
 
 // ── Calculate mobilier (furniture) from orchestre + percus ──
@@ -59,11 +100,15 @@ export function calculateMobilier(orchestre, percus, options = {}) {
   const cuivresItems = orchestre.cuivres || [];
   const cordesItems = orchestre.cordes || [];
 
+  // Lignes de l'effectif dont la quantité n'est pas écrite : non comptées, signalées (jamais « 1 »).
+  let quantitesInconnues = 0;
+
   // ── Parse cordes counts ──
   const cordesCounts = { v1: 0, v2: 0, alto: 0, vlc: 0, cb: 0, other: 0 };
   for (const item of cordesItems) {
     const str = typeof item === "string" ? item : "";
     const num = extractNumberFromItem(str);
+    if (num === null) { if (str.trim()) quantitesInconnues++; continue; }
     if (/violons?\s*I(?:\b|$)/i.test(str)) cordesCounts.v1 = num;
     else if (/violons?\s*II/i.test(str)) cordesCounts.v2 = num;
     else if (/altos?/i.test(str)) cordesCounts.alto = num;
@@ -77,6 +122,7 @@ export function calculateMobilier(orchestre, percus, options = {}) {
   for (const item of boisItems) {
     const str = typeof item === "string" ? item : "";
     const num = extractNumberFromItem(str);
+    if (num === null && str.trim()) quantitesInconnues++;
     const name = str.replace(/^\d+\s*/, "").trim() || str;
     boisStands.push({ type: `Stands pour ${name.toLowerCase()}`, qty: num });
   }
@@ -86,6 +132,7 @@ export function calculateMobilier(orchestre, percus, options = {}) {
   for (const item of cuivresItems) {
     const str = typeof item === "string" ? item : "";
     const num = extractNumberFromItem(str);
+    if (num === null && str.trim()) quantitesInconnues++;
     const name = str.replace(/^\d+\s*/, "").trim() || str;
     cuivresStands.push({ type: `Stands pour ${name.toLowerCase()}`, qty: num });
   }
@@ -136,8 +183,8 @@ export function calculateMobilier(orchestre, percus, options = {}) {
   const pupiCuivres = cuivresItems.length;
   const pupitres = pupiCordes + pupiBois + pupiCuivres + (nbPercus > 0 ? nbPercus : 0) + (hasChef ? 1 : 0);
 
-  const totalBois = boisItems.reduce((sum, it) => sum + extractNumberFromItem(it), 0);
-  const totalCuivres = cuivresItems.reduce((sum, it) => sum + extractNumberFromItem(it), 0);
+  const totalBois = sumItemQuantities(boisItems).total;
+  const totalCuivres = sumItemQuantities(cuivresItems).total;
   // Non-standard cordes (violes, etc.) use chaises normales (standard chairs, not high chairs)
   const chaisesNormales = cordesCounts.v1 + cordesCounts.v2 + cordesCounts.alto + cordesCounts.vlc +
     cordesCounts.other + totalBois + totalCuivres;
@@ -159,6 +206,7 @@ export function calculateMobilier(orchestre, percus, options = {}) {
       chaisesHautes,
       chaisesHautesDetail,
       chaisesSpeciales: [],
+      ...(quantitesInconnues > 0 ? { quantitesInconnues } : {}),
     },
     stands: {
       cordes: cordesStands,
@@ -220,6 +268,9 @@ function generateMobilierText(mob) {
     lines.push("• Pupitres : " + (mob.general.pupitres || 0));
     lines.push("• Chaises normales : " + (mob.general.chaisesNormales || 0));
     lines.push("• Chaises hautes : " + (mob.general.chaisesHautesDetail || mob.general.chaisesHautes || 0));
+    if (mob.general.quantitesInconnues > 0) {
+      lines.push("• Lignes de l'effectif sans quantité (non comptées) : " + mob.general.quantitesInconnues);
+    }
     const cs = mob.general.chaisesSpeciales;
     if (Array.isArray(cs) && cs.length > 0) {
       const csText = cs
@@ -248,12 +299,13 @@ function generateMobilierText(mob) {
   if (mob.stands) {
     for (const sec of standSections) {
       const items = mob.stands[sec.key] || [];
-      const visible = items.filter(s => s.qty > 0);
+      // qty === null : quantité inconnue, affichée « ? » (jamais masquée ni comptée 1)
+      const visible = items.filter(s => s.qty > 0 || s.qty === null);
       if (visible.length > 0) {
         lines.push("");
         lines.push(sec.emoji + " " + sec.label);
         for (const s of visible) {
-          lines.push("• " + s.type + " : " + s.qty);
+          lines.push("• " + s.type + " : " + (s.qty === null ? "?" : s.qty));
         }
       }
     }
@@ -272,6 +324,17 @@ function generateMobilierText(mob) {
   return lines.join("\n");
 }
 
+// ── Mobilier OBSERVÉ sur le plan (lu par l'IA), présenté à part du mobilier calculé ──
+export function generateMobilierObserveText(list) {
+  const items = Array.isArray(list) ? list.filter((m) => m && typeof m.type === "string" && m.type.trim()) : [];
+  if (items.length === 0) return "";
+  const lines = ["MOBILIER OBSERVÉ SUR LE PLAN (lu par l'IA, non calculé)", "─".repeat(32)];
+  for (const m of items) {
+    lines.push("• " + m.type + " : " + (Number.isInteger(m.qte) ? m.qte : "?") + (m.source ? "  [" + m.source + "]" : "") + (m.details ? "  (" + m.details + ")" : ""));
+  }
+  return lines.join("\n") + "\n";
+}
+
 // ── Generate standalone mobilier text (title + separator + content) ──
 export function generateMobilierStandaloneText(piece) {
   if (!piece) return "";
@@ -282,6 +345,8 @@ export function generateMobilierStandaloneText(piece) {
   if (piece.compositeur) text += "    " + piece.compositeur + "\n";
   text += "═".repeat(35) + "\n\n";
   text += generateMobilierText(mob);
+  const observe = generateMobilierObserveText(piece.mobilierObserve);
+  if (observe) text += "\n" + observe;
   return text;
 }
 
@@ -334,17 +399,8 @@ export function generatePieceText(piece) {
   if (piece.effectif) {
     text += "Nomenclature Daniels : " + piece.effectif + "\n";
   }
-  // Calculate total musicians
-  let totalMus = 0;
-  if (piece.orchestre) {
-    for (const section of ["bois", "cuivres", "cordes", "autres"]) {
-      for (const item of piece.orchestre[section] || []) {
-        const m = (typeof item === "string" ? item : "").match(/^(\d+)\s/);
-        totalMus += m ? parseInt(m[1], 10) : 1;
-      }
-    }
-  }
-  text += "Nombre de musiciens : " + totalMus + "\n";
+  // Total des musiciens : seules les quantités écrites sont additionnées, les lignes sans quantité sont dites.
+  text += "Nombre de musiciens : " + formatMusicianTotal(countOrchestreMusicians(piece.orchestre)) + "\n";
   text += "\n" + "─".repeat(37) + "\n\n";
 
   // SECTION 2: MOBILIER
@@ -353,6 +409,8 @@ export function generatePieceText(piece) {
   text += "═".repeat(35) + "\n\n";
   const mob1 = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef });
   text += generateMobilierText(mob1) + "\n";
+  const observe1 = generateMobilierObserveText(piece.mobilierObserve);
+  if (observe1) text += "\n" + observe1 + "\n";
   text += "\n" + "─".repeat(37) + "\n\n";
 
   // SECTION 3: PERCUSSIONS
@@ -387,16 +445,7 @@ export function generateTxt(piece) {
   if (piece.effectif) {
     text += "Nomenclature Daniels : " + piece.effectif + "\n";
   }
-  let totalMus = 0;
-  if (piece.orchestre) {
-    for (const section of ["bois", "cuivres", "cordes", "autres"]) {
-      for (const item of piece.orchestre[section] || []) {
-        const m = (typeof item === "string" ? item : "").match(/^(\d+)\s/);
-        totalMus += m ? parseInt(m[1], 10) : 1;
-      }
-    }
-  }
-  text += "Nombre de musiciens : " + totalMus + "\n";
+  text += "Nombre de musiciens : " + formatMusicianTotal(countOrchestreMusicians(piece.orchestre)) + "\n";
 
   // PAGE BREAK
   text += "\n\f\n\n";
@@ -407,6 +456,8 @@ export function generateTxt(piece) {
   text += "═".repeat(35) + "\n\n";
   const mob2 = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef });
   text += generateMobilierText(mob2) + "\n";
+  const observe2 = generateMobilierObserveText(piece.mobilierObserve);
+  if (observe2) text += "\n" + observe2 + "\n";
 
   // PAGE BREAK
   text += "\n\f\n\n";

@@ -1,3 +1,4 @@
+// INSTANTANÉ D AUDIT du 17/11/2026 : reproduit les 57 défauts sur le code D ORIGINE (e6892c8). Après les lots 1 et 2, plusieurs fonctions ont changé de forme : ce script n est plus un test de non-régression, les tests vivants sont tests/lot*.mjs.
 // Audit fonctionnel OrkMap : tests hors réseau, lecture seule du dépôt.
 // Le code réel est chargé depuis le dépôt (import ou tranches vm), jamais copié.
 import fs from 'node:fs';

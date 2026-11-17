@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
-import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
+import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, countOrchestreMusicians, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
+import { mergeAiIntoLocal, failedAiLocal, offlineAiLocal, aiFailedStatus, aiStatusFromResult, dismissAiStatus, aiBannerInfo } from "./aiImport.js";
 import { exportLocalDataForRecovery, useConcerts, usePhotos, useOmrScores, useSyncStatus, setSessionExpired, requestSyncRetry, requestPersistentStorage } from "./useStorage.js";
 import { S } from "./styles.js";
 import JSZip from "jszip";
@@ -1093,20 +1094,28 @@ const DANIELS_CORDES = [
 
 // extractNumberFromItem is now imported from utils.js
 
+// Quantité absente = inconnue (null) : jamais comptée 1. unknown[i] signale « au moins une ligne sans quantité ».
 function matchSection(items, patterns) {
   const counts = patterns.map(() => 0);
+  const unknown = patterns.map(() => false);
   const matched = new Set();
   for (const item of items) {
     const str = typeof item === "string" ? item : item.nom || "";
     for (let i = 0; i < patterns.length; i++) {
       if (patterns[i].regex.test(str) && !matched.has(str)) {
-        counts[i] += extractNumberFromItem(str);
+        const n = extractNumberFromItem(str);
+        if (n === null) unknown[i] = true; else counts[i] += n;
         matched.add(str);
         break;
       }
     }
   }
-  return counts;
+  return { counts, unknown };
+}
+
+// "3.3.3.3" ; une position dont la quantité n'est pas écrite s'affiche « ? » (ou « 2+? » si une partie est lue).
+function joinDanielsGroup(counts, unknown) {
+  return counts.map((c, i) => (unknown[i] ? (c > 0 ? `${c}+?` : "?") : String(c))).join(".");
 }
 
 function calculateDanielsNotation(orchestre, percus) {
@@ -1122,10 +1131,12 @@ function calculateDanielsNotation(orchestre, percus) {
   // Percus poles contain detailed instrument lists, not personnel counts
   const allPercuContext = [...autresItems];
   
-  const boisCounts = matchSection(boisItems, DANIELS_BOIS);
-  const cuivresCounts = matchSection(cuivresItems, DANIELS_CUIVRES);
-  const percusCounts = matchSection(allPercuContext, DANIELS_PERCUS);
-  const cordesCounts = matchSection(cordesItems, DANIELS_CORDES);
+  const bois = matchSection(boisItems, DANIELS_BOIS);
+  const cuivres = matchSection(cuivresItems, DANIELS_CUIVRES);
+  const percusM = matchSection(allPercuContext, DANIELS_PERCUS);
+  const cordes = matchSection(cordesItems, DANIELS_CORDES);
+  const percusCounts = percusM.counts;
+  const percusUnknown = percusM.unknown;
   
   // If percus poles exist, use them as authoritative source for timbalier/percussionist counts
   // (orchestre.autres may have harpe/clavier info but percus poles are the real personnel)
@@ -1133,34 +1144,30 @@ function calculateDanielsNotation(orchestre, percus) {
     const timbPoles = percus.filter(p => /timbal/i.test(p.nom));
     const percPoles = percus.filter(p => !/timbal/i.test(p.nom) && !/harp/i.test(p.nom) && !/piano|c[ée]lesta|clav/i.test(p.nom));
     percusCounts[0] = timbPoles.length; // Timb
-    if (percPoles.length > 0) percusCounts[1] = percPoles.length; // Perc
+    percusUnknown[0] = false;
+    if (percPoles.length > 0) { percusCounts[1] = percPoles.length; percusUnknown[1] = false; } // Perc
   }
   
-  const hasBois = boisCounts.some(c => c > 0);
-  const hasCuivres = cuivresCounts.some(c => c > 0);
-  const hasPercus = percusCounts.some(c => c > 0);
-  const hasCordes = cordesCounts.some(c => c > 0);
+  const hasBois = bois.counts.some(c => c > 0) || bois.unknown.some(Boolean);
+  const hasCuivres = cuivres.counts.some(c => c > 0) || cuivres.unknown.some(Boolean);
+  const hasPercus = percusCounts.some(c => c > 0) || percusUnknown.some(Boolean);
+  const hasCordes = cordes.counts.some(c => c > 0) || cordes.unknown.some(Boolean);
   
   if (!hasBois && !hasCuivres && !hasPercus && !hasCordes) return "";
   
   const parts = [];
-  parts.push(boisCounts.join("."));
-  parts.push(cuivresCounts.join("."));
-  parts.push(percusCounts.join("."));
-  parts.push(cordesCounts.join("."));
+  parts.push(joinDanielsGroup(bois.counts, bois.unknown));
+  parts.push(joinDanielsGroup(cuivres.counts, cuivres.unknown));
+  parts.push(joinDanielsGroup(percusCounts, percusUnknown));
+  parts.push(joinDanielsGroup(cordes.counts, cordes.unknown));
   
   return parts.join(" / ");
 }
 
+// { total: quantités écrites additionnées, unknown: nombre de lignes sans quantité }
 function calculateTotalMusicians(orchestre) {
-  if (!orchestre) return 0;
-  let total = 0;
-  for (const section of ["bois", "cuivres", "cordes", "autres"]) {
-    for (const item of orchestre[section] || []) {
-      total += extractNumberFromItem(item);
-    }
-  }
-  return total;
+  const { total, unknown } = countOrchestreMusicians(orchestre);
+  return { total, unknown };
 }
 
 // calculateMobilier is now imported from utils.js
@@ -1885,7 +1892,13 @@ export default function App() {
           effectif: data.effectif || "",
           effectifDetail: data.effectifDetail || null,
           orchestre: data.orchestre || null,
+          // sansChef à trois états : true / false lus, null = inconnu (jamais déduit d'une absence)
+          sansChef: typeof data.sansChef === "boolean" ? data.sansChef : null,
           mobilier: data.orchestre ? calculateMobilier(data.orchestre, percusList, { hasChef: !data.sansChef }) : null,
+          // Mobilier lu sur le plan par l'IA : champ séparé, jamais mélangé au mobilier calculé ci-dessus
+          mobilierObserve: Array.isArray(data.mobilierObserve) ? data.mobilierObserve : [],
+          // État de la lecture IA (bandeau « à vérifier » tant que l'utilisateur ne l'a pas fermé)
+          aiStatus: data.aiStatus || null,
           planDataUrl: data.planDataUrl || null,
           plans: data.planDataUrls?.length > 0 ? data.planDataUrls : (data.planDataUrl ? [data.planDataUrl] : []),
           couleur: "blanc",
@@ -1920,9 +1933,16 @@ export default function App() {
         const isTxt = type === "text/plain" || name.endsWith(".txt");
 
         let planDataUrl;
+        let planDataUrlsNew = null;
         if (isPdf) {
+          // Toutes les pages du PDF sont ajoutées (plus seulement la première) ; celles qui n'ont
+          // pas pu être transformées en image sont annoncées, jamais perdues en silence.
           const data = await extractFromPdf(file);
-          planDataUrl = data.planDataUrl;
+          planDataUrlsNew = Array.isArray(data.planDataUrls) ? data.planDataUrls : [];
+          planDataUrl = planDataUrlsNew[planDataUrlsNew.length - 1] || data.planDataUrl;
+          if (data.pagesFailed && data.pagesFailed.length > 0) {
+            alert(`${planDataUrlsNew.length} page${planDataUrlsNew.length > 1 ? "s" : ""} sur ${data.pageCount} ajoutée${planDataUrlsNew.length > 1 ? "s" : ""}. Page${data.pagesFailed.length > 1 ? "s" : ""} illisible${data.pagesFailed.length > 1 ? "s" : ""} : ${data.pagesFailed.join(", ")}.`);
+          }
         } else if (isTxt) {
           // TXT files don't have a visual plan, but we extract data from them
           const data = await extractFromFile(file);
@@ -1958,7 +1978,7 @@ export default function App() {
         }
         if (planDataUrl) {
           updatePiece(targetPieceId, (p) => {
-            const plans = [...(p.plans || []), planDataUrl];
+            const plans = [...(p.plans || []), ...(planDataUrlsNew && planDataUrlsNew.length > 0 ? planDataUrlsNew : [planDataUrl])];
             return { ...p, plans, planDataUrl };
           });
         }
@@ -1979,37 +1999,26 @@ export default function App() {
       : (localData.planDataUrl ? [localData.planDataUrl] : []);
     // No image (e.g. plain text / TXT list) -> trust the local text parser.
     if (!images.length) return localData;
-    // Offline: keep the local reading and say so; the AI button on the piece
-    // can be used later, once the network is back.
+    // Offline: keep the local reading and say so (état « skipped » + bandeau); the AI button on the
+    // piece can be used later, once the network is back.
     if (isOffline()) {
       alert("Pas de réseau : import fait avec la lecture locale seulement. Tu pourras relancer « Extraire les données par IA » sur la pièce quand le réseau reviendra.");
-      return localData;
+      return offlineAiLocal(localData);
     }
     // Plans / photos: the AI vision reads the cartouche and IS the source of
-    // truth; local parsing only fills gaps. The old local text parser fabricated
-    // effectifs from plan numbers (seat/dimension digits), which made AutoCAD
-    // plans come out "tout faux" and even suppressed the AI. AI now wins.
+    // truth; local parsing only fills text gaps. The local parser must never bring back
+    // percussions the AI did not read: an empty or unreadable AI list stays empty and is flagged,
+    // a technical failure is flagged (aiStatus) and shown as a banner on the piece.
     try {
-      const aiData = await extractWithGemini(images, "concert");
-      const aiEffectif = aiData.effectif || "";
-      const effectifDetail = aiEffectif ? decodeEffectif(aiEffectif) : localData.effectifDetail;
-      return {
-        ...localData,
-        titre: aiData.titre || localData.titre || "",
-        compositeur: aiData.compositeur || localData.compositeur || "",
-        duree: aiData.duree || localData.duree || "",
-        salle: aiData.salle || localData.salle || "",
-        chef: aiData.chef || localData.chef || "",
-        date: aiData.date || localData.date || "",
-        sansChef: typeof aiData.sansChef === "boolean" ? aiData.sansChef : localData.sansChef,
-        effectif: aiEffectif || localData.effectif || "",
-        effectifDetail: effectifDetail || null,
-        orchestre: aiData.orchestre || localData.orchestre || null,
-        percus: (aiData.percus && aiData.percus.length > 0) ? aiData.percus : localData.percus,
-      };
+      const aiData = await extractWithGemini(images, "concert", {
+        pageNumbers: localData.planPageNumbers,
+        totalPages: localData.pageCount,
+        failedPages: localData.pagesFailed,
+      });
+      return mergeAiIntoLocal(localData, aiData, { decodeEffectif });
     } catch (err) {
-      console.warn("[OrkMap] AI enrichment failed:", err.message);
-      return localData;
+      console.warn("[OrkMap] AI enrichment failed:", err && err.message);
+      return failedAiLocal(localData, err);
     }
   }
 
@@ -2027,9 +2036,17 @@ export default function App() {
     if (isOffline()) { alert(OFFLINE_AI_MESSAGE); return; }
     setAiLoading(true);
     try {
-      const extracted = await extractWithGemini(targetPiece.plans, "concert");
+      const extracted = await extractWithGemini(targetPiece.plans, "concert", { totalPages: targetPiece.plans.length });
       const ex = extracted || {};
       const autoFilled = [];
+
+      // État de la lecture IA (bandeau « à vérifier ») et mobilier observé : champs séparés, additifs.
+      updatePiece(targetPieceId, p => ({
+        ...p,
+        aiStatus: aiStatusFromResult(ex),
+        ...((!Array.isArray(p.mobilierObserve) || p.mobilierObserve.length === 0) && Array.isArray(ex.mobilierObserve) && ex.mobilierObserve.length > 0
+          ? { mobilierObserve: ex.mobilierObserve } : {}),
+      }));
 
       const LABELS = { titre: "Titre", compositeur: "Compositeur", duree: "Durée", salle: "Lieu", chef: "Chef", date: "Date", effectif: "Effectif" };
 
@@ -2083,10 +2100,17 @@ export default function App() {
 
       setMergeData({ pieceId: targetPieceId, extracted, autoFilled, showMerge: true });
     } catch (err) {
+      // L'échec reste visible après l'alerte : bandeau persistant sur la pièce.
+      updatePiece(targetPieceId, p => ({ ...p, aiStatus: aiFailedStatus(err) }));
       alert("Erreur extraction IA : " + err.message);
     } finally {
       setAiLoading(false);
     }
+  }
+
+  // Ferme le bandeau « Lecture IA … » (l'état reste consigné sur la pièce, seul l'affichage change).
+  function dismissAiBanner(pId) {
+    updatePiece(pId, (p) => (p.aiStatus ? { ...p, aiStatus: dismissAiStatus(p.aiStatus) } : p));
   }
 
   function deletePlan(pId, planIdx) {
@@ -2905,6 +2929,7 @@ export default function App() {
                   <span style={S.tag}>{p.percus.length} percu{p.percus.length > 1 ? "s" : ""}</span>
                   <span style={S.tag}>{itemCount} instr.</span>
                   {photoCount > 0 && <span style={S.tag}>{photoCount} photo{photoCount > 1 ? "s" : ""}</span>}
+                  {aiBannerInfo(p) && <span style={{ ...S.tag, background: "#FFFBEB", color: "#92400E" }}>⚠ lecture IA à vérifier</span>}
                 </div>
               </div>
             );
@@ -2964,6 +2989,21 @@ export default function App() {
           </div>
         </div>
         <div style={S.body}>
+          {/* Bandeau de la lecture IA : échec, liste vide/illisible, pages non analysées, avertissements.
+              Conservé tant que l'utilisateur ne l'a pas fermé. */}
+          {(() => {
+            const banner = aiBannerInfo(piece);
+            if (!banner) return null;
+            return (
+              <div role="alert" style={S.aiBanner(banner.tone)}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={S.aiBannerTitle(banner.tone)}>⚠ {banner.title}</div>
+                  {banner.lines.map((line, i) => <div key={i} style={S.aiBannerLine}>{line}</div>)}
+                </div>
+                <button onClick={() => dismissAiBanner(piece.id)} style={S.aiBannerClose} aria-label="Fermer le bandeau" title="Fermer">✕</button>
+              </div>
+            );
+          })()}
           {/* Barnier color picker */}
           <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
             {Object.entries(BARNIER).map(([key, b]) => (
@@ -3200,9 +3240,10 @@ export default function App() {
                     <div style={{ flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>Orchestre</div>
-                        {totalMus > 0 && (
-                          <span style={{ fontSize: 11, fontWeight: 600, color: col.hex, background: col.bg, padding: "1px 8px", borderRadius: 10 }}>
-                            {totalMus} mus.
+                        {(totalMus.total > 0 || totalMus.unknown > 0) && (
+                          <span style={{ fontSize: 11, fontWeight: 600, color: col.hex, background: col.bg, padding: "1px 8px", borderRadius: 10 }}
+                            title={totalMus.unknown > 0 ? `${totalMus.unknown} ligne(s) de l'effectif sans quantité écrite, non comptée(s)` : undefined}>
+                            {totalMus.unknown > 0 ? `${totalMus.total} + ?` : totalMus.total} mus.
                           </span>
                         )}
                       </div>
@@ -3305,6 +3346,21 @@ export default function App() {
             )}
           </div>
 
+          {/* ── Mobilier OBSERVÉ sur le plan (lu par l'IA) : à part du mobilier calculé ci-dessous ── */}
+          {(piece.mobilierObserve || []).length > 0 && (
+            <div style={{ marginTop: 14, marginBottom: 10, padding: "10px 12px", background: "#F0F9FF", border: "1px solid #BAE6FD", borderRadius: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#0369A1", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+                Mobilier observé sur le plan
+              </div>
+              <div style={{ fontSize: 11, color: "#78716C", marginBottom: 6 }}>Lu par l'IA, non calculé. À vérifier sur le plan.</div>
+              {(piece.mobilierObserve || []).map((m, i) => (
+                <div key={i} style={{ fontSize: 13, color: "#1C1917", lineHeight: 1.7 }}>
+                  • {m.type} : <strong>{Number.isInteger(m.qte) ? m.qte : "?"}</strong>{m.details ? <span style={{ color: "#78716C" }}> ({m.details})</span> : null}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* ── 📦 Mobilier section ── */}
           {piece.orchestre && (() => {
             const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef });
@@ -3357,7 +3413,7 @@ export default function App() {
                           <span style={{ fontSize: 9, fontWeight: 700, color: "#D97706", background: "#FFFBEB", border: "1px solid #FCD34D", padding: "1px 6px", borderRadius: 8 }}>✎</span>
                         )}
                         <span style={{ fontSize: 11, fontWeight: 600, color: col.hex, background: col.bg, padding: "1px 8px", borderRadius: 10 }}>
-                          {mob.general.pupitres} pup. · {mob.general.chaisesNormales + mob.general.chaisesHautes} ch.
+                          {mob.general.pupitres} pup. · {mob.general.chaisesNormales + mob.general.chaisesHautes} ch.{mob.general.quantitesInconnues > 0 ? " + ?" : ""}
                         </span>
                       </div>
                     </div>
@@ -3378,6 +3434,9 @@ export default function App() {
                         <div>• Pupitres : <strong>{mob.general.pupitres}</strong></div>
                         <div>• Chaises normales : <strong>{mob.general.chaisesNormales}</strong></div>
                         <div>• Chaises hautes : <strong>{mob.general.chaisesHautesDetail || mob.general.chaisesHautes}</strong></div>
+                        {mob.general.quantitesInconnues > 0 && (
+                          <div style={{ fontSize: 12, color: "#92400E" }}>• ? {mob.general.quantitesInconnues} ligne(s) de l'effectif sans quantité écrite : non comptée(s) ci-dessus</div>
+                        )}
                         {(Array.isArray(mob.general.chaisesSpeciales) && mob.general.chaisesSpeciales.filter(s => s.qty > 0).length > 0) ? (
                           <div>• Chaises spéciales : {mob.general.chaisesSpeciales.filter(s => s.qty > 0).map((s, i, arr) => (
                             <span key={i}><strong>{s.type} ({s.qty})</strong>{i < arr.length - 1 ? ', ' : ''}</span>
@@ -3412,12 +3471,12 @@ export default function App() {
                       return (
                         <div key={section.key} style={{ marginBottom: 8 }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: col.hex, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{section.label}</div>
-                          {items.filter(s => s.qty > 0).map((stand, idx) => (
+                          {items.filter(s => s.qty > 0 || s.qty === null).map((stand, idx) => (
                             <div key={idx} style={{ fontSize: 13, color: "#44403C", paddingLeft: 8, lineHeight: 1.7 }}>
-                              • {stand.type} : <strong>{stand.qty}</strong>
+                              • {stand.type} : <strong>{stand.qty === null ? "?" : stand.qty}</strong>
                             </div>
                           ))}
-                          {items.filter(s => s.qty > 0).length === 0 && (
+                          {items.filter(s => s.qty > 0 || s.qty === null).length === 0 && (
                             <div style={{ fontSize: 12, color: "#A8A29E", paddingLeft: 8, fontStyle: "italic" }}>Aucun</div>
                           )}
                         </div>
@@ -3603,7 +3662,8 @@ export default function App() {
                                 <input
                                   type="number"
                                   min="0"
-                                  value={stand.qty}
+                                  value={stand.qty ?? ""}
+                                  placeholder="?"
                                   onChange={(e) => updateMob(m => { m.stands[section.key][idx].qty = parseInt(e.target.value, 10) || 0; })}
                                   style={{
                                     width: 55, fontSize: 13, fontWeight: 600, padding: "4px 6px",
