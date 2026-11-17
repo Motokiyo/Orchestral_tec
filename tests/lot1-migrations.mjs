@@ -41,3 +41,13 @@ test("I4 : le code n'utilise que la clé service_role pour ces tables", () => {
     assert.doesNotMatch(src, /supabase/i, `${f} ne doit pas parler à Supabase directement`);
   }
 });
+
+test("006 : fonction atomique de demande de code (verrou par adresse, limites, IP), additive", () => {
+  const sql = read("006");
+  assert.match(sql, /create or replace function public\.orkmap_request_login_challenge/i);
+  assert.match(sql, /pg_advisory_xact_lock\(hashtext\(/i);
+  assert.match(sql, /add column if not exists ip/i);
+  assert.match(sql, /revoke all on function public\.orkmap_request_login_challenge/i);
+  assert.match(sql, /grant execute on function public\.orkmap_request_login_challenge[\s\S]*service_role/i);
+  noDestructive(sql);
+});

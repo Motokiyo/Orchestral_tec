@@ -2,7 +2,7 @@
 // Remplace globalThis.fetch : AUCUN appel réseau réel n'est possible.
 import crypto from "node:crypto";
 
-export function installFakeSupabase({ failTables = [] } = {}) {
+export function installFakeSupabase({ failTables = [], delay = true } = {}) {
   const tables = {};
   const calls = [];
   const realFetch = globalThis.fetch;
@@ -24,7 +24,33 @@ export function installFakeSupabase({ failTables = [] } = {}) {
     });
   }
 
+  // Reproduit public.orkmap_request_login_challenge (migration 006) : mêmes limites, d'un seul bloc.
+  function rpcRequestLoginChallenge(a) {
+    const rows = table("orkmap_login_challenges");
+    const now = Date.now();
+    const hourAgo = now - 3600e3;
+    const recent = rows.filter((r) => r.email === a.p_email && Date.parse(r.created_at) > hourAgo).map((r) => Date.parse(r.created_at)).sort((x, y) => y - x);
+    const minInterval = (a.p_min_interval_seconds ?? 60) * 1000;
+    const maxHour = a.p_max_per_hour ?? 5;
+    const maxHourIp = a.p_max_per_hour_ip ?? 10;
+    if (recent.length && recent[0] > now - minInterval) return { ok: false, reason: "email_interval", retry_after: Math.max(1, Math.ceil((recent[0] + minInterval - now) / 1000)) };
+    if (recent.length >= maxHour) return { ok: false, reason: "email_hour", retry_after: Math.max(1, Math.ceil((recent[maxHour - 1] + 3600e3 - now) / 1000)) };
+    if (a.p_ip) {
+      const ipRecent = rows.filter((r) => r.ip === a.p_ip && Date.parse(r.created_at) > hourAgo).map((r) => Date.parse(r.created_at)).sort((x, y) => y - x);
+      if (ipRecent.length >= maxHourIp) return { ok: false, reason: "ip_hour", retry_after: Math.max(1, Math.ceil((ipRecent[maxHourIp - 1] + 3600e3 - now) / 1000)) };
+    }
+    if (a.p_replace_id) {
+      for (const r of rows) if (r.id === a.p_replace_id && r.email === a.p_email && !r.used_at) r.used_at = new Date(now).toISOString();
+    }
+    rows.push({ id: a.p_id, email: a.p_email, code_hash: a.p_code_hash, attempts: 0, created_at: new Date(now).toISOString(), expires_at: a.p_expires_at, used_at: null, ip: a.p_ip ?? null });
+    return { ok: true };
+  }
+
   globalThis.fetch = async (url, opts = {}) => {
+    // Chaque appel cède la main : deux requêtes simultanées s'entrelacent comme sur le vrai réseau.
+    // Un « vérifier puis insérer » en deux appels est donc vulnérable ici aussi ; une fonction
+    // SQL (RPC) s'exécute d'un bloc, comme avec le verrou Postgres.
+    if (delay) await new Promise((r) => setImmediate(r));
     const u = new URL(String(url));
     if (!u.hostname.endsWith("fake.supabase.invalid")) {
       throw new Error(`appel réseau réel interdit dans les tests : ${url}`);
@@ -38,6 +64,7 @@ export function installFakeSupabase({ failTables = [] } = {}) {
     const filters = [...u.searchParams.entries()].filter(([k]) => !reserved.has(k));
     const wantRows = /return=representation/.test(opts.headers?.Prefer || "");
     const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+    if (name === "rpc/orkmap_request_login_challenge") return json(rpcRequestLoginChallenge(body));
     const rows = table(name);
 
     if (method === "GET") {

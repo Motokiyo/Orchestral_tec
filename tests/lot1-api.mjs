@@ -6,12 +6,13 @@ import { installFakeSupabase } from "./support/fake-supabase.mjs";
 
 const ALEX = "alex@test.invalid";
 const OTHER = "autre@test.invalid";
+const THIRD = "troisieme@test.invalid";
 
 let fake;
 let originalLog;
 beforeEach(() => {
   process.env.AUTH_SECRET = "secret-de-test-uniquement";
-  process.env.ALLOWED_EMAILS = `${ALEX},${OTHER}`;
+  process.env.ALLOWED_EMAILS = `${ALEX},${OTHER},${THIRD}`;
   process.env.SUPABASE_URL = "https://x.fake.supabase.invalid";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "cle-factice";
   process.env.AUTH_DEV_CODES = "true";
@@ -162,7 +163,7 @@ test("C3 : un code expiré est refusé", async () => {
   assert.equal(v.statusCode, 401);
 });
 
-test("C3 : un nouveau code invalide l'ancien", async () => {
+test("C3 : un nouveau code demandé depuis le MÊME navigateur invalide l'ancien de ce navigateur", async () => {
   mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-11-17T10:00:00Z") });
   const request = await requestCode();
   const verify = (await importFresh("api/verify-code.js")).default;
@@ -170,11 +171,85 @@ test("C3 : un nouveau code invalide l'ancien", async () => {
   await request(reqOf({ body: { email: ALEX } }), r1);
   mock.timers.tick(61 * 1000);
   const r2 = mockRes();
-  await request(reqOf({ body: { email: ALEX } }), r2);
+  await request(reqOf({ body: { email: ALEX }, cookie: cookieOf(r1) }), r2);
   assert.equal(r2.statusCode, 200);
   const v = mockRes();
   await verify(reqOf({ body: { email: ALEX, code: r1.body.devCode }, cookie: cookieOf(r1) }), v);
   assert.equal(v.statusCode, 401);
+  const v2 = mockRes();
+  await verify(reqOf({ body: { email: ALEX, code: r2.body.devCode }, cookie: cookieOf(r2) }), v2);
+  assert.equal(v2.statusCode, 200);
+});
+
+test("C3 : un tiers qui demande un code pour la même adresse ne brûle PAS le défi d'un autre navigateur", async () => {
+  mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-11-17T10:00:00Z") });
+  const request = await requestCode();
+  const verify = (await importFresh("api/verify-code.js")).default;
+  const victim = mockRes();
+  await request(reqOf({ body: { email: ALEX }, headers: { "x-forwarded-for": "198.51.100.1" } }), victim);
+  mock.timers.tick(61 * 1000);
+  const attacker = mockRes();
+  await request(reqOf({ body: { email: ALEX }, headers: { "x-forwarded-for": "203.0.113.9" } }), attacker);
+  assert.equal(attacker.statusCode, 200);
+  const v = mockRes();
+  await verify(reqOf({ body: { email: ALEX, code: victim.body.devCode }, cookie: cookieOf(victim) }), v);
+  assert.equal(v.statusCode, 200, "le code de la victime reste valable");
+});
+
+test("C3 : même quand la limite horaire est épuisée par un tiers, le code déjà envoyé reste vérifiable", async () => {
+  mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-11-17T10:00:00Z") });
+  const request = await requestCode();
+  const verify = (await importFresh("api/verify-code.js")).default;
+  const victim = mockRes();
+  await request(reqOf({ body: { email: ALEX }, headers: { "x-forwarded-for": "198.51.100.1" } }), victim);
+  for (let i = 0; i < 4; i += 1) {
+    mock.timers.tick(61 * 1000);
+    const a = mockRes();
+    await request(reqOf({ body: { email: ALEX }, headers: { "x-forwarded-for": `203.0.113.${10 + i}` } }), a);
+    assert.equal(a.statusCode, 200);
+  }
+  mock.timers.tick(61 * 1000);
+  const blocked = mockRes();
+  await request(reqOf({ body: { email: ALEX }, headers: { "x-forwarded-for": "198.51.100.1" } }), blocked);
+  assert.equal(blocked.statusCode, 429, "la limite horaire est bien atteinte");
+  const v = mockRes();
+  await verify(reqOf({ body: { email: ALEX, code: victim.body.devCode }, cookie: cookieOf(victim) }), v);
+  assert.equal(v.statusCode, 200, "le défi encore valable reste vérifiable");
+});
+
+test("C3 : deux demandes SIMULTANÉES pour la même adresse : une seule passe (limite atomique)", async () => {
+  const request = await requestCode();
+  const out = await Promise.all([1, 2, 3, 4].map(async () => {
+    const r = mockRes();
+    await request(reqOf({ body: { email: ALEX } }), r);
+    return r.statusCode;
+  }));
+  assert.deepEqual(out.slice().sort(), [200, 429, 429, 429]);
+  assert.equal(fake.table("orkmap_login_challenges").length, 1);
+});
+
+test("C3 : limite par IP (première adresse de x-forwarded-for), en plus de la limite par adresse", async () => {
+  mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-11-17T10:00:00Z") });
+  const request = await requestCode();
+  const ask = async (email, ip) => { const r = mockRes(); await request(reqOf({ body: { email }, headers: { "x-forwarded-for": `${ip}, 10.0.0.1` } }), r); return r; };
+  for (let i = 0; i < 5; i += 1) {
+    assert.equal((await ask(ALEX, "203.0.113.50")).statusCode, 200);
+    assert.equal((await ask(OTHER, "203.0.113.50")).statusCode, 200);
+    mock.timers.tick(61 * 1000);
+  }
+  const blocked = await ask(THIRD, "203.0.113.50");
+  assert.equal(blocked.statusCode, 429, "11e demande de la même IP, même pour une autre adresse");
+  assert.ok(Number(blocked.headers["Retry-After"]) > 0);
+  assert.equal((await ask(THIRD, "203.0.113.99")).statusCode, 200, "une autre IP n'est pas touchée");
+  assert.equal(fake.table("orkmap_login_challenges").find((r) => r.email === ALEX).ip, "203.0.113.50", "première adresse seulement");
+});
+
+test("C3 : en-tête x-forwarded-for absent ou invalide → pas de limite par IP, jamais d'erreur", async () => {
+  const request = await requestCode();
+  const r = mockRes();
+  await request(reqOf({ body: { email: ALEX }, headers: { "x-forwarded-for": "<script>alert(1)</script>" } }), r);
+  assert.equal(r.statusCode, 200);
+  assert.equal(fake.table("orkmap_login_challenges")[0].ip, null);
 });
 
 test("C3 : limite de débit, 1 par minute puis 5 par heure et par adresse", async () => {
@@ -206,7 +281,7 @@ test("C3 : adresse non autorisée → 403, sans toucher à la base ni envoyer de
 
 test("C3 : table absente (migration non appliquée) → échec net 503, aucune session", async () => {
   fake.restore();
-  fake = installFakeSupabase({ failTables: ["orkmap_login_challenges"] });
+  fake = installFakeSupabase({ failTables: ["rpc/orkmap_request_login_challenge"] });
   const request = await requestCode();
   const r = mockRes();
   await request(reqOf({ body: { email: ALEX } }), r);

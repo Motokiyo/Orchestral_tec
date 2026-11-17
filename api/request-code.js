@@ -1,13 +1,13 @@
 import {
   burnLoginChallenge,
-  burnLoginChallenges,
-  checkRequestRate,
-  createLoginChallenge,
+  clientIp,
   isAllowedEmail,
   noStore,
   normalizeEmail,
+  ownChallengeId,
   purgeOldLoginChallenges,
   randomCode,
+  requestLoginChallenge,
   sendLoginCode,
 } from "./auth-utils.js";
 
@@ -22,18 +22,17 @@ export default async function handler(req, res) {
 
   let challenge = null;
   try {
-    // 1 demande par minute et 5 par heure, par adresse (compté dans la base).
-    const rate = await checkRequestRate(email);
-    if (rate.limited) {
-      res.setHeader("Retry-After", String(rate.retryAfter));
-      return res.status(429).json({ error: `Trop de demandes. Réessaie dans ${rate.retryAfter} s.` });
-    }
-
+    // Limites (1/minute et 5/heure par adresse, 10/heure par IP) et insertion en UN seul
+    // appel atomique côté base. Un nouveau code n'annule que le défi lié au cookie de cette
+    // requête : un tiers ne peut pas brûler le code en cours d'un autre navigateur.
     const code = randomCode();
-    challenge = await createLoginChallenge(email, code);
+    const attempt = await requestLoginChallenge(email, code, { ip: clientIp(req), replaceId: ownChallengeId(req, email) });
+    if (attempt.limited) {
+      res.setHeader("Retry-After", String(attempt.retryAfter));
+      return res.status(429).json({ error: `Trop de demandes. Réessaie dans ${attempt.retryAfter} s.` });
+    }
+    challenge = attempt.challenge;
     const result = await sendLoginCode(email, code);
-    // Un nouveau code annule les précédents ; le ménage est facultatif.
-    await burnLoginChallenges(email, challenge.id).catch((err) => console.warn("[orkmap-auth] burn failed:", err.message));
     purgeOldLoginChallenges().catch(() => {});
     res.setHeader("Set-Cookie", challenge.cookie);
     return res.status(200).json({ ok: true, devCode: result.dev ? code : undefined });

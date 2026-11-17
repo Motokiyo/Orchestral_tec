@@ -146,53 +146,48 @@ function codeHash(id, email, code) {
   return sign(`${id}:${normalizeEmail(email)}:${String(code || "").trim()}`);
 }
 
-// Limite de débit par adresse : 1 par minute, 5 par heure.
-// Renvoie { limited: false } ou { limited: true, retryAfter: secondes }.
-export async function checkRequestRate(email) {
-  const norm = normalizeEmail(email);
-  const since = new Date(Date.now() - ONE_HOUR_MS).toISOString();
-  const rows = await supabaseRest(
-    `${CHALLENGES}?email=eq.${encodeURIComponent(norm)}&created_at=gte.${encodeURIComponent(since)}&select=created_at&order=created_at.desc&limit=20`,
-  );
-  const recent = (Array.isArray(rows) ? rows : []).map((row) => Date.parse(row.created_at)).filter(Number.isFinite);
-  const now = Date.now();
-  let wait = 0;
-  if (recent.length > 0 && now - recent[0] < MIN_INTERVAL_MS) wait = Math.max(wait, MIN_INTERVAL_MS - (now - recent[0]));
-  if (recent.length >= MAX_PER_HOUR) wait = Math.max(wait, recent[MAX_PER_HOUR - 1] + ONE_HOUR_MS - now);
-  if (wait > 0) return { limited: true, retryAfter: Math.max(1, Math.ceil(wait / 1000)) };
-  return { limited: false };
+// Adresse IP du client : première adresse de x-forwarded-for (Vercel remplace cet
+// en-tête, un client ne peut pas y glisser la sienne). null si absente ou invalide :
+// la limite par IP est alors simplement sautée (jamais de blocage collectif).
+export function clientIp(req) {
+  const raw = String(req.headers?.["x-forwarded-for"] || req.headers?.["x-real-ip"] || "");
+  const first = raw.split(",")[0].trim();
+  return /^[0-9a-fA-F:.]{2,45}$/.test(first) ? first : null;
 }
 
-// Crée le défi dans la base. Le code n'est jamais stocké en clair.
-export async function createLoginChallenge(email, code) {
+// Identifiant du défi lié au cookie de CETTE requête (même adresse, non expiré), sinon null.
+export function ownChallengeId(req, email) {
+  const payload = unpack(readCookies(req)[CHALLENGE_COOKIE]);
+  if (!payload?.id || payload.email !== normalizeEmail(email) || payload.expires < Date.now()) return null;
+  return payload.id;
+}
+
+// Demande de code, ATOMIQUE : la fonction SQL orkmap_request_login_challenge (migration 006)
+// prend un verrou par adresse, vérifie 1/minute et 5/heure par adresse et par IP, annule
+// seulement le défi du navigateur qui redemande (replaceId), puis insère. Le code n'est
+// jamais stocké en clair. Renvoie { limited: true, retryAfter } ou { limited: false, challenge }.
+export async function requestLoginChallenge(email, code, { ip = null, replaceId = null } = {}) {
   const norm = normalizeEmail(email);
   const id = crypto.randomUUID();
   const expires = Date.now() + TEN_MINUTES * 1000;
-  await supabaseRest(CHALLENGES, {
+  const result = await supabaseRest("rpc/orkmap_request_login_challenge", {
     method: "POST",
-    headers: { Prefer: "return=minimal" },
     body: JSON.stringify({
-      id,
-      email: norm,
-      code_hash: codeHash(id, norm, code),
-      attempts: 0,
-      expires_at: new Date(expires).toISOString(),
+      p_email: norm,
+      p_ip: ip,
+      p_id: id,
+      p_code_hash: codeHash(id, norm, code),
+      p_expires_at: new Date(expires).toISOString(),
+      p_replace_id: replaceId,
     }),
   });
-  return { id, expires, cookie: challengeCookieValue(id, norm, expires) };
+  if (!result?.ok) {
+    return { limited: true, retryAfter: Math.max(1, Number(result?.retry_after) || 60), reason: result?.reason };
+  }
+  return { limited: false, challenge: { id, expires, cookie: challengeCookieValue(id, norm, expires) } };
 }
 
-// Rend un défi inutilisable (envoi du courriel raté, nouveau code demandé).
-export async function burnLoginChallenges(email, exceptId = null) {
-  const norm = normalizeEmail(email);
-  const except = exceptId ? `&id=neq.${encodeURIComponent(exceptId)}` : "";
-  await supabaseRest(`${CHALLENGES}?email=eq.${encodeURIComponent(norm)}&used_at=is.null${except}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ used_at: new Date().toISOString() }),
-  });
-}
-
+// Rend un défi inutilisable (envoi du courriel raté).
 export async function burnLoginChallenge(id) {
   await supabaseRest(`${CHALLENGES}?id=eq.${encodeURIComponent(id)}&used_at=is.null`, {
     method: "PATCH",
