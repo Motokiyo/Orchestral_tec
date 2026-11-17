@@ -30,11 +30,7 @@ test("degraded et backupFailed : alerte propre, jamais le faux envoi, même avec
   // 17/11/2026 : copie de secours impossible = information discrète, jamais une alarme permanente ;
   // l'envoi en cours et le réseau passent avant.
   assert.equal(bannerInfo({ ...ok, pending: 2, backupFailed: true }).kind, "pending");
-  const b = bannerInfo({ ...ok, backupFailed: true });
-  assert.equal(b.kind, "backupFailed");
-  assert.equal(b.tone, "neutral");
-  assert.equal(b.card, false);
-  assert.equal(bannerInfo({ ...ok, backupFailed: true }).action, "export");
+  assert.equal(bannerInfo({ ...ok, backupFailed: true }), null, "17/11 : aucune pastille permanente, info sous l'export");
   assert.equal(bannerInfo({ ...ok, degraded: true }).action, null);
 });
 

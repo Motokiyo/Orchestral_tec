@@ -7,7 +7,7 @@ import { exportLocalDataForRecovery, exportLocalDataToFile, useConcerts, usePhot
 import { S } from "./styles.js";
 import { optionsMobilier, recalculerMobilier, appliquerReglages, ajouterPoles } from "./mobilierUi.js";
 import { LignesMobilierPlus, InfosMobilier, EcartsPlan, ReglagesMobilier } from "./MobilierBlocs.jsx";
-import { bannerInfo, reloadReportText, exportReportText } from "./syncUi.js";
+import { bannerInfo, reloadReportText, exportReportText, noteStockage } from "./syncUi.js";
 import { isAnyImageRef, isUnsentRef, shrinkPlanForStorage } from "./planImages.js";
 import JSZip from "jszip";
 
@@ -184,6 +184,12 @@ function ExportAllButton({ style, label = "Exporter toutes mes données", noteSt
 
 // Bandeau de synchro : hors ligne, envoi en attente, session à renouveler, et les alertes
 // (données trop lourdes, mémoire de secours pleine, stockage lent). Posé au-dessus de la barre d'onglets.
+// Information de stockage (photos et plans gardés sur le téléphone) : sous le bouton d'export, jamais en pastille.
+function NoteStockage() {
+  const texte = noteStockage(useSyncStatus());
+  return texte ? <div style={{ ...S.exportNote, color: "#92400E" }}>{texte}</div> : null;
+}
+
 export function SyncBanner() {
   const status = useSyncStatus();
   const info = bannerInfo(status);
@@ -2557,6 +2563,7 @@ export default function App() {
           <div style={{ marginTop: 6, marginBottom: 12 }}>
             <ExportAllButton style={S.exportBtn} />
             <div style={S.exportNote}>Un fichier de sauvegarde (concerts, photos, partitions) est téléchargé sur ce téléphone. Rien n'est envoyé.</div>
+            <NoteStockage />
           </div>
           {omrScores.length > 0 && (
             <div style={{ marginTop: 18 }}>

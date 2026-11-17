@@ -475,8 +475,9 @@ test("plan illisible et trop lourd : concerts envoyés quand même, référence 
     assert.deepEqual(w.serverConcerts()[0].pieces[0].plans, [ref(a), `orkimg-local:${sha(grosse)}`]);
     assert.deepEqual(posts(w.log, "/api/plan-image").map((e) => e.hash), [sha(a)], "la grosse n'est jamais tentée");
     assert.equal(m.readSyncStatus().unsentPlans, 1);
-    const { bannerInfo } = await imp("src/syncUi.js");
-    assert.equal(bannerInfo(m.readSyncStatus()).text, "1 plan non sauvegardé en ligne (trop lourd)");
+    const { bannerInfo, noteStockage } = await imp("src/syncUi.js");
+    assert.equal(bannerInfo(m.readSyncStatus()), null, "pas de pastille permanente");
+    assert.match(noteStockage(m.readSyncStatus()), /1 plan reste sur ce téléphone/);
     assert.deepEqual(idbConcert("c1").pieces[0].plans, [a, grosse], "l'image reste sur le téléphone");
     // Réouverture : rien n'est renvoyé, rien n'est téléchargé, l'image locale reste affichée.
     unmountAll();
@@ -607,11 +608,14 @@ test("bandeau : concerts, plan, partitions nommés ; photos = avis discret qui n
   assert.match(c.text, /^Tes concerts sont trop lourds .*\(20,4 Mo\)/);
   assert.match(bannerInfo({ ...ok, oversize: [{ type: "concerts", bytes: 4.3 * MO, what: "plan" }] }).text, /^Un plan est trop lourd .*\(4,3 Mo\)/);
   assert.match(bannerInfo({ ...ok, oversize: [{ type: "omr-scores", bytes: 5 * MO }] }).text, /^Tes partitions/);
-  const p = bannerInfo({ ...ok, oversize: [{ type: "photos", bytes: 12 * MO }] });
-  assert.equal(p.kind, "oversizePhotos");
-  assert.equal(p.card, false, "pas d'encart");
-  assert.equal(p.tone, "neutral", "pas de rouge");
-  assert.match(p.text, /Photos .*12,0 Mo/);
+  // 17/11/2026 : photos gardées sur le téléphone = AUCUNE pastille (elle gênait l'usage), info sous l'export.
+  assert.equal(bannerInfo({ ...ok, oversize: [{ type: "photos", bytes: 12 * MO }] }), null, "aucune pastille pour les photos");
+  assert.equal(bannerInfo({ ...ok, backupFailed: true }), null, "aucune pastille pour la copie de secours");
+  assert.equal(bannerInfo({ ...ok, unsentPlans: 2 }), null, "aucune pastille pour les plans non sauvegardés");
+  const { noteStockage } = await imp("src/syncUi.js");
+  assert.match(noteStockage({ oversize: [{ type: "photos", bytes: 12 * MO }] }), /photos \(12,0 Mo\) restent sur ce téléphone/);
+  assert.match(noteStockage({ unsentPlans: 2 }), /2 plans restent sur ce téléphone/);
+  assert.equal(noteStockage({ oversize: [] }), "");
   assert.equal(bannerInfo({ ...ok, online: false, oversize: [{ type: "photos", bytes: 12 * MO }] }).kind, "offline", "le réseau passe avant");
   assert.equal(bannerInfo({ ...ok, pending: 1, oversize: [{ type: "photos", bytes: 12 * MO }] }).kind, "pending");
   assert.equal(bannerInfo({ ...ok, degraded: true, oversize: [{ type: "photos", bytes: 12 * MO }] }).kind, "degraded");
@@ -632,7 +636,7 @@ test("bandeau : des photos trop lourdes ne laissent pas « Envoi des modificatio
   assert.equal(status.pending, 0, "rien n'est en cours d'envoi");
   assert.ok(m.readPending(EMAIL, "photos"), "la marque reste (rien n'est perdu)");
   const { bannerInfo } = await imp("src/syncUi.js");
-  assert.equal(bannerInfo(status).kind, "oversizePhotos");
+  assert.equal(bannerInfo(status), null, "photos gardées sur le téléphone : aucune pastille");
 });
 
 // ───────────── Relecture hostile (scripts S1 à S4, points 5, 6, 7) ─────────────

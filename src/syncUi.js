@@ -67,28 +67,8 @@ export function bannerInfo({ online, pending, sessionExpired, oversize, backupFa
     return { kind: "imageRetry", tone: "warn", action: "retry", card: false, text: "Sauvegarde en ligne en échec, nouvel essai plus tard" };
   }
   if (pending) return { kind: "pending", tone: "neutral", action: "retry", card: false, text: "Envoi des modifications…" };
-  // Plans gardés sur ce téléphone seulement (trop lourds ou illisibles pour le compte), le reste est parti.
-  if (unsentPlans > 0) {
-    return {
-      kind: "unsentPlans", tone: "neutral", action: "export", card: false,
-      text: `${plural(unsentPlans, "plan non sauvegardé", "plans non sauvegardés")} en ligne (trop lourd${unsentPlans > 1 ? "s" : ""})`,
-    };
-  }
-  if (photosBig.length > 0) {
-    const bytes = photosBig.reduce((max, o) => Math.max(max, Number(o?.bytes) || 0), 0);
-    return {
-      kind: "oversizePhotos", tone: "neutral", action: "export", card: false,
-      text: `Photos gardées sur ce téléphone seulement (${formatMo(bytes)} Mo, trop lourdes pour le compte). Tu peux les exporter.`,
-    };
-  }
-  // Copie de secours en mémoire du navigateur impossible (souvent la place, sur iPhone) : les données restent
-  // dans la base du téléphone et sur le compte ; simple information discrète, jamais un encart d'alarme permanent.
-  if (backupFailed) {
-    return {
-      kind: "backupFailed", tone: "neutral", action: "export", card: false,
-      text: "Copie de secours du téléphone impossible (place). Tes données sont gardées ; tu peux les exporter en fichier.",
-    };
-  }
+  // Plans non sauvegardés en ligne, photos gardées sur le téléphone et copie de secours impossible : JAMAIS de pastille permanente
+  // (17/11/2026, elle gênait l'usage). L'information est donnée sous le bouton d'export (noteStockage).
   return null;
 }
 
@@ -114,4 +94,18 @@ export function exportReportText(info) {
   const c = info?.counts || {};
   const n = (x) => (Number.isFinite(x) ? x : 0);
   return `Sauvegarde téléchargée (${plural(n(c.concerts), "concert", "concerts")}, ${plural(n(c.photos), "photo", "photos")}) : ${info?.filename || "fichier"}`;
+}
+
+// Information de stockage montrée sous « Exporter toutes mes données » (accueil), jamais en pastille.
+export function noteStockage({ oversize, backupFailed, unsentPlans } = {}) {
+  const list = Array.isArray(oversize) ? oversize : [];
+  const photos = list.filter((o) => o && o.type === "photos");
+  const parts = [];
+  if (photos.length > 0) {
+    const bytes = photos.reduce((max, o) => Math.max(max, Number(o?.bytes) || 0), 0);
+    parts.push(`Tes photos (${formatMo(bytes)} Mo) restent sur ce téléphone, sans copie en ligne : exporte-les de temps en temps.`);
+  }
+  if (unsentPlans > 0) parts.push(`${plural(unsentPlans, "plan reste", "plans restent")} sur ce téléphone seulement (trop lourd${unsentPlans > 1 ? "s" : ""} pour le compte).`);
+  if (backupFailed) parts.push("La copie de secours interne du téléphone n'a pas pu être faite (place) ; tes données restent gardées.");
+  return parts.join(" ");
 }
