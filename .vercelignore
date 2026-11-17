@@ -1,0 +1,10 @@
+# Fichiers locaux à ne jamais envoyer en ligne (déploiement par vercel --prod depuis le dossier)
+public/essai-local.html
+docs/audit/
+tests/
+.gstack/
+*.env*
+.env*
+dist/
+node_modules/
+AGENTS.md
