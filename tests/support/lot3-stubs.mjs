@@ -3,28 +3,41 @@
 
 // ───────── idb ─────────
 export const world = {
-  stores: { concerts: new Map(), photos: new Map(), "omr-scores": new Map() },
+  // « images » : magasin du lot 6 (images des plans rangées à part, clé = empreinte).
+  stores: { concerts: new Map(), photos: new Map(), "omr-scores": new Map(), images: new Map() },
   delay: 0,        // ms de latence sur chaque opération
   onPut: null,     // (store, clé) appelé juste avant chaque écriture : sert à « faire une modification pile à ce moment »
+  // Lot 6 : (opération, store, clé) appelé avant CHAQUE opération ; peut lever une erreur (écriture refusée).
+  onOp: null,
+  // Lot 6 : application « tuée » : plus aucune opération ne se termine (promesse jamais résolue, sans minuterie).
+  frozen: false,
+  // Lot 6 : (opération, store, clé) → promesse à attendre avant l'opération (retenir une écriture précise).
+  hold: null,
 };
-const keyPaths = { concerts: "id", photos: null, "omr-scores": "id" };
+const keyPaths = { concerts: "id", photos: null, "omr-scores": "id", images: null };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clone = (v) => (v === undefined ? v : structuredClone(v));
-async function gate() { if (world.delay) await sleep(world.delay); }
+async function gate(op, name, key) {
+  if (world.hold) await world.hold(op, name, key);
+  if (world.frozen) await new Promise(() => {});
+  if (world.delay) await sleep(world.delay);
+  if (world.frozen) await new Promise(() => {});
+}
 function storeApi(name) {
   const m = () => world.stores[name];
   return {
-    async get(k) { await gate(); return clone(m().get(k)); },
-    async getAll() { await gate(); return Array.from(m().values()).map(clone); },
-    async getAllKeys() { await gate(); return Array.from(m().keys()); },
+    async get(k) { world.onOp?.("get", name, k); await gate("get", name, k); return clone(m().get(k)); },
+    async getAll() { world.onOp?.("getAll", name); await gate("getAll", name); return Array.from(m().values()).map(clone); },
+    async getAllKeys() { world.onOp?.("getAllKeys", name); await gate("getAllKeys", name); return Array.from(m().keys()); },
     async put(v, k) {
       const key = keyPaths[name] ? v[keyPaths[name]] : k;
+      world.onOp?.("put", name, key);
       world.onPut?.(name, key);
-      await gate();
+      await gate("put", name, key);
       m().set(key, clone(v));
       return key;
     },
-    async delete(k) { await gate(); m().delete(k); },
+    async delete(k) { world.onOp?.("delete", name, k); await gate("delete", name, k); m().delete(k); },
   };
 }
 export async function openDB() {

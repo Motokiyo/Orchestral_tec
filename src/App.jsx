@@ -3,12 +3,13 @@ import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, countOrchestreMusicians, calculateMobilier, chefOptions, isAnnotationItem, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, formatEffectifDaniels, memeDetail, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
 import { mergeAiIntoLocal, failedAiLocal, offlineAiLocal, aiFailedStatus, aiStatusFromResult, dismissAiStatus, aiBannerInfo } from "./aiImport.js";
-import { exportLocalDataForRecovery, exportLocalDataToFile, useConcerts, usePhotos, useOmrScores, useSyncStatus, setSessionExpired, requestSyncRetry, requestPersistentStorage } from "./useStorage.js";
+import { exportLocalDataForRecovery, exportLocalDataToFile, useConcerts, usePhotos, useOmrScores, useSyncStatus, setSessionExpired, requestSyncRetry, requestPersistentStorage, loadPlanImages } from "./useStorage.js";
 import { S } from "./styles.js";
 import { optionsMobilier, recalculerMobilier, appliquerReglages, ajouterPoles } from "./mobilierUi.js";
 import { LignesMobilierPlus, InfosMobilier, EcartsPlan, ReglagesMobilier } from "./MobilierBlocs.jsx";
 import { bannerInfo, reloadReportText, exportReportText, noteStockage } from "./syncUi.js";
-import { isAnyImageRef, isUnsentRef, shrinkPlanForStorage } from "./planImages.js";
+import { shrinkPlanForStorage } from "./planImages.js";
+import { PlanImage } from "./PlanImage.jsx";
 import JSZip from "jszip";
 
 // ── De-duplicate piece ids across all concerts so photos (which are stored in a
@@ -2147,8 +2148,9 @@ export default function App() {
       return;
     }
     if (isOffline()) { alert(OFFLINE_AI_MESSAGE); return; }
-    // Seuls les plans dont l'image est sur ce téléphone partent à la lecture (pas les références « orkimg: »).
-    const plansLisibles = targetPiece.plans.filter((p) => !isAnyImageRef(p));
+    // Les vraies images partent à la lecture : lues dans le magasin du téléphone (ou téléchargées du compte).
+    // Un plan dont l'image n'est pas disponible est laissé de côté.
+    const plansLisibles = await loadPlanImages(targetPiece.plans);
     if (!plansLisibles.length) {
       alert("Les plans de cette pièce ne sont pas encore téléchargés sur ce téléphone. Réessaie dans un instant.");
       return;
@@ -3185,21 +3187,13 @@ export default function App() {
             <div style={{ marginBottom: 10 }}>
               {(piece.plans || []).map((planUrl, idx) => (
                 <div key={idx} style={{ marginBottom: 6, borderRadius: 8, overflow: "hidden", border: `2px solid ${col.hex}33`, position: "relative" }}>
-                  {isAnyImageRef(planUrl) ? (
-                    // Plan venu du compte dont l'image n'est pas encore sur ce téléphone (hors ligne) :
-                    // un cadre au lieu d'une image cassée ; elle se télécharge au retour du réseau.
-                    // « orkimg-local: » : plan trop lourd pour le compte, resté sur le téléphone qui l'a importé.
-                    <div data-testid="plan-indisponible" style={{ padding: "28px 12px", textAlign: "center", background: "#F5F5F4", color: "#78716C", fontSize: 13, fontWeight: 600 }}>
-                      {isUnsentRef(planUrl) ? "Plan resté sur un autre téléphone (trop lourd pour le compte)" : "Plan non disponible hors ligne"}
-                    </div>
-                  ) : (
-                    <img
-                      src={planUrl}
-                      onClick={() => setFullPhoto({ id: `plan-${idx}`, dataUrl: planUrl })}
-                      style={{ width: "100%", display: "block", cursor: "pointer" }}
-                      alt={`Plan ${idx + 1}`}
-                    />
-                  )}
+                  {/* Image rangée à part (lot 6) : chargée à l'affichage depuis le téléphone, sinon le compte,
+                      sinon cadre « Plan non disponible hors ligne ». Le plein écran reçoit la vraie image. */}
+                  <PlanImage
+                    value={planUrl}
+                    alt={`Plan ${idx + 1}`}
+                    onOpen={(dataUrl) => setFullPhoto({ id: `plan-${idx}`, dataUrl })}
+                  />
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: col.bg, padding: "4px 10px" }}>
                     <span style={{ fontSize: 11, fontWeight: 600, color: col.hex }}>
                       Plan {(piece.plans || []).length > 1 ? `${idx + 1}/${(piece.plans || []).length}` : ""}

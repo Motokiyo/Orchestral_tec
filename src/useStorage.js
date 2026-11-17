@@ -1,12 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { openDB } from "idb";
 import {
-  buildImageIndex, collectImageRefs, createImageRegistry, downloadPlanImage, outgoingForm,
-  prepareConcertsUpload, rehydrateImages, RETRY_DELAYS_MS,
+  buildImageIndex, collectImageRefs, createImageRegistry, downloadPlanImage, hasInlineImages, hashOfRef,
+  isAnyImageRef, isImageRef, mapImageStrings, outgoingForm, prepareConcertsUpload, refOf, rehydrateImages,
+  RETRY_DELAYS_MS,
 } from "./planImages.js";
+import {
+  applyStoredRefs, createImageCache, IMAGES_STORE, inlineStoredImages, listStoredHashes, readStoredImage,
+  storeInlineImages, writeVerifiedImage,
+} from "./localImages.js";
 
 const DB_NAME = "orkmap-db";
-const DB_VERSION = 4;
+// 5 (lot 6) : magasin « images » (images des plans rangées à part, clé = empreinte sha256).
+const DB_VERSION = 5;
 const STORE = "concerts";
 const PHOTOS_STORE = "photos";
 const OMR_STORE = "omr-scores";
@@ -40,6 +46,7 @@ export const RECOVERY_STORES = {
   concerts: STORE,
   photos: PHOTOS_STORE,
   omrScores: OMR_STORE,
+  images: IMAGES_STORE,
 };
 
 function normalizeEmail(email) {
@@ -230,20 +237,149 @@ export function getImageRegistry(email) {
   return imageRegistries.get(email);
 }
 
+// ── Magasin local des images (lot 6, voir localImages.js) ──
+// Index en mémoire des empreintes présentes dans le magasin « images » de ce téléphone : lu une fois
+// (liste des clés, quelques octets par image), tenu à jour à chaque écriture vérifiée.
+let storedHashes = null;
+
+export async function ensureStoredHashes() {
+  if (storedHashes) return storedHashes;
+  try {
+    const hashes = await withTimeout(getDB().then(listStoredHashes), LOCAL_LOAD_TIMEOUT_MS, "Plan images index");
+    storedHashes = storedHashes || hashes;
+    return storedHashes;
+  } catch (err) {
+    console.warn("[OrkMap] Plan images index unreadable for now:", err?.message || err);
+    return new Set();
+  }
+}
+
+function noteStored(hash) {
+  if (storedHashes) storedHashes.add(hash);
+}
+
+// Source « images du téléphone » pour l'envoi (planImages.js) : has() sans attente, get() lit le magasin.
+async function localImageSource() {
+  const hashes = await ensureStoredHashes();
+  return {
+    has: (hash) => hashes.has(hash),
+    get: async (hash) => readStoredImage(await getDB(), hash),
+  };
+}
+
+// Compte dont les écrans affichent les plans (registre des copies réduites pour retrouver un original).
+let activeImageEmail = "";
+const PLAN_IMAGE_EVENT = "orkmap-plan-image";
+const displayCache = createImageCache();
+const imageLoads = new Map();
+
+// Image téléchargée du compte : gardée en mémoire pour l'affichage, rangée dans le magasin (vérifiée),
+// et les cadres « Plan non disponible » qui l'attendaient sont prévenus.
+async function storeDownloaded(hash, dataUrl) {
+  displayCache.set(hash, dataUrl);
+  try {
+    if (await writeVerifiedImage(await getDB(), hash, dataUrl)) noteStored(hash);
+  } catch (err) {
+    console.warn("[OrkMap] Downloaded plan image kept in memory only:", err?.message || err);
+  }
+  try {
+    window.dispatchEvent(Object.assign(new Event(PLAN_IMAGE_EVENT), { hash }));
+  } catch {
+    // pas de fenêtre (tests) : rien à prévenir
+  }
+}
+
+export function onPlanImageStored(listener) {
+  if (typeof window === "undefined" || !window.addEventListener) return () => {};
+  const handler = (event) => listener(event?.hash);
+  window.addEventListener(PLAN_IMAGE_EVENT, handler);
+  return () => window.removeEventListener(PLAN_IMAGE_EVENT, handler);
+}
+
+// Image à afficher (ou à envoyer à la lecture IA) pour une valeur de plans[] : un data URL est rendu tel
+// quel ; une référence est lue dans le cache mémoire, sinon dans le magasin local (ou l'original d'une copie
+// réduite), sinon téléchargée du compte si le réseau est là (`download`). null : pas disponible.
+export async function loadPlanImage(value, { download = true } = {}) {
+  if (typeof value !== "string") return null;
+  if (!isAnyImageRef(value)) return value;
+  const hash = hashOfRef(value);
+  const cached = displayCache.get(hash);
+  if (cached) return cached;
+  const key = `${hash}:${download && isImageRef(value) ? 1 : 0}`;
+  if (imageLoads.has(key)) return imageLoads.get(key);
+  const job = (async () => {
+    try {
+      const db = await getDB();
+      let image = await readStoredImage(db, hash);
+      if (image === null && activeImageEmail) {
+        const original = (await getImageRegistry(activeImageEmail)).originalOf(hash);
+        if (original) image = await readStoredImage(db, original);
+      }
+      if (image === null && download && isImageRef(value) && !isOffline()) {
+        await downloadMissingImages([hash], { email: activeImageEmail, onFound: storeDownloaded });
+        image = displayCache.get(hash) ?? null;
+      }
+      if (image !== null) displayCache.set(hash, image);
+      return image;
+    } catch (err) {
+      console.warn("[OrkMap] Plan image unavailable:", err?.message || err);
+      return null;
+    } finally {
+      imageLoads.delete(key);
+    }
+  })();
+  imageLoads.set(key, job);
+  return job;
+}
+
+// Toutes les images d'une liste de plans, pour la lecture IA : seules celles disponibles sont rendues.
+export async function loadPlanImages(values) {
+  const out = [];
+  for (const value of Array.isArray(values) ? values : []) {
+    const image = await loadPlanImage(value);
+    if (typeof image === "string") out.push(image);
+  }
+  return out;
+}
+
 // ── Images des plans reçues du compte (références « orkimg: », voir planImages.js) ──
-// Une référence dont l'image est sur le téléphone (même empreinte, ou copie réduite d'un original du
-// téléphone) est remplacée par cette image, sans réseau. Les autres restent des références.
+// Lot 6 : une référence dont l'image est dans le magasin du téléphone (même empreinte, ou copie réduite
+// d'un original du téléphone, ou « orkimg-local: » d'une image d'ici) devient « orkimg:<original> », la
+// forme des concerts locaux. Une référence dont l'image est encore DANS un concert du téléphone (ancien
+// format, pas encore rangé : `localSources`) redevient cette image. Les autres restent des références.
 export async function resolveImagesFromDevice(remoteData, localSources, email) {
   if (!collectImageRefs(remoteData, { includeUnsent: true }).size) return remoteData;
-  const index = await buildImageIndex(localSources);
+  const stored = await ensureStoredHashes();
   const registry = email ? await getImageRegistry(email) : null;
-  return rehydrateImages(remoteData, index, registry).data;
+  const localHash = (hash) => {
+    if (stored.has(hash)) return hash;
+    const original = registry?.originalOf(hash);
+    return original && stored.has(original) ? original : null;
+  };
+  let remaining = false;
+  const canonical = mapImageStrings(remoteData, (text) => {
+    if (!isAnyImageRef(text)) return text;
+    const hash = localHash(hashOfRef(text));
+    if (hash) return refOf(hash);
+    remaining = true;
+    return text;
+  });
+  if (!remaining) return canonical;
+  const index = new Map(Array.from(await buildImageIndex(localSources)).filter(([hash]) => !stored.has(hash)));
+  if (!index.size) return canonical;
+  return rehydrateImages(canonical, index, registry).data;
 }
 
 // Après une fusion locale (mode mémoire lente, rechargement) : une référence ne remplace JAMAIS une
-// image présente sur le téléphone. Toute référence dont l'image est dans `sources` redevient l'image.
+// image présente sur le téléphone (magasin local, ou encore dans un concert de `sources`).
 async function keepDeviceImages(list, sources, email) {
   return resolveImagesFromDevice(list, sources, email);
+}
+
+// Références d'une liste dont l'image n'est PAS sur ce téléphone (à télécharger du compte).
+export async function refsNotOnDevice(data, { includeUnsent = false } = {}) {
+  const stored = await ensureStoredHashes();
+  return new Set(Array.from(collectImageRefs(data, { includeUnsent })).filter((hash) => !stored.has(hash)));
 }
 
 // Attentes croissantes des téléchargements en échec, par image (mémoire de la session).
@@ -252,7 +388,9 @@ const downloadRetry = new Map();
 // Télécharge les images manquantes, une par une. Une erreur sur une image ne bloque pas les suivantes :
 // cette image attend (1, 5, 15, puis 60 min) avant un nouvel essai. Une image absente du compte (404)
 // est notée dans `gone`. Hors ligne : arrêt. Renvoie Map<empreinte, data URL>.
-export async function downloadMissingImages(hashes, { email, gone = new Set(), stillValid = () => true, now = () => Date.now() } = {}) {
+// `onFound(empreinte, image)` : appelé à chaque image reçue (rangement dans le magasin local) ; l'image
+// n'est alors pas gardée dans la Map rendue (valeur true), pour ne pas tenir 20 Mo en mémoire.
+export async function downloadMissingImages(hashes, { email, gone = new Set(), stillValid = () => true, now = () => Date.now(), onFound = null } = {}) {
   const found = new Map();
   for (const hash of hashes) {
     if (gone.has(hash)) continue;
@@ -264,7 +402,10 @@ export async function downloadMissingImages(hashes, { email, gone = new Set(), s
       const dataUrl = await downloadPlanImage(hash, { onUnauthorized: () => setSessionExpired(true) });
       downloadRetry.delete(key);
       if (dataUrl === null) gone.add(hash);
-      else found.set(hash, dataUrl);
+      else if (onFound) {
+        await onFound(hash, dataUrl);
+        found.set(hash, true);
+      } else found.set(hash, dataUrl);
     } catch (err) {
       const failures = (wait?.failures || 0) + 1;
       downloadRetry.set(key, { failures, nextAt: now() + RETRY_DELAYS_MS[Math.min(failures, RETRY_DELAYS_MS.length) - 1] });
@@ -278,6 +419,7 @@ function prepareConcerts(email) {
   return async (list) => prepareConcertsUpload(email, list, {
     maxBytes: MAX_PAYLOAD_BYTES,
     registry: await getImageRegistry(email),
+    local: await localImageSource(),
     onUnauthorized: () => setSessionExpired(true),
     onUnsent: (count) => setUnsentPlans(email, count),
   });
@@ -678,6 +820,10 @@ async function getDB() {
       if (!db.objectStoreNames.contains(OMR_STORE)) {
         db.createObjectStore(OMR_STORE, { keyPath: "id" });
       }
+      // Lot 6 : ajout seulement, rien n'est déplacé ici (la migration se fait en arrière-plan, voir useConcerts).
+      if (!db.objectStoreNames.contains(IMAGES_STORE)) {
+        db.createObjectStore(IMAGES_STORE);
+      }
     },
   });
 }
@@ -740,6 +886,10 @@ function countPhotosIn(value) {
   return n;
 }
 
+// Lot 6 : les concerts du téléphone portent des références d'images ; le fichier, lui, doit se suffire :
+// chaque référence dont l'image est sur ce téléphone (magasin « images », ou original d'une copie réduite)
+// est remplacée par la vraie image. Une image absente du téléphone (compte jamais téléchargé) reste une
+// référence, comptée dans `plansNonInclus`.
 // `email` : n'exporte que les données de ce compte (concerts, photos, partitions). Sans lui, tout
 // ce qui est sur l'appareil est exporté. Dans les deux cas, les copies de sécurité du rechargement
 // (clés « orkmap-safety-copy:… » rangées dans le magasin photos) ne sont JAMAIS exportées : ce ne
@@ -748,7 +898,14 @@ export async function buildLocalSnapshot(db, { email } = {}) {
   const database = db || (await getDB());
   const account = normalizeEmail(email);
   const allConcerts = await database.getAll(STORE);
-  const concerts = account ? allConcerts.filter((item) => belongsToUser(item, account)) : allConcerts;
+  const ownConcerts = account ? allConcerts.filter((item) => belongsToUser(item, account)) : allConcerts;
+  let registry = null;
+  if (account) {
+    try { registry = createImageRegistry(await database.get(PHOTOS_STORE, imageRegistryKey(account))); } catch { registry = null; }
+  }
+  const { data: concerts, missing: plansNonInclus } = await inlineStoredImages(database, ownConcerts, {
+    originalOf: (hash) => registry?.originalOf(hash) || null,
+  });
   const photoKeys = await database.getAllKeys(PHOTOS_STORE);
   const photos = [];
   for (const key of photoKeys) {
@@ -771,6 +928,7 @@ export async function buildLocalSnapshot(db, { email } = {}) {
       photos: photos.reduce((sum, entry) => sum + countPhotosIn(entry.value), 0),
       omrScores: omrScores.length,
     },
+    plansNonInclus,
     concerts,
     photos,
     omrScores,
@@ -806,7 +964,7 @@ export async function exportLocalDataToFile({ db, download = downloadTextFile, e
   const text = JSON.stringify(snapshot);
   const filename = localExportFilename();
   download(filename, text);
-  return { filename, bytes: measureBytes(text), counts: snapshot.counts };
+  return { filename, bytes: measureBytes(text), counts: snapshot.counts, plansNonInclus: snapshot.plansNonInclus };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1147,6 +1305,8 @@ export function useConcerts(initialConcerts, userEmail) {
   const hydratingRef = useRef(false);
   const reloadingRef = useRef(false);
   const goneImagesRef = useRef(new Set());
+  // Rangement des images dans le magasin local (lot 6) : un seul passage à la fois.
+  const movingRef = useRef(null);
   const email = normalizeEmail(userEmail);
   const setConcerts = useCallback((data) => {
     latestRef.current = data;
@@ -1172,6 +1332,52 @@ export function useConcerts(initialConcerts, userEmail) {
     await tx.done;
   }, [email]);
 
+  // Lot 6 : range dans le magasin « images » les images encore DANS les concerts de `list` (écrites, relues,
+  // empreinte revérifiée), puis rend `list` avec leurs références (tout ou rien par concert, voir
+  // localImages.js). Si `allowed()`, la liste affichée la plus récente est convertie de la même façon
+  // (aucune modification de l'utilisateur n'est perdue : seules les images vérifiées sont remplacées).
+  // Toute erreur : `list` est rendue telle quelle, rien n'est perdu.
+  const moveImagesToStore = useCallback(async (list, allowed) => {
+    if (!email || !hasInlineImages(list)) return list;
+    try {
+      const db = await getDB();
+      const verified = await storeInlineImages(db, list, { onStored: noteStored });
+      if (!verified.size) return list;
+      if (allowed()) {
+        const current = applyStoredRefs(latestRef.current, verified);
+        if (current.changed) setConcerts(current.data);
+      }
+      return applyStoredRefs(list, verified).data;
+    } catch (err) {
+      console.warn("[OrkMap] Plan images not moved to the image store yet:", err?.message || err);
+      return list;
+    }
+  }, [email, setConcerts]);
+
+  // Migration de l'ancien format (images dans les concerts) : en arrière-plan, jamais bloquante.
+  // 1. images écrites dans le magasin, relues, empreinte vérifiée ; 2. SEULEMENT ENSUITE, concerts réécrits
+  // avec leurs références. Interrompue n'importe où (application fermée) : IndexedDB garde soit l'ancien
+  // concert (images dedans), soit le nouveau (références dont l'image est déjà dans le magasin) ; le
+  // lancement suivant reprend (les images déjà rangées ne sont pas réécrites). Idempotente.
+  const migrateImages = useCallback((allowed) => {
+    if (movingRef.current) return movingRef.current;
+    if (!email || !hasInlineImages(latestRef.current)) return Promise.resolve();
+    const job = (async () => {
+      const before = latestRef.current;
+      const after = await moveImagesToStore(before, allowed);
+      if (after === before || !allowed() || latestRef.current === before) return;
+      writeConcertsBackup(email, latestRef.current);
+      try {
+        await withTimeout(saveLocal(latestRef.current), LOCAL_LOAD_TIMEOUT_MS * 4, "Plan images migration save");
+      } catch (err) {
+        // Les images sont rangées et vérifiées ; les concerts seront réécrits au prochain enregistrement.
+        console.warn("[OrkMap] Concerts not rewritten with image references yet:", err?.message || err);
+      }
+    })().finally(() => { movingRef.current = null; });
+    movingRef.current = job;
+    return job;
+  }, [email, moveImagesToStore, saveLocal]);
+
   // Load from IndexedDB first, then prefer the account sync when available.
   useEffect(() => {
     const token = loadTokenRef.current + 1;
@@ -1190,6 +1396,7 @@ export function useConcerts(initialConcerts, userEmail) {
       readyRef.current = "";
       degradedRef.current = false;
       goneImagesRef.current = new Set();
+      activeImageEmail = email;
       setSyncFlag("degraded", false);
       setLoaded(false);
       setLoadedFor("");
@@ -1258,7 +1465,7 @@ export function useConcerts(initialConcerts, userEmail) {
             // remplacées par leur référence), sinon chaque ouverture renverrait tout.
             if (canSeedRemoteFromLocal) {
               const registry = await getImageRegistry(email);
-              const outgoing = await outgoingForm(remoteConcertPayload(latestRef.current, email), registry, { maxBytes: MAX_PAYLOAD_BYTES });
+              const outgoing = await outgoingForm(remoteConcertPayload(latestRef.current, email), registry, { maxBytes: MAX_PAYLOAD_BYTES, local: await localImageSource() });
               if (!sameData(remote.data, outgoing)) markPending(email, SYNC_TYPES.concerts);
             }
           } else if (remote.available && canSeedRemoteFromLocal && localCount > 0) {
@@ -1336,6 +1543,8 @@ export function useConcerts(initialConcerts, userEmail) {
       if (latestRef.current.length) localData = mergeConcerts(latestRef.current, localData, email);
       writeConcertsBackup(email, localData);
       setConcerts(localData);
+      // Ancien format (images dans les concerts) : rangement en arrière-plan, l'affichage n'attend pas.
+      migrateImages(() => isCurrent() && !degradedRef.current && !reloadingRef.current);
 
       await pullRemote(canSeedRemoteFromLocal, localData.length);
       readyRef.current = email;
@@ -1359,33 +1568,27 @@ export function useConcerts(initialConcerts, userEmail) {
     await withTimeout(saveLocal(mergedData), LOCAL_LOAD_TIMEOUT_MS, "Concert cache save");
   }, [email, saveLocal, setConcerts]);
 
-  // Références restées sans image (concerts venus du compte, téléphone hors ligne à ce moment-là) :
-  // téléchargées en arrière-plan quand le réseau est là, puis rangées dans IndexedDB avec les concerts.
+  // Références dont l'image n'est pas sur ce téléphone (concerts venus du compte, téléphone hors ligne à ce
+  // moment-là) : téléchargées en arrière-plan quand le réseau est là et rangées dans le magasin local.
+  // Les concerts ne changent pas (ils portent déjà la référence) ; les cadres « Plan non disponible » sont
+  // prévenus et affichent l'image.
   const hydrateMissing = useCallback(async () => {
     if (hydratingRef.current || !email || isOffline()) return;
     const usable = () => readyRef.current === email && !degradedRef.current && !reloadingRef.current;
     if (!usable()) return;
-    const wanted = Array.from(collectImageRefs(latestRef.current)).filter((hash) => !goneImagesRef.current.has(hash));
+    const wanted = Array.from(await refsNotOnDevice(latestRef.current)).filter((hash) => !goneImagesRef.current.has(hash));
     if (!wanted.length) return;
     hydratingRef.current = true;
     try {
-      const found = await downloadMissingImages(wanted, { email, gone: goneImagesRef.current, stillValid: usable });
-      if (!found.size || !usable()) return;
-      const { data, changed } = rehydrateImages(latestRef.current, found);
-      if (!changed) return;
-      setConcerts(data);
-      writeConcertsBackup(email, data);
-      try {
-        await saveLocal(data);
-      } catch (err) {
-        console.warn("[OrkMap] Downloaded plan images not saved yet:", err);
-      }
+      await downloadMissingImages(wanted, { email, gone: goneImagesRef.current, stillValid: usable, onFound: storeDownloaded });
     } finally {
       hydratingRef.current = false;
     }
-  }, [email, saveLocal, setConcerts]);
+  }, [email]);
 
   const flush = useCallback(async () => {
+    const usable = () => readyRef.current === email && !degradedRef.current && !reloadingRef.current;
+    if (usable()) await migrateImages(usable);
     await pushPending({
       email,
       type: SYNC_TYPES.concerts,
@@ -1394,14 +1597,19 @@ export function useConcerts(initialConcerts, userEmail) {
       prepare: prepareConcerts(email),
     });
     hydrateMissing().catch((err) => console.warn("[OrkMap] Plan image hydration failed:", err));
-  }, [email, absorbRemote, hydrateMissing]);
+  }, [email, absorbRemote, hydrateMissing, migrateImages]);
 
   useSyncRetry(email, flush);
 
   // Auto-save to IndexedDB, then queue + send to the account (debounced)
   const save = useCallback(async (data, removedIds = []) => {
     if (!email) return;
-    const owned = data.map((item) => withOwner(item, email));
+    let owned = data.map((item) => withOwner(item, email));
+    // Nouveau plan (import, ancienne sauvegarde, ancien téléphone…) : son image va dans le magasin local
+    // avant l'écriture du concert, qui ne garde que la référence. Pas en mode dégradé (IndexedDB non relu).
+    if (!degradedRef.current && hasInlineImages(owned)) {
+      owned = await moveImagesToStore(owned, () => readyRef.current === email && !degradedRef.current && !reloadingRef.current);
+    }
     writeConcertsBackup(email, owned, { removedIds });
     if (degradedRef.current) {
       // Mode dégradé : IndexedDB n'a pas été relu, on n'y écrit pas (cela pourrait
@@ -1421,7 +1629,7 @@ export function useConcerts(initialConcerts, userEmail) {
     }
     markPending(email, SYNC_TYPES.concerts, removedIds);
     await flush();
-  }, [email, saveLocal, flush]);
+  }, [email, saveLocal, flush, moveImagesToStore]);
 
   const runSaveNow = useCallback(() => {
     if (!saveTimer.current) return;
@@ -1488,16 +1696,17 @@ export function useConcerts(initialConcerts, userEmail) {
         // Images : d'abord celles du téléphone, puis téléchargement des autres. Une image introuvable
         // reste une référence (cadre « Plan non disponible »), le reste du rechargement se fait.
         const local = latestRef.current;
-        const fromDevice = await resolveImagesFromDevice(remote.data, local, email);
-        const missing = collectImageRefs(fromDevice);
-        const found = missing.size ? await downloadMissingImages(missing, { email, gone: goneImagesRef.current }) : new Map();
-        const resolved = found.size ? rehydrateImages(fromDevice, found, await getImageRegistry(email)).data : fromDevice;
-        // Un plan du compte resté sans image : jamais une référence à la place d'une image du téléphone.
-        // Ce concert garde sa version du téléphone, et le compte rendu le signale.
+        const resolved = await resolveImagesFromDevice(remote.data, local, email);
+        // Images du compte absentes du téléphone : téléchargées et rangées dans le magasin local.
+        const missing = await refsNotOnDevice(resolved);
+        if (missing.size) await downloadMissingImages(missing, { email, gone: goneImagesRef.current, onFound: storeDownloaded });
+        // Un plan du compte resté sans image sur ce téléphone : jamais une référence à la place d'une image
+        // du téléphone. Ce concert garde sa version du téléphone, et le compte rendu le signale.
         const localIds = new Set(local.map((c) => String(c?.id)));
-        keepLocalIds = new Set(resolved
-          .filter((c) => c && localIds.has(String(c.id)) && collectImageRefs(c, { includeUnsent: true }).size > 0)
-          .map((c) => String(c.id)));
+        keepLocalIds = new Set();
+        for (const c of resolved) {
+          if (c && localIds.has(String(c.id)) && (await refsNotOnDevice(c, { includeUnsent: true })).size > 0) keepLocalIds.add(String(c.id));
+        }
         return resolved;
       },
       keepLocalIds: () => keepLocalIds,

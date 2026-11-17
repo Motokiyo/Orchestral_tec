@@ -1,7 +1,10 @@
 // Images des plans HORS du JSON des concerts envoyé au compte (lot 5).
 //
-// Sur le téléphone, rien ne change : IndexedDB garde les concerts AVEC leurs images (data URL),
-// tout s'affiche hors ligne comme avant. Seul l'ENVOI au compte change :
+// Lot 6 : sur le téléphone aussi, les images sont rangées à part (magasin IndexedDB « images », voir
+// localImages.js) et les concerts locaux portent la référence « orkimg:<empreinte de l'original> ».
+// Les fonctions d'envoi ci-dessous acceptent donc les deux formes : image dans le concert (ancien format,
+// concert pas encore rangé) et référence dont l'image est dans le magasin local (option `local`).
+// L'ENVOI au compte :
 //   1. chaque image (voir isExternalImage : data:image/…, data:application/octet-stream qui est une
 //      image, ou tout data: d'au moins 2 Ko rangé dans les plans) est remplacée par une référence
 //      stable « orkimg:<sha256 hex> » ;
@@ -197,6 +200,37 @@ async function findImages(data) {
   return hashes; // Map texte → empreinte
 }
 
+// Map texte de l'image → empreinte, pour les images rangées DANS `data` (ancien format).
+export const findImageHashes = findImages;
+
+// Textes des images rangées dans `data` (sans calcul d'empreinte : parcours seulement).
+export function listInlineImages(data) {
+  const found = new Set();
+  walkStrings(data, (text, inPlan) => { if (isExternalImage(text, inPlan)) found.add(text); });
+  return found;
+}
+
+export function hasInlineImages(data) {
+  let found = false;
+  walkStrings(data, (text, inPlan) => { if (!found && isExternalImage(text, inPlan)) found = true; });
+  return found;
+}
+
+// Copie de `data` où chaque texte passe par `fn(texte, dansUnPlan)` ; branches inchangées rendues telles quelles.
+export const mapImageStrings = (data, fn) => mapStrings(data, fn);
+
+// Empreintes des références dont l'image est sur ce téléphone (magasin local, `local.has`).
+function collectLocalRefs(data, local) {
+  const out = new Set();
+  if (!local) return out;
+  walkStrings(data, (text) => {
+    if (!isAnyImageRef(text)) return;
+    const hash = hashOfRef(text);
+    if (local.has(hash)) out.add(hash);
+  });
+  return out;
+}
+
 // Remplace les images par leur référence (empreinte de l'ORIGINAL). Renvoie { data, images }.
 export async function externalizeImages(data) {
   const hashes = await findImages(data);
@@ -354,42 +388,74 @@ async function sendableCopy(original) {
 const sendableAsIs = (text) => isValidImageDataUrl(text) && text.length <= SEND_LIMIT_BYTES;
 
 // ── Assemblage du JSON envoyé ──
-// decisions : Map empreinte de l'original → { target } (référence envoyée) ou { rejected: true }.
+// decisions : Map empreinte de l'original → { target } (référence envoyée), { rejected: true } ou
+// { keep: true } (référence locale dont l'image a disparu entre-temps : laissée telle quelle).
 // Une image refusée reste dans le JSON si l'ensemble tient (plus petites d'abord), sinon elle devient
-// « orkimg-local: » (gardée sur ce téléphone seulement). Renvoie { data, unsent }.
-function assemble(data, hashes, decisions, maxBytes) {
+// « orkimg-local: » (gardée sur ce téléphone seulement). `texts` : empreinte → texte de l'image (les
+// images refusées doivent y être). `localRefs` : références dont l'image est dans le magasin local.
+// Renvoie { data, unsent }.
+function assemble(data, hashes, localRefs, decisions, texts, maxBytes) {
   const inline = new Set();
-  const rejected = Array.from(hashes).filter(([, hash]) => decisions.get(hash)?.rejected);
+  const rejected = Array.from(decisions).filter(([, d]) => d.rejected).map(([hash]) => hash);
+  const decide = (hash, text) => {
+    const d = decisions.get(hash);
+    if (!d || d.keep) return text;
+    if (d.rejected) return inline.has(hash) ? texts.get(hash) : unsentRefOf(hash);
+    return refOf(d.target || hash);
+  };
   const build = () => mapStrings(data, (text) => {
     const hash = hashes.get(text);
-    if (!hash) return text;
-    const d = decisions.get(hash);
-    if (d?.rejected) return inline.has(hash) ? text : unsentRefOf(hash);
-    return refOf(d?.target || hash);
+    if (hash) return decide(hash, text);
+    if (isAnyImageRef(text) && localRefs.has(hashOfRef(text))) return decide(hashOfRef(text), text);
+    return text;
   });
   if (rejected.length && maxBytes) {
     let size = new TextEncoder().encode(JSON.stringify(build())).byteLength;
-    for (const [text, hash] of rejected.sort((a, b) => a[0].length - b[0].length)) {
-      const extra = text.length - unsentRefOf(hash).length;
+    const candidates = rejected.filter((hash) => typeof texts.get(hash) === "string");
+    for (const hash of candidates.sort((a, b) => texts.get(a).length - texts.get(b).length)) {
+      const extra = texts.get(hash).length - unsentRefOf(hash).length;
       if (size + extra <= maxBytes - JSON_MARGIN_BYTES) {
         inline.add(hash);
         size += extra;
       }
     }
   }
-  const unsent = rejected.filter(([, hash]) => !inline.has(hash)).length;
+  const unsent = rejected.filter((hash) => !inline.has(hash)).length;
   return { data: build(), unsent };
 }
 
-// Forme envoyée, calculée SANS réseau d'après le registre (pour savoir si le compte est à jour).
-export async function outgoingForm(data, registry, { maxBytes } = {}) {
+// Images à considérer pour l'envoi : celles rangées dans `data` (texte connu) et celles du magasin local
+// citées par référence (texte lu seulement si besoin). Renvoie { hashes, localRefs, originals }.
+async function gatherImages(data, local) {
   const hashes = await findImages(data);
+  const originals = new Map(); // empreinte → { text } | { lazy: true }
+  for (const [text, hash] of hashes) originals.set(hash, { text });
+  const localRefs = collectLocalRefs(data, local);
+  for (const hash of localRefs) if (!originals.has(hash)) originals.set(hash, { lazy: true });
+  const textOf = async (hash) => {
+    const o = originals.get(hash);
+    if (!o) return null;
+    if (o.text === undefined) {
+      try { o.text = (await local.get(hash)) ?? null; } catch { o.text = null; }
+    }
+    return o.text;
+  };
+  return { hashes, localRefs, originals, textOf };
+}
+
+// Forme envoyée, calculée SANS réseau d'après le registre (pour savoir si le compte est à jour).
+// `local` : magasin local ({ has(empreinte), get(empreinte) }) pour les concerts déjà rangés.
+export async function outgoingForm(data, registry, { maxBytes, local = null } = {}) {
+  const { hashes, localRefs, originals, textOf } = await gatherImages(data, local);
   const decisions = new Map();
-  for (const [, hash] of hashes) {
-    if (registry?.isRejected(hash)) decisions.set(hash, { rejected: true });
-    else decisions.set(hash, { target: registry?.variantOf(hash) || hash });
+  const texts = new Map();
+  for (const [hash] of originals) {
+    if (registry?.isRejected(hash)) {
+      decisions.set(hash, { rejected: true });
+      texts.set(hash, await textOf(hash));
+    } else decisions.set(hash, { target: registry?.variantOf(hash) || hash });
   }
-  return assemble(data, hashes, decisions, maxBytes).data;
+  return assemble(data, hashes, localRefs, decisions, texts, maxBytes).data;
 }
 
 // ── Réseau ──
@@ -467,26 +533,35 @@ export async function downloadPlanImage(hash, { onUnauthorized } = {}) {
 //   sinon « orkimg-local: »), jamais renvoyée en boucle.
 // - Échec passager : attente croissante pour CETTE image (jamais plus d'un essai par période) ; les
 //   autres images sont tentées ; les concerts attendent (erreur `imageRetry`).
+// - Lot 6 : une référence dont l'image est dans le magasin local (`local`) est traitée comme une image du
+//   téléphone ; son texte n'est lu dans le magasin que si le compte ne l'a pas. Une référence dont l'image
+//   n'est pas sur ce téléphone (image du compte pas encore téléchargée) part telle quelle.
 // `onUnsent(n)` : nombre de plans gardés sur ce téléphone seulement.
 export async function prepareConcertsUpload(email, payload, {
-  maxBytes, registry = createImageRegistry(), onUnauthorized, onUnsent,
+  maxBytes, registry = createImageRegistry(), onUnauthorized, onUnsent, local = null,
   upload = uploadPlanImage, check = checkKnownImages, now = () => Date.now(),
 } = {}) {
-  const hashes = await findImages(payload);
-  const originals = new Map();
-  for (const [text, hash] of hashes) originals.set(hash, text);
+  const { hashes, localRefs, originals, textOf } = await gatherImages(payload, local);
   const decisions = new Map();
   const copies = new Map(); // empreinte envoyée → data URL (copie faite pendant ce passage)
-  for (const [hash, original] of originals) {
-    if (registry.isRejected(hash)) { decisions.set(hash, { rejected: true }); continue; }
-    const known = registry.variantOf(hash);
-    if (known) { decisions.set(hash, { target: known }); continue; }
-    if (sendableAsIs(original)) { decisions.set(hash, { target: hash }); continue; }
-    const copy = await sendableCopy(original);
-    if (!copy) { registry.reject(hash); decisions.set(hash, { rejected: true }); continue; }
+  const makeCopy = async (hash) => {
+    const text = await textOf(hash);
+    const copy = typeof text === "string" ? await sendableCopy(text) : null;
+    if (!copy) return null;
     const target = await sha256Hex(copy);
     registry.setVariant(hash, target);
     copies.set(target, copy);
+    return target;
+  };
+  for (const [hash, o] of originals) {
+    if (registry.isRejected(hash)) { decisions.set(hash, { rejected: true }); continue; }
+    const known = registry.variantOf(hash);
+    if (known) { decisions.set(hash, { target: known }); continue; }
+    // Image du magasin local : on suppose qu'elle part telle quelle ; vérifié seulement si le compte ne l'a pas.
+    if (o.lazy) { decisions.set(hash, { target: hash, lazy: true }); continue; }
+    if (sendableAsIs(o.text)) { decisions.set(hash, { target: hash }); continue; }
+    const target = await makeCopy(hash);
+    if (!target) { registry.reject(hash); decisions.set(hash, { rejected: true }); continue; }
     decisions.set(hash, { target });
   }
 
@@ -497,14 +572,26 @@ export async function prepareConcertsUpload(email, payload, {
     for (const [hash, d] of decisions) {
       if (!d.target || onServer.has(d.target)) continue;
       if (!registry.retryDue(d.target, now())) { blocked = true; continue; }
-      let data = d.target === hash ? originals.get(hash) : copies.get(d.target);
+      let data = d.target === hash ? await textOf(hash) : copies.get(d.target);
+      if (d.target === hash && typeof data !== "string") {
+        // L'image n'est plus dans le magasin local : la référence part telle quelle (jamais d'image inventée).
+        decisions.set(hash, { keep: true });
+        continue;
+      }
+      if (d.lazy && !sendableAsIs(data)) {
+        // Image locale trop lourde ou mal formée : copie réduite ou nettoyée, comme pour une image du concert.
+        const target = await makeCopy(hash);
+        if (!target) { registry.reject(hash); decisions.set(hash, { rejected: true }); continue; }
+        d.target = target;
+        data = copies.get(target);
+        if (onServer.has(target) || !registry.retryDue(target, now())) { if (!onServer.has(target)) blocked = true; continue; }
+      }
       if (!data) {
         // Copie connue du registre mais absente du compte : on la refait (elle peut différer d'un octet).
-        data = await sendableCopy(originals.get(hash));
-        if (!data) { registry.reject(hash); decisions.set(hash, { rejected: true }); continue; }
-        const target = await sha256Hex(data);
-        registry.setVariant(hash, target);
+        const target = await makeCopy(hash);
+        if (!target) { registry.reject(hash); decisions.set(hash, { rejected: true }); continue; }
         d.target = target;
+        data = copies.get(target);
         if (onServer.has(target)) continue;
       }
       try {
@@ -532,7 +619,9 @@ export async function prepareConcertsUpload(email, payload, {
     error.nextAt = registry.earliestRetry();
     throw error;
   }
-  const { data, unsent } = assemble(payload, hashes, decisions, maxBytes);
+  const texts = new Map();
+  for (const [hash, d] of decisions) if (d.rejected) texts.set(hash, await textOf(hash));
+  const { data, unsent } = assemble(payload, hashes, localRefs, decisions, texts, maxBytes);
   onUnsent?.(unsent);
   return data;
 }

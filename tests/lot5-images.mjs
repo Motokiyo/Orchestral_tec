@@ -10,108 +10,9 @@ import path from "node:path";
 import { ROOT, world, renderHook, unmountAll, EMAIL, sleep, owned, reset, freshStorage, waitFor, imp } from "./support/lot3-env.mjs";
 import { installFakeSupabase } from "./support/fake-supabase.mjs";
 
-const OTHER = "autre@test.invalid";
-const MO = 1024 * 1024;
+import { OTHER, MO, image, sha, ref, piece, pendingKey, mockRes, setEnv, sessionCookie, jsonbOrder, setupWorld, seedLocal, idbConcert, posts, haves, noInlineImage, surTel } from "./support/lot5-world.mjs";
+
 test.afterEach(() => unmountAll());
-
-const image = (bytes = 60_000) => `data:image/jpeg;base64,${crypto.randomBytes(Math.floor((bytes * 3) / 4)).toString("base64")}`;
-const sha = (text) => crypto.createHash("sha256").update(text, "utf8").digest("hex");
-const ref = (dataUrl) => `orkimg:${sha(dataUrl)}`;
-const piece = (id, plans, extra = {}) => ({ id, titre: `P ${id}`, plans, planDataUrl: plans[plans.length - 1] || null, percus: [], ...extra });
-const pendingKey = `orkmap-pending:${EMAIL}:concerts`;
-
-function mockRes() {
-  return {
-    statusCode: 200, body: undefined, headers: {},
-    setHeader(k, v) { this.headers[k] = v; },
-    status(c) { this.statusCode = c; return this; },
-    json(b) { this.body = b; return this; },
-  };
-}
-
-function setEnv() {
-  process.env.AUTH_SECRET = "secret-de-test-uniquement";
-  process.env.ALLOWED_EMAILS = `${EMAIL},${OTHER}`;
-  process.env.SUPABASE_URL = "https://x.fake.supabase.invalid";
-  process.env.SUPABASE_SERVICE_ROLE_KEY = "cle-factice";
-  delete process.env.NODE_ENV;
-  delete process.env.VERCEL;
-}
-
-async function sessionCookie(email) {
-  const auth = await imp("api/auth-utils.js");
-  return auth.createSession(email).split(";")[0];
-}
-
-// Le téléphone (fetch relatif « /api/… ») parle aux vraies routes ; les routes parlent au faux Supabase.
-// Ordre des clés tel que le rend un vrai Postgres jsonb (longueur, puis octets) : sert à vérifier
-// que le téléphone ne compare pas du texte JSON brut.
-function jsonbOrder(v) {
-  if (Array.isArray(v)) return v.map(jsonbOrder);
-  if (v && typeof v === "object") {
-    const o = {};
-    for (const k of Object.keys(v).sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0))) o[k] = jsonbOrder(v[k]);
-    return o;
-  }
-  return v;
-}
-
-async function setupWorld({ jsonb = false } = {}) {
-  reset();
-  setEnv();
-  const fake = installFakeSupabase({ delay: false });
-  const supaInner = globalThis.fetch;
-  const supa = jsonb ? async (url, init = {}) => {
-    const r = await supaInner(url, init);
-    if (String(url).includes("orkmap_user_data") && (!init.method || init.method === "GET")) {
-      const rows = await r.json();
-      return new Response(JSON.stringify(rows.map((row) => ({ ...row, data: jsonbOrder(row.data) }))), { status: 200 });
-    }
-    return r;
-  } : supaInner;
-  const sync = (await imp("api/sync.js")).default;
-  const planImage = (await imp("api/plan-image.js")).default;
-  const cookie = await sessionCookie(EMAIL);
-  const log = [];
-  const ctl = { offline: false, failImagePost: null };
-  globalThis.fetch = async (url, init = {}) => {
-    const s = String(url);
-    if (!s.startsWith("/api/")) return supa(url, init);
-    const u = new URL(s, "https://t.invalid");
-    const method = (init.method || "GET").toUpperCase();
-    const body = init.body ? JSON.parse(init.body) : undefined;
-    log.push({ path: u.pathname, method, bytes: init.body ? Buffer.byteLength(init.body) : 0, body, hash: body?.hash || u.searchParams.get("hash") });
-    if (ctl.offline) throw new TypeError("Failed to fetch");
-    if (u.pathname === "/api/plan-image" && method === "POST" && ctl.failImagePost?.(body.hash)) {
-      return new Response("{}", { status: 500 });
-    }
-    const res = mockRes();
-    const handler = u.pathname === "/api/sync" ? sync : planImage;
-    await handler({ method, body, query: Object.fromEntries(u.searchParams), headers: { cookie } }, res);
-    return new Response(JSON.stringify(res.body ?? null), { status: res.statusCode });
-  };
-  const quiet = { warn: console.warn, error: console.error };
-  console.warn = () => {};
-  console.error = () => {};
-  const restore = () => { fake.restore(); console.warn = quiet.warn; console.error = quiet.error; };
-  const serverConcerts = () => fake.table("orkmap_user_data").find((r) => r.email === EMAIL && r.type === "concerts")?.data ?? null;
-  const setServerConcerts = (data) => {
-    const rows = fake.table("orkmap_user_data");
-    const row = rows.find((r) => r.email === EMAIL && r.type === "concerts");
-    if (row) row.data = structuredClone(data);
-    else rows.push({ email: EMAIL, type: "concerts", data: structuredClone(data), updated_at: new Date().toISOString() });
-  };
-  const serverImages = () => fake.table("orkmap_plan_images").filter((r) => r.email === EMAIL);
-  const putServerImage = (dataUrl, email = EMAIL) => fake.table("orkmap_plan_images").push({ email, hash: sha(dataUrl), data: dataUrl, bytes: dataUrl.length });
-  return { fake, log, ctl, restore, serverConcerts, setServerConcerts, serverImages, putServerImage };
-}
-
-const seedLocal = (list) => { for (const c of list) world.stores.concerts.set(c.id, structuredClone(c)); };
-const idbConcert = (id) => world.stores.concerts.get(id);
-// Envois réels (les demandes « lesquelles as-tu ? » { have } sont comptées à part).
-const posts = (log, p) => log.filter((e) => e.path === p && e.method === "POST" && !e.body?.have);
-const haves = (log) => log.filter((e) => e.path === "/api/plan-image" && e.method === "POST" && e.body?.have);
-const noInlineImage = (value) => !JSON.stringify(value).includes("data:image/");
 
 // ───────────── Extraction des références ─────────────
 
@@ -168,8 +69,8 @@ test("envoi : chaque image part seule, puis les concerts allégés ; le stockage
     assert.ok(noInlineImage(sent), "le JSON envoyé ne contient plus d'image");
     assert.deepEqual(sent.find((x) => x.id === "c1").pieces[0].plans, [ref(a), ref(b)]);
     assert.equal(w.serverImages().length, 3);
-    assert.deepEqual(idbConcert("c1").pieces[0].plans, [a, b], "IndexedDB garde les data URL");
-    assert.deepEqual(h.result[0].find((x) => x.id === "c1").pieces[0].plans, [a, b], "l'écran aussi");
+    assert.deepEqual(surTel(idbConcert("c1").pieces[0].plans), [a, b], "les images restent sur le téléphone (concert ou magasin local)");
+    assert.deepEqual(surTel(h.result[0].find((x) => x.id === "c1").pieces[0].plans), [a, b], "l'écran aussi");
   } finally { w.restore(); }
 });
 
@@ -218,7 +119,7 @@ test("S2 : une image refusée par le serveur pour sa forme n'est jamais renvoyé
     assert.equal(imgs.length, 2, "une fois chacune : la cassée part en copie nettoyée (validée avant envoi)");
     const nettoyee = cassee.replace("\r\n", "");
     assert.deepEqual(w.serverConcerts()[0].pieces[0].plans, [ref(bonne), ref(nettoyee)]);
-    assert.deepEqual(idbConcert("c1").pieces[0].plans, [bonne, cassee], "l'original reste intact sur le téléphone");
+    assert.deepEqual(surTel(idbConcert("c1").pieces[0].plans), [bonne, cassee], "l'original reste intact sur le téléphone");
     assert.equal(posts(w.log, "/api/sync").length, 1);
   } finally { w.restore(); }
 });
@@ -276,7 +177,7 @@ test("réouverture : le compte a déjà les références, rien n'est renvoyé", 
     await sleep(300);
     assert.equal(w.log.filter((e) => e.method === "POST").length, 0, "ni image ni concerts renvoyés");
     assert.equal(localStorage.getItem(pendingKey), null);
-    assert.deepEqual(h.result[0][0].pieces[0].plans, [a]);
+    assert.deepEqual(surTel(h.result[0][0].pieces[0].plans), [a]);
   } finally { w.restore(); }
 });
 
@@ -295,11 +196,12 @@ test("réception : référence réhydratée depuis le téléphone, sinon téléc
     w.putServerImage(distante);
     const m = await freshStorage();
     const h = renderHook(m.useConcerts, [[], EMAIL]);
-    await waitFor(() => h.result[2] && h.result[0].find((c) => c.id === "c2")?.pieces[0].plans[1] === distante, 8000, "téléchargement");
+    await waitFor(() => h.result[2] && surTel(h.result[0].find((c) => c.id === "c2")?.pieces[0].plans || [])[1] === distante, 8000, "téléchargement");
     const gets = w.log.filter((e) => e.path === "/api/plan-image" && e.method === "GET").map((e) => e.hash);
     assert.deepEqual(gets, [sha(distante)], "seule l'image absente du téléphone est téléchargée");
-    await waitFor(() => idbConcert("c2")?.pieces[0].plans[1] === distante, 4000, "IndexedDB");
-    assert.deepEqual(idbConcert("c2").pieces[0].plans, [local, distante]);
+    await waitFor(() => surTel(idbConcert("c2")?.pieces[0].plans || [])[1] === distante, 4000, "IndexedDB");
+    assert.deepEqual(surTel(idbConcert("c2").pieces[0].plans), [local, distante]);
+    assert.ok(world.stores.images.has(sha(distante)), "lot 6 : l'image téléchargée est rangée dans le magasin local");
   } finally { w.restore(); }
 });
 
@@ -341,7 +243,7 @@ test("téléchargement plus tard : hors ligne d'abord, l'image arrive au retour 
     assert.equal(w.log.filter((e) => e.method === "GET" && e.path === "/api/plan-image").length, 0, "rien tenté hors ligne");
     navigator.onLine = true;
     m.requestSyncRetry();
-    await waitFor(() => h.result[0][0].pieces[0].plans[0] === distante, 4000, "téléchargement au retour du réseau");
+    await waitFor(() => surTel(h.result[0][0].pieces[0].plans)[0] === distante, 4000, "téléchargement au retour du réseau");
   } finally { w.restore(); }
 });
 
@@ -355,8 +257,8 @@ test("fusion : une référence du compte n'écrase jamais l'image locale du mêm
     const h = renderHook(m.useConcerts, [[], EMAIL]);
     await waitFor(() => h.result[2], 4000, "chargement");
     await sleep(300);
-    assert.deepEqual(h.result[0][0].pieces[0].plans, [a], "écran : l'image locale reste");
-    assert.deepEqual(idbConcert("c1").pieces[0].plans, [a], "IndexedDB : l'image locale reste");
+    assert.deepEqual(surTel(h.result[0][0].pieces[0].plans), [a], "écran : l'image locale reste");
+    assert.deepEqual(surTel(idbConcert("c1").pieces[0].plans), [a], "IndexedDB : l'image locale reste");
   } finally { w.restore(); }
 });
 
@@ -372,8 +274,8 @@ test("« Recharger depuis le compte » : les références redeviennent les image
     const r = await h.result[3].reloadFromAccountSafe({ download: false });
     assert.ok(!r.refus, JSON.stringify(r));
     assert.equal(h.result[0][0].titre, "version du compte");
-    assert.deepEqual(h.result[0][0].pieces[0].plans, [b, a]);
-    assert.deepEqual(idbConcert("c1").pieces[0].plans, [b, a]);
+    assert.deepEqual(surTel(h.result[0][0].pieces[0].plans), [b, a]);
+    assert.deepEqual(surTel(idbConcert("c1").pieces[0].plans), [b, a]);
   } finally { w.restore(); }
 });
 
@@ -392,8 +294,8 @@ test("409 : la fusion avec le compte garde les images locales puis renvoie sans 
     await waitFor(() => w.serverConcerts().some((c) => c.titre === "modifié") && localStorage.getItem(pendingKey) === null, 8000, "fusion et renvoi");
     assert.deepEqual(w.serverConcerts().map((c) => c.id).sort(), ["c1", "c9"]);
     assert.ok(noInlineImage(w.serverConcerts()));
-    assert.deepEqual(h.result[0].find((c) => c.id === "c1").pieces[0].plans, [a]);
-    await waitFor(() => h.result[0].find((c) => c.id === "c9")?.pieces[0].plans[0] === z, 4000, "image de c9 téléchargée");
+    assert.deepEqual(surTel(h.result[0].find((c) => c.id === "c1").pieces[0].plans), [a]);
+    await waitFor(() => surTel(h.result[0].find((c) => c.id === "c9")?.pieces[0].plans || [])[0] === z, 4000, "image de c9 téléchargée");
   } finally { w.restore(); }
 });
 
@@ -443,7 +345,7 @@ test("plan déjà stocké de plus de 4 Mo : une copie réduite part sous SON emp
     assert.deepEqual(posts(w.log, "/api/plan-image").map((e) => e.hash), [sha(copie)]);
     assert.deepEqual(w.serverConcerts()[0].pieces[0].plans, [ref(copie)]);
     for (const e of w.log) assert.ok(e.bytes < 4 * MO);
-    assert.deepEqual(idbConcert("c1").pieces[0].plans, [grosse], "l'original reste intact");
+    assert.deepEqual(surTel(idbConcert("c1").pieces[0].plans), [grosse], "l'original reste intact");
     assert.equal(m.readSyncStatus().oversize.length, 0);
     // Réouverture : la copie du compte retrouve l'ORIGINAL (table copie → original), sans téléchargement ni renvoi.
     unmountAll();
@@ -455,11 +357,11 @@ test("plan déjà stocké de plus de 4 Mo : une copie réduite part sous SON emp
     const after = w.log.slice(before);
     assert.equal(after.filter((e) => e.method === "GET" && e.path === "/api/plan-image").length, 0, "pas de téléchargement de la copie");
     assert.equal(after.filter((e) => e.method === "POST").length, 0, "rien renvoyé");
-    assert.deepEqual(h2.result[0][0].pieces[0].plans, [grosse]);
+    assert.deepEqual(surTel(h2.result[0][0].pieces[0].plans), [grosse]);
     // Un autre téléphone qui reçoit la référence de la copie la retrouve par la même table : ici le
     // même compte reçoit c2 (venu d'ailleurs) qui cite la copie ; le téléphone y met l'original.
     const rec = await m2.resolveImagesFromDevice([owned("c2", { pieces: [piece("p2", [ref(copie)])] })], h2.result[0], EMAIL);
-    assert.deepEqual(rec[0].pieces[0].plans, [grosse]);
+    assert.deepEqual(surTel(rec[0].pieces[0].plans), [grosse]);
   } finally { pi.setImageShrinker(null); w.restore(); }
 });
 
@@ -478,7 +380,7 @@ test("plan illisible et trop lourd : concerts envoyés quand même, référence 
     const { bannerInfo, noteStockage } = await imp("src/syncUi.js");
     assert.equal(bannerInfo(m.readSyncStatus()), null, "pas de pastille permanente");
     assert.match(noteStockage(m.readSyncStatus()), /1 plan reste sur ce téléphone/);
-    assert.deepEqual(idbConcert("c1").pieces[0].plans, [a, grosse], "l'image reste sur le téléphone");
+    assert.deepEqual(surTel(idbConcert("c1").pieces[0].plans), [a, grosse], "l'image reste sur le téléphone");
     // Réouverture : rien n'est renvoyé, rien n'est téléchargé, l'image locale reste affichée.
     unmountAll();
     const before = w.log.length;
@@ -487,7 +389,7 @@ test("plan illisible et trop lourd : concerts envoyés quand même, référence 
     await waitFor(() => h2.result[2], 4000, "réouverture");
     await sleep(300);
     assert.equal(w.log.slice(before).filter((e) => e.method === "POST" || (e.method === "GET" && e.path === "/api/plan-image")).length, 0);
-    assert.deepEqual(h2.result[0][0].pieces[0].plans, [a, grosse]);
+    assert.deepEqual(surTel(h2.result[0][0].pieces[0].plans), [a, grosse]);
   } finally { w.restore(); }
 });
 
@@ -788,8 +690,8 @@ test("point 7 : mode mémoire lente, la copie de secours avec référence ne rem
     await waitFor(() => h.result[2], 4000, "chargement");
     await sleep(150);
     assert.equal(h.result[0][0].titre, "modifié en mode lent", "la modification est réintégrée");
-    assert.deepEqual(h.result[0][0].pieces[0].plans, [a], "l'image d'IndexedDB est gardée");
-    assert.deepEqual(idbConcert("c1").pieces[0].plans, [a]);
+    assert.deepEqual(surTel(h.result[0][0].pieces[0].plans), [a], "l'image d'IndexedDB est gardée");
+    assert.deepEqual(surTel(idbConcert("c1").pieces[0].plans), [a]);
   } finally { w.restore(); }
 });
 
@@ -810,7 +712,7 @@ test("point 7 : « Recharger depuis le compte » avec un plan non téléchargeab
     assert.equal(r.plansManquants, 1);
     const c1 = h.result[0].find((c) => c.id === "c1");
     assert.equal(c1.titre, "local");
-    assert.deepEqual(c1.pieces[0].plans, [a], "jamais une référence à la place de l'image du téléphone");
+    assert.deepEqual(surTel(c1.pieces[0].plans), [a], "jamais une référence à la place de l'image du téléphone");
     assert.equal(h.result[0].find((c) => c.id === "c2").titre, "compte 2", "les autres sont rechargés");
     const { reloadReportText } = await imp("src/syncUi.js");
     assert.match(reloadReportText(r), /1 gardé en version du téléphone \(plans du compte non téléchargés/);

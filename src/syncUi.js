@@ -93,7 +93,9 @@ export function reloadReportText(r) {
 export function exportReportText(info) {
   const c = info?.counts || {};
   const n = (x) => (Number.isFinite(x) ? x : 0);
-  return `Sauvegarde téléchargée (${plural(n(c.concerts), "concert", "concerts")}, ${plural(n(c.photos), "photo", "photos")}) : ${info?.filename || "fichier"}`;
+  const absents = n(info?.plansNonInclus);
+  const note = absents > 0 ? `\n${plural(absents, "plan n'est pas", "plans ne sont pas")} sur ce téléphone (jamais téléchargé${absents > 1 ? "s" : ""} du compte) : ${absents > 1 ? "ils restent" : "il reste"} sur le compte, pas dans ce fichier.` : "";
+  return `Sauvegarde téléchargée (${plural(n(c.concerts), "concert", "concerts")}, ${plural(n(c.photos), "photo", "photos")}) : ${info?.filename || "fichier"}${note}`;
 }
 
 // Information de stockage montrée sous « Exporter toutes mes données » (accueil), jamais en pastille.
