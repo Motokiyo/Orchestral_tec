@@ -105,8 +105,10 @@ export function formatMusicianTotal({ total, unknown }) {
 // Un chef présent (sansChef === false) a son mobilier ; un chef absent (true) n'en a pas ;
 // un chef inconnu (null, ou champ absent) n'est PAS compté comme s'il était certain : le mobilier du
 // chef (podium, pupitre, chaise haute) est laissé de côté et signalé « à confirmer ».
+// Exception (17/11/2026) : une pièce ANCIENNE n'a pas le champ (undefined) ; elle gardait jusqu'ici son chef,
+// elle le garde. Seul null (lecture faite, chef non lu) vaut « à confirmer ».
 export function chefOptions(sansChef) {
-  if (sansChef === false) return { hasChef: true, chefInconnu: false };
+  if (sansChef === false || sansChef === undefined) return { hasChef: true, chefInconnu: false };
   if (sansChef === true) return { hasChef: false, chefInconnu: false };
   return { hasChef: false, chefInconnu: true };
 }

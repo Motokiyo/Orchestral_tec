@@ -23,12 +23,16 @@ test("oversize prend la plus grosse taille", () => {
 });
 
 test("degraded et backupFailed : alerte propre, jamais le faux envoi, même avec pending", () => {
-  for (const flag of ["degraded", "backupFailed"]) {
-    const i = bannerInfo({ ...ok, pending: 2, [flag]: true });
-    assert.equal(i.kind, flag);
-    assert.equal(i.tone, "alarm");
-    assert.notEqual(i.kind, "pending");
-  }
+  const d = bannerInfo({ ...ok, pending: 2, degraded: true });
+  assert.equal(d.kind, "degraded");
+  assert.equal(d.tone, "alarm");
+  // 17/11/2026 : copie de secours impossible = information discrète, jamais une alarme permanente ;
+  // l'envoi en cours et le réseau passent avant.
+  assert.equal(bannerInfo({ ...ok, pending: 2, backupFailed: true }).kind, "pending");
+  const b = bannerInfo({ ...ok, backupFailed: true });
+  assert.equal(b.kind, "backupFailed");
+  assert.equal(b.tone, "neutral");
+  assert.equal(b.card, false);
   assert.equal(bannerInfo({ ...ok, backupFailed: true }).action, "export");
   assert.equal(bannerInfo({ ...ok, degraded: true }).action, null);
 });

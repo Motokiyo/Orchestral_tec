@@ -58,7 +58,7 @@ export function EcartsPlan({ mobilier, observe }) {
 const caseStyle = { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#1C1917", padding: "6px 0", minHeight: 32 };
 
 /**
- * Petit bloc repliable de réglages du mobilier. onSave({ standPourDeux, chaisesHautes }, pourTout).
+ * Petit bloc repliable de réglages du mobilier (et présence du chef). onSave({ standPourDeux, chaisesHautes }, pourTout, sansChef).
  */
 export function ReglagesMobilier({ piece, concert, onSave }) {
   const [ouvert, setOuvert] = useState(false);
@@ -67,6 +67,7 @@ export function ReglagesMobilier({ piece, concert, onSave }) {
   const [perc, setPerc] = useState("R&S");
   const [pourTout, setPourTout] = useState(false);
   const [enregistre, setEnregistre] = useState(false);
+  const [chef, setChef] = useState("present");
 
   const origine = origineReglages(piece, concert);
   const instruments = instrumentsPartageables(piece.orchestre);
@@ -78,6 +79,7 @@ export function ReglagesMobilier({ piece, concert, onSave }) {
       setCb(r.chaisesHautes.contrebasses);
       setPerc(r.chaisesHautes.percussions);
       setPourTout(origine === "concert");
+      setChef(piece.sansChef === true ? "absent" : piece.sansChef === null ? "inconnu" : "present");
       setEnregistre(false);
     }
     setOuvert(!ouvert);
@@ -99,6 +101,14 @@ export function ReglagesMobilier({ piece, concert, onSave }) {
       </button>
       {ouvert && (
         <div style={{ borderWidth: "0 1px 1px 1px", borderStyle: "solid", borderColor: "#D6D3D1", borderRadius: "0 0 8px 8px", padding: "10px 12px", background: "#fff" }}>
+          <label style={{ ...caseStyle, justifyContent: "space-between", marginBottom: 8 }}>
+            <span>Chef</span>
+            <select value={chef} onChange={(e) => setChef(e.target.value)} style={sel}>
+              <option value="present">Présent</option>
+              <option value="absent">Sans chef</option>
+              <option value="inconnu">À confirmer</option>
+            </select>
+          </label>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#A8A29E", textTransform: "uppercase", letterSpacing: 1, marginBottom: 2 }}>Un stand pour deux</div>
           <div style={{ fontSize: 11, color: "#78716C", marginBottom: 4 }}>Par défaut, un stand par musicien. Coche les instruments qui se partagent un stand à deux.</div>
           {instruments.length === 0 && <div style={{ fontSize: 12, color: "#A8A29E", fontStyle: "italic" }}>Aucun instrument à vent dans l'effectif.</div>}
@@ -133,7 +143,7 @@ export function ReglagesMobilier({ piece, concert, onSave }) {
 
           <button
             onClick={() => {
-              onSave({ standPourDeux: stand, chaisesHautes: { contrebasses: cb, percussions: perc } }, pourTout);
+              onSave({ standPourDeux: stand, chaisesHautes: { contrebasses: cb, percussions: perc } }, pourTout, chef === "absent" ? true : chef === "inconnu" ? null : false);
               setEnregistre(true);
             }}
             style={{ width: "100%", marginTop: 8, fontSize: 13, fontWeight: 700, color: "#fff", background: "#1C1917", border: "none", borderRadius: 8, padding: "10px 12px", cursor: "pointer", minHeight: 40 }}

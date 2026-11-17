@@ -3539,7 +3539,7 @@ export default function App() {
                       key={piece.id}
                       piece={piece}
                       concert={concert}
-                      onSave={(reglages, pourTout) => updateConcert(concert.id, (c) => appliquerReglages(c, piece.id, reglages, pourTout))}
+                      onSave={(reglages, pourTout, sansChef) => updateConcert(concert.id, (c) => appliquerReglages({ ...c, pieces: (c.pieces || []).map((pp) => (pp.id === piece.id ? { ...pp, sansChef } : pp)) }, piece.id, reglages, pourTout))}
                     />
                     {/* MOBILIER GÉNÉRAL */}
                     <div style={{

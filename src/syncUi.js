@@ -45,14 +45,16 @@ export function bannerInfo({ online, pending, sessionExpired, oversize, backupFa
       text: "La mémoire du téléphone répond très lentement. Tes modifications sont gardées, mais rien n'est envoyé au compte pour l'instant.",
     });
   }
-  if (backupFailed) {
-    return withNetwork({
-      kind: "backupFailed", tone: "alarm", action: "export", card: true,
-      text: "La mémoire de secours du téléphone est pleine. Exporte tes données en fichier pour ne rien perdre.",
-    });
-  }
   if (network) return network;
   if (pending) return { kind: "pending", tone: "neutral", action: "retry", card: false, text: "Envoi des modifications…" };
+  // Copie de secours en mémoire du navigateur impossible (souvent la place, sur iPhone) : les données restent
+  // dans la base du téléphone et sur le compte ; simple information discrète, jamais un encart d'alarme permanent.
+  if (backupFailed) {
+    return {
+      kind: "backupFailed", tone: "neutral", action: "export", card: false,
+      text: "Copie de secours du téléphone impossible (place). Tes données sont gardées ; tu peux les exporter en fichier.",
+    };
+  }
   return null;
 }
 

@@ -14,7 +14,7 @@ const AI = await imp("src/aiImport.js");
 const ok = { online: true, pending: 0, sessionExpired: false, oversize: [], backupFailed: false, degraded: false };
 
 test("C3 : une alerte de stockage n'efface pas « Session expirée »", () => {
-  for (const flag of [{ backupFailed: true }, { degraded: true }, { oversize: [{ bytes: 5e6 }] }]) {
+  for (const flag of [{ degraded: true }, { oversize: [{ bytes: 5e6 }] }]) {
     const i = bannerInfo({ ...ok, pending: 1, sessionExpired: true, ...flag });
     assert.ok(i.also, "second état présent : " + JSON.stringify(flag));
     assert.equal(i.also.kind, "sessionExpired");
@@ -24,9 +24,11 @@ test("C3 : une alerte de stockage n'efface pas « Session expirée »", () => {
 });
 
 test("C3 : une alerte de stockage n'efface pas « Hors ligne »", () => {
-  const i = bannerInfo({ ...ok, online: false, pending: 1, backupFailed: true });
-  assert.equal(i.kind, "backupFailed");
+  const i = bannerInfo({ ...ok, online: false, pending: 1, degraded: true });
+  assert.equal(i.kind, "degraded");
   assert.equal(i.also.kind, "offline");
+  // copie de secours impossible : discrète, « Hors ligne » reste affiché
+  assert.equal(bannerInfo({ ...ok, online: false, pending: 1, backupFailed: true }).kind, "offline");
   assert.match(i.also.text, /^Hors ligne/);
 });
 
@@ -57,7 +59,9 @@ test("C4 : chef présent = son mobilier ; chef absent = aucun ; chef inconnu = n
   assert.equal(inconnu.general.pupitres, absent.general.pupitres);
   assert.equal(inconnu.general.chaisesHautes, absent.general.chaisesHautes);
   assert.equal(inconnu.general.chefAConfirmer, true);
-  assert.equal(calc(undefined).general.chefAConfirmer, true, "champ absent (ancienne pièce) = inconnu aussi");
+  // 17/11/2026 : champ absent = pièce ANCIENNE, qui gardait son chef : elle le garde (rien ne disparaît au recalcul).
+  assert.equal(calc(undefined).general.chefAConfirmer, undefined, "ancienne pièce : chef gardé");
+  assert.deepEqual(types(calc(undefined)), types(present), "ancienne pièce : même mobilier qu'un chef présent");
 });
 
 test("C4 : l'export TXT ne compte pas le chef inconnu et le dit « à confirmer »", () => {
