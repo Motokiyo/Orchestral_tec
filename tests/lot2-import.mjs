@@ -201,8 +201,8 @@ const aiResult = (over = {}) => ({
 
 test('IA lit des percussions : elles remplacent le local, aucun bandeau', () => {
   need();
-  const out = AI.mergeAiIntoLocal(LOCAL(), aiResult({ percus: [{ nom: 'Timbalier', items: [{ cat: 'Timbales & Peaux', nom: 'Timbale 1' }] }], aiMeta: { warnings: [], percusStatut: 'lues', pages: { total: 1, analysed: 1, skipped: [] } } }), { decodeEffectif: () => null });
-  assert.deepEqual(out.percus.map((p) => p.nom), ['Timbalier']);
+  const out = AI.mergeAiIntoLocal(LOCAL(), aiResult({ percus: [{ nom: 'Percussion 1', items: [{ cat: 'Peaux', nom: 'Caisse claire' }] }], aiMeta: { warnings: [], percusStatut: 'lues', pages: { total: 1, analysed: 1, skipped: [] } } }), { decodeEffectif: () => null });
+  assert.deepEqual(out.percus.map((p) => p.nom), ['Percussion 1']);
   assert.equal(out.aiStatus.percusState, 'lues');
   assert.equal(AI.aiBannerInfo(out), null);
 });
@@ -301,7 +301,7 @@ function loadEnrich(extra = {}) {
   const calls = [];
   const ctx = {
     console, alerts, calls, isOffline: () => false, alert: (m) => alerts.push(m),
-    decodeEffectif: () => null,
+    decodeEffectif: () => null, orchestreFromEffectif: () => null, formatEffectifDaniels: () => null, memeDetail: () => false,
     extractWithGemini: async (...args) => { calls.push(args); return aiResult(); },
     mergeAiIntoLocal: AI.mergeAiIntoLocal, failedAiLocal: AI.failedAiLocal, offlineAiLocal: AI.offlineAiLocal,
     ...extra,

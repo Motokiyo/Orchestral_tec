@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, countOrchestreMusicians, calculateMobilier, chefOptions, isAnnotationItem, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
-import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
+import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, formatEffectifDaniels, memeDetail, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
 import { mergeAiIntoLocal, failedAiLocal, offlineAiLocal, aiFailedStatus, aiStatusFromResult, dismissAiStatus, aiBannerInfo } from "./aiImport.js";
 import { exportLocalDataForRecovery, exportLocalDataToFile, useConcerts, usePhotos, useOmrScores, useSyncStatus, setSessionExpired, requestSyncRetry, requestPersistentStorage } from "./useStorage.js";
 import { S } from "./styles.js";
@@ -2105,7 +2105,7 @@ export default function App() {
         totalPages: localData.pageCount,
         failedPages: localData.pagesFailed,
       });
-      return mergeAiIntoLocal(localData, aiData, { decodeEffectif });
+      return mergeAiIntoLocal(localData, aiData, { decodeEffectif, orchestreFromEffectif, formatEffectifDaniels, memeDetail });
     } catch (err) {
       console.warn("[OrkMap] AI enrichment failed:", err && err.message);
       return failedAiLocal(localData, err);

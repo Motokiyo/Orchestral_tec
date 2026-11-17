@@ -192,6 +192,7 @@ export async function extractFromPdf(file) {
     sansChef: result.sansChef,
   });
 
+  etendreLigneEffectif(lines, result);
   if (result.effectif) {
     result.effectifDetail = decodeEffectif(result.effectif);
   }
@@ -1750,7 +1751,7 @@ export function formatEffectifDaniels(source, options = {}) {
 }
 
 const GROUPES_COMPARES = ["bois", "cuivres", "percussions", "cordes", "autres"];
-function memeDetail(a, b) {
+export function memeDetail(a, b) {
   if (!a || !b) return false;
   for (const g of GROUPES_COMPARES) {
     const x = Object.entries(a[g] || {}).filter(([k, v]) => k !== "total" && v > 0).sort(); const y = Object.entries(b[g] || {}).filter(([k, v]) => k !== "total" && v > 0).sort();
@@ -1905,6 +1906,32 @@ export function finaliserLecture(result, lines) {
     if (det) result.percus = det.percus;
   }
   result.detailPercussion = !result.effectif && orchestreVide(result.orchestre) && Array.isArray(result.percus) && result.percus.length > 0;
+  return result;
+}
+
+/**
+ * Les motifs de lecture s'arrêtent après deux ou trois groupes (ils ne connaissent pas « T+2 », « 2hp »,
+ * « 1timb.1perc.1harpe », « 0T 2P 0H 2Pno »). On repart de la ligne trouvée et on garde la PLUS LONGUE
+ * portion de ligne que decodeEffectif sait lire. La ligne écrite n'est jamais raccourcie : sans portion plus
+ * longue décodable, result.effectif reste tel quel. Forme LSO « 2220 / 0400 / … » retrouvée si rien n'a été lu.
+ */
+export function etendreLigneEffectif(lines, result) {
+  if (!result) return result;
+  const texte = Array.isArray(lines) ? lines.join("\n") : String(lines || "");
+  if (!texte) return result;
+  const cur = typeof result.effectif === "string" ? result.effectif.trim() : "";
+  let start = -1;
+  if (cur) start = texte.indexOf(cur);
+  else { const m = /(?<![\d.])\d{4}\s*\/\s*\d{4}(?![\d.])/.exec(texte); if (m) start = m.index; }
+  if (start < 0) return result;
+  const tail = texte.slice(start).split("\n")[0].replace(/\s+$/, "");
+  let best = null;
+  for (let end = tail.length; end > cur.length && end >= 9; end--) {
+    if (end < tail.length && !/[\s\/\-\u2013]/.test(tail[end]) && !/[\s\/\-\u2013]/.test(tail[end - 1])) continue;
+    const cand = tail.slice(0, end).trim();
+    if (cand.length > cur.length && decodeEffectif(cand)) { best = cand; break; }
+  }
+  if (best) result.effectif = best;
   return result;
 }
 
@@ -2124,6 +2151,7 @@ function parseExtractedText(text, result) {
   // ── 2. Free-form text enhancements ──
   // These run AFTER the format-specific parsers and fill in what was missed
   parseFreeForm(lines, result, all, allLower);
+  etendreLigneEffectif(lines, result);
 }
 
 /**
@@ -2513,7 +2541,7 @@ export async function extractWithGemini(imageDataUrls, mode, options = {}) {
     duree: asText(parsed.duree), salle: asText(parsed.salle),
     chef: asText(parsed.chef), date: asText(parsed.date),
     sansChef: typeof parsed.sansChef === "boolean" ? parsed.sansChef : null,
-    effectif: asText(parsed.effectif), effectifDetail: null,
+    effectif: asText(parsed.effectif), cartoucheBrut: asText(parsed.cartoucheBrut), effectifDetail: null,
     orchestre: isRecord(parsed.orchestre) ? parsed.orchestre : null,
     percus: (Array.isArray(parsed.percus) ? parsed.percus : []).filter(isRecord).map((p) => ({
       nom: asText(p.nom) || UNKNOWN_POLE_NAME,

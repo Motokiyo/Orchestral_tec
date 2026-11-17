@@ -116,6 +116,80 @@ const SECTIONS = ["bois", "cuivres", "cordes", "autres"];
 const hasOrchestre = (o) => !!o && typeof o === "object" && SECTIONS.some((k) => Array.isArray(o[k]) && o[k].length > 0);
 const triSansChef = (...vals) => { for (const v of vals) if (typeof v === "boolean") return v; return null; };
 
+const sansEspaces = (v) => String(v || "").replace(/\s+/g, " ").trim();
+
+/**
+ * Qui fait foi pour l'effectif et l'orchestre (le décodage fait par l'IA est peu fiable, la copie de la
+ * ligne l'est bien plus). Priorité, dans cet ordre :
+ *  a. décodage LOCAL de la ligne d'effectif de la couche texte du PDF (quand elle existe et se décode) ;
+ *  b. sinon décodage LOCAL de `cartoucheBrut` recopié par l'IA ;
+ *  c. sinon l'effectif lu par l'IA, avec un avertissement : il n'a pas pu être vérifié.
+ * Si l'IA donne un effectif différent de celui retenu (a ou b), les deux sont montrés dans un avertissement.
+ */
+function choisirEffectif(local, ai, deps, warnings) {
+  const decode = typeof deps.decodeEffectif === "function" ? deps.decodeEffectif : () => null;
+  const toOrchestre = typeof deps.orchestreFromEffectif === "function" ? deps.orchestreFromEffectif : null;
+  const format = typeof deps.formatEffectifDaniels === "function" ? deps.formatEffectifDaniels : null;
+  const same = typeof deps.memeDetail === "function" ? deps.memeDetail : null;
+  const aiLine = sansEspaces(ai.effectif);
+
+  let source = null; let detail = null; let effectif = ""; let brut;
+  const localLine = sansEspaces(local.effectif);
+  const localDetail = localLine ? (local.effectifDetail || decode(localLine)) : null;
+  if (localLine && localDetail) {
+    source = "le texte du PDF"; detail = localDetail; effectif = local.effectif; brut = local.effectifBrut;
+  } else {
+    const cart = sansEspaces(ai.cartoucheBrut);
+    const cartDetail = cart ? decode(cart) : null;
+    if (cart && cartDetail) {
+      source = "le cartouche recopié par l'IA"; detail = cartDetail;
+      const ordre = format ? format(cartDetail) : null;
+      effectif = ordre && decode(ordre) ? ordre : cart;
+      brut = effectif !== cart ? cart : undefined;
+    }
+  }
+
+  if (source) {
+    if (aiLine) {
+      const aiDetail = decode(aiLine);
+      const pareil = aiDetail && (same ? same(aiDetail, detail) : sansEspaces(format ? format(aiDetail) : aiLine) === sansEspaces(effectif));
+      if (!pareil) warnings.push(`L'IA a lu un effectif différent : retenu « ${effectif} » (lu et décodé depuis ${source}), lu par l'IA « ${aiLine} ». Effectif retenu à vérifier si le plan est ambigu.`);
+    }
+    return {
+      effectif, effectifDetail: detail, effectifBrut: brut,
+      effectifPercus: (detail && detail.effectifPercus) || local.effectifPercus || null,
+      orchestre: toOrchestre ? toOrchestre(detail) : null,
+    };
+  }
+
+  if (aiLine) {
+    const aiDetail = decode(aiLine);
+    warnings.push(`Effectif lu par l'IA sans pouvoir le vérifier (« ${aiLine} ») : ni la couche texte du PDF ni le cartouche recopié n'ont pu être décodés localement. À vérifier sur le plan.`);
+    if (!aiDetail) warnings.push(`Nomenclature « ${aiLine} » non reconnue : décompte de l'effectif à vérifier.`);
+    return { effectif: ai.effectif, effectifDetail: aiDetail, effectifBrut: ai.effectifBrut, effectifPercus: ai.effectifPercus || null, orchestre: null };
+  }
+  // Ni texte décodable, ni cartouche, ni effectif IA : on garde ce que la lecture locale avait.
+  return { effectif: local.effectif || "", effectifDetail: local.effectifDetail, effectifBrut: local.effectifBrut, effectifPercus: local.effectifPercus || null, orchestre: null };
+}
+
+const estTimbale = (nom) => /^timbales?\b/i.test(String(nom || "").trim());
+const nbTimbales = (pole) => (pole && Array.isArray(pole.items) ? pole.items.filter((it) => it && estTimbale(it.nom)).length : 0);
+
+/**
+ * Le nombre de timbales DESSINÉES lu par l'IA (items « Timbale N », entrée « Timbales » du mobilier observé)
+ * est à vérifier. Un poste de timbales sans autre source (aucun poste local à la même quantité) est marqué nonVerifie.
+ */
+function marquerTimbales(percus, lues, local, ai, warnings) {
+  const vuesMobilier = (Array.isArray(ai.mobilierObserve) ? ai.mobilierObserve : [])
+    .some((m) => m && /timbale/i.test(String(m.type || "")));
+  const vuesPoste = lues && percus.some((p) => nbTimbales(p) > 0);
+  if (!vuesMobilier && !vuesPoste) return percus;
+  warnings.push("Nombre de timbales lu sur le dessin par l'IA : à vérifier.");
+  if (!vuesPoste) return percus;
+  const locales = (Array.isArray(local.percus) ? local.percus : []).map(nbTimbales).filter((n) => n > 0);
+  return percus.map((p) => (nbTimbales(p) > 0 && !locales.includes(nbTimbales(p)) ? { ...p, nonVerifie: true } : p));
+}
+
 /**
  * Fusionne la lecture IA et la lecture locale d'une pièce SANS jamais compléter la scène :
  *  - des percussions lues par l'IA remplacent le local ;
@@ -134,8 +208,12 @@ export function mergeAiIntoLocal(local, ai, deps = {}) {
   else if (meta.percusStatut === "aucune") { percus = []; percusState = "absence_confirmee"; }
   else { percus = []; percusState = "vide_ou_illisible"; }
 
+  const ret = choisirEffectif(local, ai, deps, warnings);
+  const { effectif, effectifDetail } = ret;
+
   let orchestre;
-  if (hasOrchestre(ai.orchestre)) orchestre = ai.orchestre;
+  if (ret.orchestre) orchestre = ret.orchestre;
+  else if (hasOrchestre(ai.orchestre)) orchestre = ai.orchestre;
   else {
     orchestre = local.orchestre || null;
     warnings.push(orchestre
@@ -143,9 +221,7 @@ export function mergeAiIntoLocal(local, ai, deps = {}) {
       : "Effectif non lu par l'IA : aucun orchestre n'a pu être lu.");
   }
 
-  const effectif = ai.effectif || local.effectif || "";
-  const effectifDetail = ai.effectif ? decode(ai.effectif) : local.effectifDetail;
-  if (ai.effectif && !effectifDetail) warnings.push(`Nomenclature « ${ai.effectif} » non reconnue : décompte de l'effectif à vérifier.`);
+  percus = marquerTimbales(percus, percusState === "lues", local, ai, warnings);
 
   const pages = meta.pages || null;
   const skippedCount = pages && Array.isArray(pages.skipped) ? pages.skipped.length : 0;
@@ -167,8 +243,8 @@ export function mergeAiIntoLocal(local, ai, deps = {}) {
     effectif,
     effectifDetail: effectifDetail || null,
     // Effectif remis en ordre Daniels : on garde la ligne écrite sur le plan qui correspond à l'effectif retenu
-    effectifBrut: ai.effectif ? ai.effectifBrut : local.effectifBrut,
-    effectifPercus: ai.effectifPercus || (ai.effectif ? null : local.effectifPercus) || null,
+    effectifBrut: ret.effectifBrut,
+    effectifPercus: ret.effectifPercus,
     // Plan de détail percussion seul (un poste dessiné à part) : à proposer en ajout à une pièce existante
     detailPercussion: ai.detailPercussion === true,
     orchestre,
