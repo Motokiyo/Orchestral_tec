@@ -3,8 +3,9 @@ import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
 import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, countOrchestreMusicians, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
 import { mergeAiIntoLocal, failedAiLocal, offlineAiLocal, aiFailedStatus, aiStatusFromResult, dismissAiStatus, aiBannerInfo } from "./aiImport.js";
-import { exportLocalDataForRecovery, useConcerts, usePhotos, useOmrScores, useSyncStatus, setSessionExpired, requestSyncRetry, requestPersistentStorage } from "./useStorage.js";
+import { exportLocalDataForRecovery, exportLocalDataToFile, useConcerts, usePhotos, useOmrScores, useSyncStatus, setSessionExpired, requestSyncRetry, requestPersistentStorage } from "./useStorage.js";
 import { S } from "./styles.js";
+import { bannerInfo, reloadReportText, exportReportText } from "./syncUi.js";
 import JSZip from "jszip";
 
 // ── De-duplicate piece ids across all concerts so photos (which are stored in a
@@ -157,28 +158,52 @@ async function fetchSession() {
 
 // Small status pill: offline, changes waiting to be sent, or session to renew.
 // Hidden when everything is synced.
+// Bouton « Exporter toutes mes données » : télécharge un fichier JSON (concerts, photos, partitions)
+// sans aucun appel réseau. Affiche son résultat juste dessous.
+function ExportAllButton({ style, label = "Exporter toutes mes données", noteStyle }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  async function run(e) {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true); setNote("");
+    try { setNote(exportReportText(await exportLocalDataToFile())); }
+    catch (err) { setNote("L'export a échoué : " + (err?.message || err) + ". Rien n'a été changé."); }
+    finally { setBusy(false); }
+  }
+  return (
+    <>
+      <button onClick={run} disabled={busy} style={{ ...style, opacity: busy ? 0.6 : 1 }}>{busy ? "Export en cours…" : label}</button>
+      {note && <div role="status" style={noteStyle || S.exportNote}>{note}</div>}
+    </>
+  );
+}
+
+// Bandeau de synchro : hors ligne, envoi en attente, session à renouveler, et les alertes
+// (données trop lourdes, mémoire de secours pleine, stockage lent). Posé au-dessus de la barre d'onglets.
 export function SyncBanner() {
-  const { online, pending, sessionExpired } = useSyncStatus();
-  if (online && !pending && !sessionExpired) return null;
-  let text;
-  if (!online) text = pending ? "Hors ligne · modifications gardées, envoi au retour du réseau" : "Hors ligne · tes données restent sur le téléphone";
-  else if (sessionExpired) text = "Session expirée · touche pour te reconnecter";
-  else text = "Envoi des modifications…";
-  const color = !online ? "#92400E" : sessionExpired ? "#991B1B" : "#57534E";
-  const background = !online ? "#FFFBEB" : sessionExpired ? "#FEF2F2" : "#F5F5F4";
-  const onClick = sessionExpired && online
+  const status = useSyncStatus();
+  const info = bannerInfo(status);
+  if (!info) return null;
+  const alarm = info.tone === "alarm";
+  const color = alarm ? "#991B1B" : info.tone === "warn" ? "#92400E" : "#57534E";
+  const background = alarm ? "#FEF2F2" : info.tone === "warn" ? "#FFFBEB" : "#F5F5F4";
+  if (info.card) {
+    return (
+      <div role="alert" data-testid={`sync-${info.kind}`} style={S.syncBanner(color, background, true)}>
+        <div>{info.text}</div>
+        {info.action === "export" && (
+          <ExportAllButton style={S.syncBannerBtn(color)} label="Exporter toutes mes données" noteStyle={{ ...S.exportNote, color }} />
+        )}
+      </div>
+    );
+  }
+  const onClick = info.action === "reconnect" && status.online
     ? () => window.dispatchEvent(new Event("orkmap-reconnect"))
     : () => requestSyncRetry();
   return (
-    <div onClick={onClick} role="status" style={{
-      position: "fixed", left: "50%", transform: "translateX(-50%)",
-      bottom: "calc(10px + env(safe-area-inset-bottom))", zIndex: 9999,
-      maxWidth: "calc(100vw - 24px)", padding: "6px 12px", borderRadius: 999,
-      background, color, border: `1px solid ${color}33`, boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
-      fontSize: 12, fontWeight: 700, fontFamily: "'DM Sans', sans-serif",
-      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer",
-    }}>
-      {text}
+    <div onClick={onClick} role="status" data-testid={`sync-${info.kind}`} style={S.syncBanner(color, background, false)}>
+      {info.text}
     </div>
   );
 }
@@ -1181,7 +1206,7 @@ export default function App() {
   const [authEmail, setAuthEmail] = useState(readLastEmail);
   const [showLogin, setShowLogin] = useState(false);
   const { online } = useSyncStatus();
-  const [concerts, setConcerts, dbLoaded] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }], authEmail);
+  const [concerts, setConcerts, dbLoaded, concertsApi] = useConcerts([{ ...DEMO_CONCERT, pieces: DEMO_PIECES }], authEmail);
   const [screen, setScreen] = useState("start");
   const [concertId, setConcertId] = useState(null);
   const [pieceId, setPieceId] = useState(null);
@@ -1307,13 +1332,10 @@ export default function App() {
   // Photos live in a separate store and are NOT affected.
   async function reloadConcertsFromAccount() {
     if (isOffline()) { alert("Pas de réseau : le rechargement depuis le compte attendra le retour du réseau. Tes concerts restent disponibles sur le téléphone."); return; }
-    if (!confirm("Recharger les concerts depuis ton compte ?\nLes versions locales seront remplacées par celles du serveur. Tes photos ne sont pas touchées.")) return;
+    if (!confirm("Recharger les concerts depuis ton compte ?\nTa version actuelle est d'abord mise de côté (copie sur le téléphone + fichier téléchargé).\nLes concerts présents des deux côtés prennent la version du compte ; ceux qui n'existent que sur ce téléphone sont gardés. Tes photos ne sont pas touchées.")) return;
     try {
-      const r = await fetch("/api/sync?type=concerts", { credentials: "include" });
-      const d = await r.json();
-      if (Array.isArray(d.data)) { setConcerts(() => d.data); alert("Concerts rechargés depuis ton compte."); }
-      else alert("Aucune donnée de concert sur le compte.");
-    } catch (e) { alert("Échec du rechargement : " + e.message); }
+      alert(reloadReportText(await concertsApi.reloadFromAccountSafe()));
+    } catch (e) { alert("Échec du rechargement : " + e.message + ". Rien n'a été changé."); }
   }
   function goOmr(id = null) { setOmrScoreId(id); setScreen("omr"); }
 
@@ -2441,6 +2463,10 @@ export default function App() {
               </span>
             </span>
           </button>
+          <div style={{ marginTop: 6, marginBottom: 12 }}>
+            <ExportAllButton style={S.exportBtn} />
+            <div style={S.exportNote}>Un fichier de sauvegarde (concerts, photos, partitions) est téléchargé sur ce téléphone. Rien n'est envoyé.</div>
+          </div>
           {omrScores.length > 0 && (
             <div style={{ marginTop: 18 }}>
               <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#78716C", textTransform: "uppercase", marginBottom: 8 }}>
@@ -2762,7 +2788,7 @@ export default function App() {
             </div>
           )}
 
-          <button onClick={reloadConcertsFromAccount} style={{ ...S.btnSecondary, fontSize: 12, marginBottom: 12, padding: "8px 12px" }}>↻ Recharger depuis le compte</button>
+          <button onClick={reloadConcertsFromAccount} style={{ ...S.btnSecondary, fontSize: 13, marginBottom: 12, padding: "8px 12px", minHeight: 44 }}>↻ Recharger depuis le compte</button>
 
           {shownConcerts.length === 0 && (
             <div style={{ textAlign: "center", padding: "20px 0", color: "#A8A29E", fontSize: 14 }}>Aucun concert trouvé</div>

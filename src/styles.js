@@ -234,6 +234,28 @@ export const S = {
     maxWidth: 430,
     zIndex: 100,
   },
+  // Bandeau de synchro : posé AU-DESSUS de la barre d'onglets (hauteur ~68 px), jamais dessus.
+  syncBanner: (color, background, card) => ({
+    position: "fixed", left: "50%", transform: "translateX(-50%)",
+    bottom: "calc(76px + env(safe-area-inset-bottom))", zIndex: 150,
+    width: card ? "calc(100vw - 24px)" : "auto", maxWidth: card ? 406 : "calc(100vw - 24px)",
+    boxSizing: "border-box",
+    padding: card ? "10px 12px" : "6px 12px", borderRadius: card ? 12 : 999,
+    background, color, border: `1px solid ${color}33`, boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+    fontSize: card ? 13 : 12, fontWeight: card ? 600 : 700, lineHeight: 1.35,
+    fontFamily: "'DM Sans', sans-serif",
+    ...(card ? {} : { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer" }),
+  }),
+  syncBannerBtn: (color) => ({
+    marginTop: 8, width: "100%", minHeight: 44, padding: "10px 12px", borderRadius: 10,
+    border: `1px solid ${color}`, background: "#fff", color, fontSize: 14, fontWeight: 700, cursor: "pointer",
+  }),
+  exportBtn: {
+    background: "#fff", border: "1px solid #D6D3D1", color: "#1C1917", borderRadius: 10,
+    padding: "12px 16px", minHeight: 44, fontSize: 14, fontWeight: 700, cursor: "pointer",
+    width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+  },
+  exportNote: { fontSize: 12, lineHeight: 1.4, color: "#57534E", marginTop: 6 },
   navBtn: (active) => ({
     flex: 1,
     padding: "10px 4px 14px",
