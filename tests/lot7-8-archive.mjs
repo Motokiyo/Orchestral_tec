@@ -9,7 +9,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import JSZip from "jszip";
 import { PdfDocument, cleanText, wrapText, textWidth, jpegInfo } from "../src/pdfWriter.js";
-import { nomSur, nomDossierPiece, nomZipDossier, nomPhoto, plansDeLaPiece, totalMobilierConcert, elementsMobilier, blocsFichePiece, blocsFicheConcert, blocsEnTxt, blocsEnPdf, PLAN_ABSENT } from "../src/archive.js";
+import { nomSur, nomDossierPiece, nomZipDossier, nomPhoto, plansDeLaPiece, blocsFichePiece, blocsFicheConcert, blocsEnTxt, blocsEnPdf, blocsEnPdfDetail, infoPdfConcert, sommaireJson, PLAN_ABSENT } from "../src/archive.js";
 import { construireDossier } from "../src/archiveBuilder.js";
 import { construireZipPhotos, compterPhotos, nomUnique } from "../src/photoExport.js";
 import { octetsDeDataUrl } from "../src/archiveImages.js";
@@ -21,6 +21,7 @@ const PNG = "data:image/png;base64," + PNG_B64;
 const PDFTOTEXT = ["/opt/homebrew/bin/pdftotext", "/usr/local/bin/pdftotext"].find((p) => fs.existsSync(p));
 const PDFINFO = ["/opt/homebrew/bin/pdfinfo", "/usr/local/bin/pdfinfo"].find((p) => fs.existsSync(p));
 const PDFIMAGES = ["/opt/homebrew/bin/pdfimages", "/usr/local/bin/pdfimages"].find((p) => fs.existsSync(p));
+const PDFTOHTML = ["/opt/homebrew/bin/pdftohtml", "/usr/local/bin/pdftohtml"].find((p) => fs.existsSync(p));
 const GS = ["/opt/homebrew/bin/gs", "/usr/local/bin/gs"].find((p) => fs.existsSync(p));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lot78-"));
 process.on("exit", () => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -121,28 +122,64 @@ test("noms de fichiers sûrs : ni / \\ : * ? \" < > | ni point en tête", () => 
 });
 
 // ───────────────────────── total du mobilier ─────────────────────────
-test("total du mobilier : somme ET maximum par élément, quantités inconnues signalées", () => {
-  const a = { general: { pupitres: 10, chaisesNormales: 20, chaisesHautes: 2, banquettes: 0, chaisesSpeciales: [{ type: "Chaise timbalier", qty: 1 }] }, stands: { cordes: [{ type: "Stands de contrebasse", qty: 4 }], bois: [], cuivres: [], percus: [], autres: [{ type: "Podium chef", qty: 1 }], speciaux: [] }, infos: [] };
-  const b = { general: { pupitres: 6, chaisesNormales: 30, chaisesHautes: 0, banquettes: 1, chaisesSpeciales: [] }, stands: { cordes: [{ type: "Stands de contrebasse", qty: null }], bois: [], cuivres: [], percus: [], autres: [{ type: "Podium chef", qty: 1 }], speciaux: [] }, infos: [] };
-  const t = totalMobilierConcert([{ id: "a", mobilier: a }, { id: "b", mobilier: b }, { id: "c" }], {});
-  const ligne = (l) => t.lignes.find((x) => x.label === l);
-  assert.deepEqual([ligne("Pupitres de musiciens").somme, ligne("Pupitres de musiciens").max], [16, 10]);
-  assert.deepEqual([ligne("Chaises normales").somme, ligne("Chaises normales").max], [50, 30]);
-  assert.deepEqual([ligne("Podium chef").somme, ligne("Podium chef").max], [2, 1]);
-  assert.deepEqual([ligne("Stands de contrebasse").somme, ligne("Stands de contrebasse").max], [4, 4]);
-  assert.equal(t.inconnues, 1);
-  assert.equal(t.sansMobilier, 1);
-  assert.equal(elementsMobilier(null).length, 0);
+test("fiche du concert : sommaire en tête, une section par œuvre, aucun total entre œuvres", () => {
+  const blocs = blocsFicheConcert({ concert, pieces: concert.pieces, nbTotal: 3 });
+  const txt = blocsEnTxt(blocs);
+  assert.ok(!/TOTAL DES PIÈCES|MAXIMUM PAR ÉLÉMENT|Mobilier du concert|ADDITIONNÉES/.test(txt));
+  assert.match(txt, /SOMMAIRE : ŒUVRES DANS L'ORDRE DU CONCERT/);
+  assert.match(txt, /01\. Symphonie n° 5 : Allegro\/Final \(Ludwig van Beethoven\)\n    Effectif Daniels : 2\.2\.2\.2/);
+  assert.match(txt, /Dossier : 01_Symphonie_n°_5_Allegro_Final\//);
+  assert.match(txt, /02\. Œuvre courte \(Élise Çelik\)/);
+  // le sommaire vient AVANT les sections
+  assert.ok(txt.indexOf("SOMMAIRE") < txt.indexOf("01. SYMPHONIE"));
+  // chaque œuvre a sa section avec son décompte complet
+  for (const t of ["01. SYMPHONIE", "02. ŒUVRE COURTE", "03. SANS ORCHESTRE"]) assert.ok(txt.includes(t), t);
+  assert.equal((txt.match(/^MOBILIER CALCULÉ$/gm) || []).length, 3);
+  assert.match(txt, /Répétition à 14 h\./);
+  assert.match(txt, /Pôle 1 : Percu 1/);
+  assert.match(txt, /ÉCARTS ENTRE LE PLAN ET LE CALCUL/);
+  assert.ok(!txt.includes("\u2014"));
+  // la section de l'œuvre 1 a les mêmes lignes de mobilier que sa fiche d'œuvre
+  const fiche = blocsEnTxt(blocsFichePiece({ piece: piece1, concert, rang: 1 }));
+  const mob = (t) => t.split("MOBILIER CALCULÉ")[1].split("PERCUSSIONS PAR PÔLE")[0].trim();
+  assert.ok(txt.replace(/\n/g, "").includes(mob(fiche).replace(/\n/g, "")));
 });
 
-test("fiche du concert : les deux totaux sont présentés clairement", () => {
-  const txt = blocsEnTxt(blocsFicheConcert({ concert, pieces: concert.pieces, nbTotal: 3 }));
-  assert.match(txt, /TOTAL DES PIÈCES ADDITIONNÉES/);
-  assert.match(txt, /MAXIMUM PAR ÉLÉMENT/);
-  assert.match(txt, /1\. Symphonie n° 5 : Allegro\/Final \(Ludwig van Beethoven\) : Daniels 2\.2\.2\.2/);
-  assert.match(txt, /Répétition à 14 h\./);
-  assert.match(txt, /Pupitres de musiciens : \d+/);
-  assert.ok(!txt.includes("\u2014"));
+test("PDF : signets, pages du sommaire exactes, /Info", { skip: !PDFTOTEXT }, () => {
+  const blocs = blocsFicheConcert({ concert, pieces: concert.pieces, nbTotal: 3 });
+  const { bytes, pages } = blocsEnPdfDetail(blocs, { info: infoPdfConcert(concert, concert.pieces) });
+  assert.deepEqual(Object.keys(pages), ["oeuvre1", "oeuvre2", "oeuvre3"]);
+  assert.equal(pages.oeuvre1, 2); // sommaire en page 1, une page par œuvre ensuite
+  const s = Buffer.from(bytes).toString("latin1");
+  assert.match(s, /\/Outlines \d+ 0 R \/PageMode \/UseOutlines/);
+  assert.equal((s.match(/\/Parent \d+ 0 R( \/Prev \d+ 0 R)?( \/Next \d+ 0 R)? \/Dest/g) || []).length, 3);
+  const f = ecrire("sig.pdf", bytes);
+  // /Info lisible par pdfinfo
+  const info = execFileSync(PDFINFO, [f], { encoding: "utf8" });
+  assert.match(info, /Title:\s+Concert d'automne : 2\/3, 20 novembre 2026/);
+  assert.match(info, /Subject:\s+Dossier pour la salle/);
+  assert.match(info, /Keywords:\s+01 Symphonie n° 5 : Allegro\/Final \(Ludwig van Beethoven\); 02 Œuvre courte \(Élise Çelik\); 03 Sans orchestre/);
+  assert.match(info, /Creator:\s+OrkMap/);
+  // signets lus par un vrai lecteur : poppler (pdftohtml -xml les liste), sinon ghostscript
+  const outline = execFileSync(PDFTOHTML, ["-xml", "-stdout", "-i", f], { encoding: "utf8" });
+  const titres = [...outline.matchAll(/<item page="(\d+)">([^<]*)<\/item>/g)].map((m) => [Number(m[1]), m[2]]);
+  assert.deepEqual(titres.map((t) => t[0]), [pages.oeuvre1, pages.oeuvre2, pages.oeuvre3]);
+  assert.ok(titres[0][1].startsWith("01. Symphonie"));
+  // le sommaire du PDF donne la bonne page de chaque œuvre
+  const p1 = texte(bytes, "toc.pdf", ["-layout", "-f", "1", "-l", "1"]);
+  for (const id of ["oeuvre1", "oeuvre2", "oeuvre3"]) assert.ok(p1.replace(/\s+/g, " ").includes(`Page ${pages[id]} de cette fiche`), id);
+  // chaque œuvre commence bien sur sa page
+  assert.ok(texte(bytes, "pg2.pdf", ["-f", String(pages.oeuvre2), "-l", String(pages.oeuvre2)]).includes("02. Œuvre courte"));
+  assert.ok(texte(bytes, "pg3.pdf", ["-f", String(pages.oeuvre3), "-l", String(pages.oeuvre3)]).includes("03. Sans orchestre"));
+  if (GS) execFileSync(GS, ["-q", "-dNOPAUSE", "-dBATCH", "-dSAFER", "-sDEVICE=nullpage", f], { encoding: "utf8" });
+});
+
+test("sommaire JSON : chaque œuvre retrouvable", () => {
+  const j = JSON.parse(sommaireJson({ concert, pieces: concert.pieces, details: [{ nbPlans: 2, nbPhotos: 2 }, { nbPlans: 0, nbPhotos: 1 }, {}], pagesFiche: { oeuvre1: 2 }, nbTotal: 3 }));
+  assert.equal(j.concert.titre, "Concert d'automne : 2/3");
+  assert.equal(j.concert.lieu, "Salle Pleyel");
+  assert.equal(j.oeuvres.length, 3);
+  assert.deepEqual(j.oeuvres[0], { numero: 1, titre: piece1.titre, compositeur: "Ludwig van Beethoven", effectif: piece1.effectif, dossier: "01_Symphonie_n°_5_Allegro_Final/", fiche_pdf: "01_Symphonie_n°_5_Allegro_Final/Fiche.pdf", fiche_txt: "01_Symphonie_n°_5_Allegro_Final/Fiche.txt", page_dans_fiche_concert: 2, nombre_plans: 2, nombre_photos: 2 });
 });
 
 // ───────────────────────── le dossier ─────────────────────────
@@ -152,7 +189,7 @@ test("dossier complet : arborescence, fiches, plan absent sans fichier cassé", 
   const zip = await JSZip.loadAsync(Buffer.from(await r.blob.arrayBuffer()));
   const liste = noms(zip);
   assert.deepEqual(liste, [
-    "00_Fiche_concert.pdf", "00_Fiche_concert.txt",
+    "00_Fiche_concert.pdf", "00_Fiche_concert.txt", "00_Sommaire.json",
     "01_Symphonie_n°_5_Allegro_Final/Fiche.pdf", "01_Symphonie_n°_5_Allegro_Final/Fiche.txt",
     "01_Symphonie_n°_5_Allegro_Final/Photos/Photo_01_Percu_1_Avant_Gauche.jpg",
     "01_Symphonie_n°_5_Allegro_Final/Photos/Photo_02_Percu_1_Fond_haut.png",
@@ -202,7 +239,7 @@ test("dossier : PDF lisibles par pdftotext (accents), image de plan en pleine la
   const pdfc = await zip.file("00_Fiche_concert.pdf").async("uint8array");
   const tc = texte(pdfc, "fc.pdf");
   assert.ok(tc.includes("Concert d'automne : 2/3") && tc.includes("Salle Pleyel"));
-  assert.ok(tc.includes("Mobilier du concert"));
+  assert.ok(!tc.includes("Mobilier du concert") && tc.includes("Sommaire du dossier") && tc.includes("Dossier : 01_Symphonie_n°_5_Allegro_Final/"));
   // pièce sans plan : PDF valide sans image
   const pdf2 = await zip.file("02_Œuvre_courte/Fiche.pdf").async("uint8array");
   assert.ok(texte(pdf2, "f2.pdf").includes("Œuvre courte"));
@@ -213,9 +250,9 @@ function plan_absent() { return "plan non disponible sur ce téléphone"; }
 test("dossier : pièces cochées seulement, et option « sans photos »", async () => {
   const r = await construireDossier({ concert, pieceIds: ["p2"], avecPhotos: false, photos, deps });
   const zip = await JSZip.loadAsync(Buffer.from(await r.blob.arrayBuffer()));
-  assert.deepEqual(noms(zip), ["00_Fiche_concert.pdf", "00_Fiche_concert.txt", "01_Œuvre_courte/Fiche.pdf", "01_Œuvre_courte/Fiche.txt"]);
+  assert.deepEqual(noms(zip), ["00_Fiche_concert.pdf", "00_Fiche_concert.txt", "00_Sommaire.json", "01_Œuvre_courte/Fiche.pdf", "01_Œuvre_courte/Fiche.txt"]);
   assert.match(await lire(zip, "01_Œuvre_courte/Fiche.txt"), /Photos : non incluses dans ce dossier/);
-  assert.match(await lire(zip, "00_Fiche_concert.txt"), /Pièces dans ce dossier : 1 sur 3/);
+  assert.match(await lire(zip, "00_Fiche_concert.txt"), /Œuvres dans ce dossier : 1 sur 3/);
   assert.equal(r.stats.photos, 0);
 });
 

@@ -3,11 +3,11 @@
 // (magasin des plans, canvas) est passé en `deps` : le même code tourne dans l'app et dans les tests Node.
 //
 // Arborescence :
-//   00_Fiche_concert.pdf / .txt
+//   00_Fiche_concert.pdf / .txt (sommaire, puis une section par œuvre), 00_Sommaire.json (pour retrouver chaque œuvre)
 //   01_Titre/Fiche.pdf, Fiche.txt, Plans/Plan_1.jpg ..., Photos/Photo_01_Percu_Zone.jpg ...
 // Un plan absent du téléphone (et sans réseau) n'a PAS de fichier : la fiche écrit « plan non disponible sur ce téléphone ».
 import JSZip from "jszip";
-import { blocsFichePiece, blocsFicheConcert, blocsEnTxt, blocsEnPdf, nomDossierPiece, nomZipDossier, plansDeLaPiece } from "./archive.js";
+import { blocsFichePiece, blocsFicheConcert, blocsEnTxt, blocsEnPdf, blocsEnPdfDetail, infoPdfConcert, infoPdfPiece, sommaireJson, nomDossierPiece, nomZipDossier, plansDeLaPiece } from "./archive.js";
 import { ecrirePhotosPiece } from "./photoExport.js";
 import { octetsDeDataUrl, extensionDeMime } from "./archiveImages.js";
 
@@ -33,7 +33,9 @@ export async function construireDossier({ concert, pieceIds = null, avecPhotos =
   // Fiche du concert en tête.
   const blocsConcert = blocsFicheConcert({ concert, pieces, nbTotal: toutes.length });
   zip.file("00_Fiche_concert.txt", blocsEnTxt(blocsConcert), TEXTE);
-  zip.file("00_Fiche_concert.pdf", blocsEnPdf(blocsConcert, { titre: `${concert.titre || "Concert"} - fiche du concert` }), TEXTE);
+  const pdfConcert = blocsEnPdfDetail(blocsConcert, { info: infoPdfConcert(concert, pieces) });
+  zip.file("00_Fiche_concert.pdf", pdfConcert.bytes, TEXTE);
+  const details = [];
   avance("Fiche du concert");
   await respirer();
 
@@ -65,10 +67,11 @@ export async function construireDossier({ concert, pieceIds = null, avecPhotos =
     const nbPhotos = avecPhotos ? (photos[piece.id] || []).length : null;
     const blocs = blocsFichePiece({ piece, concert, rang, plans, nbPhotos, imagePlan: images.plan1 ? "plan1" : null });
     dossier.file("Fiche.txt", blocsEnTxt(blocs), TEXTE);
-    dossier.file("Fiche.pdf", blocsEnPdf(blocs, { titre: `${nomAffiche} - fiche`, images }), TEXTE);
+    dossier.file("Fiche.pdf", blocsEnPdf(blocs, { info: infoPdfPiece(concert, piece, rang), images }), TEXTE);
     avance(`${nomAffiche} : fiche`);
     await respirer();
 
+    details.push({ nbPlans: plans.filter((x) => x.present).length, nbPhotos: nbPhotos || 0 });
     if (avecPhotos && nbPhotos > 0) {
       const base = fait;
       stats.photos += await ecrirePhotosPiece(dossier.folder("Photos"), piece, photos[piece.id] || [], {
@@ -78,6 +81,7 @@ export async function construireDossier({ concert, pieceIds = null, avecPhotos =
     }
   }
 
+  zip.file("00_Sommaire.json", sommaireJson({ concert, pieces, details, pagesFiche: pdfConcert.pages, nbTotal: toutes.length }), TEXTE);
   onProgress({ texte: "Assemblage du fichier zip", fait, total: etapes, pct: 100 });
   const blob = await zip.generateAsync({ type: "blob", streamFiles: true });
   onProgress({ texte: "Dossier prêt", fait: etapes, total: etapes, pct: 100 });

@@ -161,10 +161,14 @@ const latin1 = (str) => {
 };
 
 export class PdfDocument {
-  constructor({ title = "", author = "OrkMap", footer = "" } = {}) {
+  constructor({ title = "", author = "OrkMap", subject = "", keywords = "", creator = "OrkMap", footer = "" } = {}) {
     this.title = cleanText(title);
     this.author = cleanText(author);
+    this.subject = cleanText(subject);
+    this.keywords = cleanText(keywords).replace(/\n/g, " ");
+    this.creator = cleanText(creator);
     this.footer = cleanText(footer);
+    this.bookmarks = []; // { title, page (index), y }
     this.pages = [];
     this.images = []; // { bytes, width, height, components }
     this.usedImagesByPage = [];
@@ -187,6 +191,12 @@ export class PdfDocument {
     if (this.remaining >= needed) return;
     if (this.y >= PAGE_H - MARGIN - 1) return; // page vide : inutile d'en ouvrir une autre
     this.newPage();
+  }
+
+  /** Signet PDF (panneau latéral des lecteurs) vers la position courante. Renvoie l'index de la page (à partir de 0). */
+  bookmark(title) {
+    this.bookmarks.push({ title: cleanText(title).replace(/\n/g, " "), page: this.pages.length - 1, y: Math.min(PAGE_H - 20, this.y + 24) });
+    return this.pages.length - 1;
   }
 
   pageBreak() { if (this.y < PAGE_H - MARGIN - 1) this.newPage(); return this; }
@@ -300,7 +310,6 @@ export class PdfDocument {
     const offsets = [];
     let size = 0;
     const push = (data) => { const b = typeof data === "string" ? latin1(data) : data; chunks.push(b); size += b.length; };
-    const objects = []; // index = numéro - 1
     const begin = () => { offsets.push(size); };
 
     // Numérotation : 1 catalogue, 2 pages, 3 et 4 polices, 5 infos, puis images, puis (page, contenu) par page.
@@ -308,16 +317,19 @@ export class PdfDocument {
     const firstImage = 6;
     const firstPage = firstImage + this.images.length;
     const pageObj = (i) => firstPage + i * 2;
-    const total = firstPage + nbPages * 2 - 1;
+    const pagesEnd = firstPage + nbPages * 2 - 1;
+    const total = pagesEnd + (this.bookmarks.length ? this.bookmarks.length + 1 : 0);
 
     push("%PDF-1.4\n%âãÏÓ\n");
-    begin(); push("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    const nbMarks = this.bookmarks.length;
+    const outlinesObj = pagesEnd + 1; // racine des signets, suivie d'un objet par signet
+    begin(); push(`1 0 obj\n<< /Type /Catalog /Pages 2 0 R${nbMarks ? ` /Outlines ${outlinesObj} 0 R /PageMode /UseOutlines` : ""} >>\nendobj\n`);
     begin(); push(`2 0 obj\n<< /Type /Pages /Kids [${this.pages.map((_, i) => `${pageObj(i)} 0 R`).join(" ")}] /Count ${nbPages} >>\nendobj\n`);
     begin(); push("3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n");
     begin(); push("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\nendobj\n");
     const d = new Date();
     const pdfDate = `D:${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
-    begin(); push(`5 0 obj\n<< /Title ${utf16Hex(this.title)} /Author ${utf16Hex(this.author)} /Producer (OrkMap) /CreationDate (${pdfDate}) >>\nendobj\n`);
+    begin(); push(`5 0 obj\n<< /Title ${utf16Hex(this.title)} /Author ${utf16Hex(this.author)} /Subject ${utf16Hex(this.subject)} /Keywords ${utf16Hex(this.keywords)} /Creator ${utf16Hex(this.creator)} /Producer (OrkMap) /CreationDate (${pdfDate}) >>\nendobj\n`);
 
     this.images.forEach((img, i) => {
       begin();
@@ -341,6 +353,16 @@ export class PdfDocument {
       push(`${pageObj(i) + 1} 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`);
     });
 
+    if (nbMarks) {
+      begin();
+      push(`${outlinesObj} 0 obj\n<< /Type /Outlines /First ${outlinesObj + 1} 0 R /Last ${outlinesObj + nbMarks} 0 R /Count ${nbMarks} >>\nendobj\n`);
+      this.bookmarks.forEach((m, i) => {
+        const me = outlinesObj + 1 + i;
+        begin();
+        push(`${me} 0 obj\n<< /Title ${utf16Hex(m.title)} /Parent ${outlinesObj} 0 R${i > 0 ? ` /Prev ${me - 1} 0 R` : ""}${i < nbMarks - 1 ? ` /Next ${me + 1} 0 R` : ""} /Dest [${pageObj(m.page)} 0 R /XYZ 0 ${fmt(m.y)} null] >>\nendobj\n`);
+      });
+    }
+
     const xrefAt = size;
     let xref = `xref\n0 ${total + 1}\n0000000000 65535 f \n`;
     for (const off of offsets) xref += String(off).padStart(10, "0") + " 00000 n \n";
@@ -350,7 +372,6 @@ export class PdfDocument {
     const out = new Uint8Array(size);
     let pos = 0;
     for (const c of chunks) { out.set(c, pos); pos += c.length; }
-    void objects;
     return out;
   }
 }
