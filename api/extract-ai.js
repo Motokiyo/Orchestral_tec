@@ -117,7 +117,7 @@ export function normalizeExtraction(parsed) {
     return "";
   };
   const titre = text("titre"); const compositeur = text("compositeur"); const duree = text("duree");
-  const salle = text("salle"); const chef = text("chef"); const date = text("date"); const effectif = text("effectif");
+  const salle = text("salle"); const chef = text("chef"); const date = text("date"); const effectif = text("effectif"); const cartoucheBrut = text("cartoucheBrut");
 
   // sansChef : jamais déduit d'une absence. Vrai/faux seulement si le modèle l'affirme, ou si un chef est nommé.
   let sansChef;
@@ -195,7 +195,7 @@ export function normalizeExtraction(parsed) {
   }
 
   return {
-    data: { titre, compositeur, duree, salle, chef, date, sansChef, effectif, orchestre, percus, mobilierObserve, detailPercussion },
+    data: { titre, compositeur, duree, salle, chef, date, sansChef, cartoucheBrut, effectif, orchestre, percus, mobilierObserve, detailPercussion },
     percusStatut,
     warnings,
   };
@@ -224,7 +224,7 @@ Fl/Flûte/Flöte, Picc/Petite flûte, Hb/Ob/Hautbois, CA/Cor anglais/Englischhor
 Baroque : Dessus, Tailles, Viole, Violone, Théorbe, Archiluth, Viole de gambe, Traverso, Hautbois baroque, Basson baroque, Cornet à bouquin, Sacqueboute, Cor naturel, Trompette naturelle, Clavecin, Orgue positif → GARDER tels quels (ne les remplace pas par leur équivalent moderne).
 
 RÈGLES CRITIQUES :
-• Le CARTOUCHE (souvent en bas du plan) contient la ligne "Effectif" : lis-la EN PRIORITÉ, recopie-la, puis décode. Ignore les numéros de sièges/cotes/échelle.
+• Le CARTOUCHE (souvent en bas du plan, parfois tête en bas) contient la ligne d'effectif : lis-la EN PRIORITÉ et RECOPIE-LA caractère par caractère dans "cartoucheBrut", puis décode UNIQUEMENT à partir de cette copie. Si tu ne la lis pas, "cartoucheBrut" = "". Ignore les numéros de sièges, les cotes ("10.70m") et l'échelle.
 • Notations équivalentes : points (2.2.2.2), tirets (2-2-2-2), slashs (4/3/5/4), espaces (2 2 2 2), mots ("2 timb. 7 percs", "2 harpes", "cél/orgue"), cordes entre crochets ("Cordes[12.10.8.6.4]").
 • Dans le bloc percussions, un "T" seul ou "Timb" = poste Timbalier. Un NOMBRE DE TIMBALES ("2 timbales", "2timb", "4 timbales") est un nombre d'INSTRUMENTS dans UN poste Timbalier : ce n'est PAS un nombre de timbaliers. Ne crée plusieurs postes Timbalier que si le chiffre W de Daniels ou des musiciens distincts le montrent. "perc"/"percs" = percussionnistes (poste distinct).
 • Les chiffres décodés (orchestre/percus) DOIVENT correspondre exactement à la ligne effectif du cartouche.
@@ -233,7 +233,7 @@ RÈGLES CRITIQUES :
 • W=0 dans Daniels → pas de poste Timbalier.
 • "Cel" entre crochets [Cel] ou près claviers/percus = Célesta. "Cel" dans section cordes = Violoncelle. VÉRIFIER LE CONTEXTE.
 • Baroque : clavecin/orgue → orchestre.continuo (pas orchestre.autres). Remplir continuo si basse continue visible.
-• ENSEMBLE HOMOGÈNE (consort de violes, ensemble d'un même instrument) : si le document ne donne pas d'effectif chiffré, tu peux le déduire du NOMBRE de musiciens (noms/chaises) et de l'instrument commun. Ex : 7 musiciens tous violistes → effectif "7 violes de gambe", orchestre.cordes = ["7 Violes de gambe"]. Dans ce cas, ÉCRIS dans "avertissements" que l'effectif est déduit et non lu.
+• ENSEMBLE HOMOGÈNE (consort de violes, ensemble d'un même instrument) : si le document ne donne pas d'effectif chiffré, tu peux le déduire du NOMBRE de musiciens (noms/chaises) et de l'instrument commun. Ex : N musiciens tous violistes → orchestre.cordes = ["N Violes de gambe"]. Dans ce cas, ÉCRIS dans "avertissements" que l'effectif est déduit et non lu.
 • "Direction" = chef d'orchestre.
 • CHEF : sansChef = true UNIQUEMENT si le document l'affirme (« sans chef », « sans direction », ensemble qui joue sans direction). sansChef = false si un chef, une direction ou un podium est écrit ou dessiné. Sinon sansChef = null : une ABSENCE de mention n'est PAS une preuve d'absence de chef. Ne suppose rien dans aucun sens.
 • Une SALLE (Pflimlin, Rémy Pflimlin, Auditorium, Philharmonie, CMPP...) n'est PAS un compositeur. Pour un récital, le nom du titre est l'interprète, pas le compositeur.
@@ -251,19 +251,20 @@ RÈGLES CRITIQUES :
 • percusStatut : "lues" si tu as lu au moins un poste de percussion ; "aucune" si le document indique explicitement qu'il n'y a aucune percussion (W=0 et X=0 dans Daniels, ou mention « sans percussion ») ; "illisible" si tu ne peux pas trancher. Une liste vide SANS "aucune" signifie « je n'ai pas pu lire ».
 • Si illisible/ambigu : NE PAS inventer. Mets "" ou [] ou null, et explique dans "avertissements".
 
-EXEMPLES :
-Ex1 : "0-1-0-1 / 0-2-0-0 / 1-0-0-2" + Purcell → baroque. Bois: 1Hb, 1Bn. Cuivres: 2Trp naturelles. Percus: 1Timb, 0Percu, 0Hp, 2 claviers continuo (orgue+clavecin).
-Ex2 : "2.2.2.2 / 4.2.3.1 / 1.3.2.1 [Cel/Pno]" + Mahler → romantique. 1Timbalier, 3Percu, 2Harpes, Célesta+Piano dans autres.
+EXEMPLES DE FORME (les lettres ne sont PAS des valeurs : ne recopie jamais un exemple, chaque chiffre de ta réponse doit se lire dans le document) :
+• Ordre Daniels "a.b.c.d / e.f.g.h / W.X.Y.Z / v1.v2.alt.vlc.cb" : bois, cuivres, percussions (timbaliers, percussionnistes, harpes, claviers), cordes.
+• Certains plans écrivent les CORDES EN PREMIER (5 nombres, en général décroissants) puis bois, cuivres et des mots ("1timb.1perc.1harpe" = 1 timbalier, 1 percussionniste, 1 harpe). Lis dans l'ordre écrit, range dans les bonnes familles.
 
 OUTPUT JSON STRICT (sans markdown, sans backticks) :
 {
   "titre": "", "compositeur": "", "duree": "", "salle": "", "chef": "", "date": "", "sansChef": null,
+  "cartoucheBrut": "ligne d'effectif recopiée telle qu'écrite, ou \"\"",
   "effectif": "notation Daniels normalisée en points",
   "orchestre": {
-    "bois": ["3 Flûtes", ...],
-    "cuivres": ["4 Cors", ...],
-    "cordes": ["16 Violons I", ...],
-    "autres": ["2 Harpes", "Célesta", ...]
+    "bois": ["N Flûtes", ...],
+    "cuivres": ["N Cors", ...],
+    "cordes": ["N Violons I", ...],
+    "autres": ["N Harpes", ...]
   },
   "percusStatut": "lues | aucune | illisible (choisis UNE valeur)",
   "percus": [
@@ -271,7 +272,7 @@ OUTPUT JSON STRICT (sans markdown, sans backticks) :
     {"nom": "Percu 1", "items": [{"cat": "Claviers", "nom": "Vibraphone"}, {"cat": "Accessoires", "nom": "Triangle"}]}
   ],
   "detailPercussion": false,
-  "mobilierObserve": [{"type": "Praticable", "qte": 3, "details": "sous les contrebasses", "source": "dessiné"}, {"type": "Chaise haute", "qte": null, "details": "rangée du fond", "source": "écrit"}],
+  "mobilierObserve": [{"type": "Praticable", "qte": N, "details": "sous quel pupitre", "source": "dessiné"}],
   "avertissements": ["ce qui est déduit, en conflit ou illisible"]
 }
 Catégories percus : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pièces", "Stands & supports", "Baguettes & spécial"`;

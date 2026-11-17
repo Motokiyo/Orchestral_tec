@@ -155,7 +155,7 @@ export function mergeAiIntoLocal(local, ai, deps = {}) {
     localPercusIgnored: percusState === "lues" ? 0 : localPercusCount,
   });
 
-  return {
+  const fusion = {
     ...local,
     titre: ai.titre || local.titre || "",
     compositeur: ai.compositeur || local.compositeur || "",
@@ -166,11 +166,18 @@ export function mergeAiIntoLocal(local, ai, deps = {}) {
     sansChef: triSansChef(ai.sansChef, local.sansChef),
     effectif,
     effectifDetail: effectifDetail || null,
+    // Effectif remis en ordre Daniels : on garde la ligne écrite sur le plan qui correspond à l'effectif retenu
+    effectifBrut: ai.effectif ? ai.effectifBrut : local.effectifBrut,
+    effectifPercus: ai.effectifPercus || (ai.effectif ? null : local.effectifPercus) || null,
+    // Plan de détail percussion seul (un poste dessiné à part) : à proposer en ajout à une pièce existante
+    detailPercussion: ai.detailPercussion === true,
     orchestre,
     percus,
     mobilierObserve: Array.isArray(ai.mobilierObserve) ? ai.mobilierObserve : [],
     aiStatus,
   };
+  if (!fusion.effectifBrut) delete fusion.effectifBrut;
+  return fusion;
 }
 
 /** État « échec technique » (sans toucher aux données de la pièce). */

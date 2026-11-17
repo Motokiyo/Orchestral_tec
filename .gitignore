@@ -16,3 +16,4 @@ BENCHMARK_VISION_IA.md
 .env
 .env.local
 .env.*.local
+.gstack/

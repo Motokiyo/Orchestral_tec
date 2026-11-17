@@ -5,6 +5,8 @@ import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif,
 import { mergeAiIntoLocal, failedAiLocal, offlineAiLocal, aiFailedStatus, aiStatusFromResult, dismissAiStatus, aiBannerInfo } from "./aiImport.js";
 import { exportLocalDataForRecovery, exportLocalDataToFile, useConcerts, usePhotos, useOmrScores, useSyncStatus, setSessionExpired, requestSyncRetry, requestPersistentStorage } from "./useStorage.js";
 import { S } from "./styles.js";
+import { optionsMobilier, recalculerMobilier, appliquerReglages, ajouterPoles } from "./mobilierUi.js";
+import { LignesMobilierPlus, InfosMobilier, EcartsPlan, ReglagesMobilier } from "./MobilierBlocs.jsx";
 import { bannerInfo, reloadReportText, exportReportText } from "./syncUi.js";
 import JSZip from "jszip";
 
@@ -1518,19 +1520,8 @@ export default function App() {
       updated.percusGlobalText = generatePercusGlobalText(updated.percus || []);
       return updated;
     }
-    const mobilier = calculateMobilier(p.orchestre, p.percus, chefOptions(p.sansChef));
-    const updated = notation ? { ...p, effectif: notation } : { ...p };
-    if (mobilier) {
-      // Preserve manually edited chaisesSpeciales and autresStands
-      const prev = p.mobilier || {};
-      if (prev.general && Array.isArray(prev.general.chaisesSpeciales)) {
-        mobilier.general.chaisesSpeciales = prev.general.chaisesSpeciales;
-      }
-      if (prev.stands && prev.stands.autresCustom) {
-        mobilier.stands.autresCustom = prev.stands.autresCustom;
-      }
-      updated.mobilier = mobilier;
-    }
+    // Mobilier recalculé avec les réglages, en gardant les lignes ajoutées à la main (voir mobilierUi.js)
+    const updated = recalculerMobilier(notation ? { ...p, effectif: notation } : { ...p }, concert);
     // Always regenerate percussion global text
     updated.percusGlobalText = generatePercusGlobalText(updated.percus || []);
     return updated;
@@ -1908,6 +1899,18 @@ export default function App() {
       try {
         const localData = await extractFromFile(file);
         const data = await enrichWithAi(localData);
+        // Plan de détail percussion seul : on propose de l'ajouter à une pièce existante plutôt que de créer une pièce vide.
+        if (data.detailPercussion && pieces.length > 0 && data.percus.length > 0) {
+          const liste = pieces.map((p, i) => `${i + 1}. ${p.titre || "Sans titre"}`).join("\n");
+          const rep = prompt(`Ce document est un plan de percussions seul.\nÀ quelle pièce l'ajouter ?\n\n${liste}\n\nTape son numéro, ou laisse vide pour créer une pièce à part.`);
+          const n = parseInt(rep, 10);
+          if (n >= 1 && n <= pieces.length) {
+            ajouterPercusAPiece(pieces[n - 1].id, data, file.name);
+            setPieceId(pieces[n - 1].id);
+            setScreen("piece");
+            return;
+          }
+        }
         const percusList = data.percus.length > 0
             ? data.percus.map((p, i) => ({
                 id: `p${i + 1}`,
@@ -1926,10 +1929,13 @@ export default function App() {
           date: data.date || "",
           effectif: data.effectif || "",
           effectifDetail: data.effectifDetail || null,
+          // Ligne écrite sur le plan (si remise en ordre Daniels) et percussionnistes lus (« T+2 »)
+          ...(data.effectifBrut ? { effectifBrut: data.effectifBrut } : {}),
+          ...(data.effectifPercus ? { effectifPercus: data.effectifPercus } : {}),
           orchestre: data.orchestre || null,
           // sansChef à trois états : true / false lus, null = inconnu (jamais déduit d'une absence)
           sansChef: typeof data.sansChef === "boolean" ? data.sansChef : null,
-          mobilier: data.orchestre ? calculateMobilier(data.orchestre, percusList, chefOptions(data.sansChef)) : null,
+          mobilier: data.orchestre ? calculateMobilier(data.orchestre, percusList, optionsMobilier({ sansChef: data.sansChef, effectifPercus: data.effectifPercus }, concert)) : null,
           // Mobilier lu sur le plan par l'IA : champ séparé, jamais mélangé au mobilier calculé ci-dessus
           mobilierObserve: Array.isArray(data.mobilierObserve) ? data.mobilierObserve : [],
           // État de la lecture IA (bandeau « à vérifier » tant que l'utilisateur ne l'a pas fermé)
@@ -2019,6 +2025,55 @@ export default function App() {
         }
       } catch (err) {
         alert("Erreur : " + err.message);
+      } finally {
+        setPdfLoading(false);
+      }
+    };
+    input.click();
+  }
+
+  // ── Ajoute les postes de percussion d'une lecture à une pièce existante, puis recalcule son mobilier ──
+  function ajouterPercusAPiece(targetPieceId, data, nomFichier) {
+    const lus = Array.isArray(data.percus) ? data.percus : [];
+    if (lus.length === 0) {
+      alert("Aucun poste de percussion n'a pu être lu sur ce plan. Rien n'a été ajouté.");
+      return;
+    }
+    const { ajoutes, ignores } = ajouterPoles((pieces.find((p) => p.id === targetPieceId) || {}).percus, lus, uid);
+    updatePiece(targetPieceId, (p) => {
+      const r = ajouterPoles(p.percus, lus, uid);
+      const plansNeufs = data.planDataUrls?.length > 0 ? data.planDataUrls : (data.planDataUrl ? [data.planDataUrl] : []);
+      const suivant = {
+        ...p,
+        percus: r.percus,
+        percusGlobalText: generatePercusGlobalText(r.percus),
+        ...(plansNeufs.length > 0 ? { plans: [...(p.plans || []), ...plansNeufs], planDataUrl: plansNeufs[plansNeufs.length - 1] } : {}),
+      };
+      return recalculerMobilier(suivant, concert);
+    });
+    const nonVerifies = lus.some((x) => x && x.nonVerifie);
+    alert(
+      `${ajoutes} poste${ajoutes > 1 ? "s" : ""} de percussion ajouté${ajoutes > 1 ? "s" : ""}` +
+      (ignores > 0 ? ` (${ignores} déjà présent${ignores > 1 ? "s" : ""}, non répété${ignores > 1 ? "s" : ""})` : "") + "." +
+      (nonVerifies ? "\nLecture locale seulement : ces postes sont marqués « non vérifié »." : "")
+    );
+  }
+
+  // ── Bouton « Ajouter un plan de percussions » sur une pièce : même lecture que l'import (locale, puis IA si en ligne) ──
+  async function handleAddPercusPlan(targetPieceId) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".pdf,.jpg,.jpeg,.png,.txt";
+    input.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      setPdfLoading(true);
+      try {
+        const localData = await extractFromFile(file);
+        const data = await enrichWithAi(localData);
+        ajouterPercusAPiece(targetPieceId, data, file.name);
+      } catch (err) {
+        alert("Erreur lors de la lecture du plan de percussions : " + err.message);
       } finally {
         setPdfLoading(false);
       }
@@ -3088,6 +3143,11 @@ export default function App() {
                 />
               </div>
             ))}
+            {piece.effectifBrut && piece.effectifBrut !== piece.effectif && (
+              <div style={{ fontSize: 11, color: "#78716C", marginTop: 4, paddingLeft: 76, lineHeight: 1.4 }}>
+                Écrit sur le plan : <span style={{ fontFamily: "monospace" }}>{piece.effectifBrut}</span>
+              </div>
+            )}
           </div>
 
           {/* Plans (PDF rendered images) */}
@@ -3119,13 +3179,20 @@ export default function App() {
           )}
 
           {/* Action buttons */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
             <button
               onClick={() => handleAddPlan(piece.id)}
               disabled={pdfLoading}
               style={{ ...S.btnSecondary, flex: 1, fontSize: 12, padding: "8px 10px" }}
             >
               {pdfLoading ? "⏳..." : "📄 Ajouter plan"}
+            </button>
+            <button
+              onClick={() => handleAddPercusPlan(piece.id)}
+              disabled={pdfLoading}
+              style={{ ...S.btnSecondary, flex: 1, fontSize: 12, padding: "8px 10px" }}
+            >
+              🥁 Ajouter un plan de percussions
             </button>
             <button
               onClick={() => setZoneSelectMode({ pieceId: piece.id, couleur: piece.couleur })}
@@ -3397,12 +3464,16 @@ export default function App() {
                   • {m.type} : <strong>{Number.isInteger(m.qte) ? m.qte : "?"}</strong>{m.details ? <span style={{ color: "#78716C" }}> ({m.details})</span> : null}
                 </div>
               ))}
+              <EcartsPlan
+                mobilier={piece.mobilier || (piece.orchestre ? calculateMobilier(piece.orchestre, piece.percus, optionsMobilier(piece, concert)) : null)}
+                observe={piece.mobilierObserve}
+              />
             </div>
           )}
 
           {/* ── 📦 Mobilier section ── */}
           {piece.orchestre && (() => {
-            const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, chefOptions(piece.sansChef));
+            const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, optionsMobilier(piece, concert));
             if (!mob) return null;
             const isMobOpen = percuId === "mobilier";
             const isEditing = mobilierEditing === piece.id;
@@ -3410,7 +3481,7 @@ export default function App() {
             // ── Helper: update mobilier from editor ──
             function updateMob(updater) {
               updatePiece(piece.id, (p) => {
-                const m = ensureMobilierStructure(p.mobilier || calculateMobilier(p.orchestre, p.percus, chefOptions(p.sansChef)));
+                const m = ensureMobilierStructure(p.mobilier || calculateMobilier(p.orchestre, p.percus, optionsMobilier(p, concert)));
                 updater(m);
                 return { ...p, mobilier: m };
               });
@@ -3420,7 +3491,7 @@ export default function App() {
             function getLiveMob() {
               const p = pieces.find(pp => pp.id === piece.id);
               if (!p) return "";
-              const m = p.mobilier || calculateMobilier(p.orchestre, p.percus, chefOptions(p.sansChef));
+              const m = p.mobilier || calculateMobilier(p.orchestre, p.percus, optionsMobilier(p, concert));
               return m ? generateMobilierStandaloneText({ ...p, mobilier: m }) : "";
             }
 
@@ -3430,6 +3501,7 @@ export default function App() {
               { key: "bois", label: "🎵 Bois" },
               { key: "cuivres", label: "🎺 Cuivres" },
               { key: "percus", label: "🥁 Percussions" },
+              { key: "speciaux", label: "⭐ Stands spéciaux" },
               { key: "autres", label: "➕ Autres" },
             ];
 
@@ -3463,6 +3535,12 @@ export default function App() {
                 {/* ── VIEW MODE (read-only) ── */}
                 {isMobOpen && !isEditing && (
                   <div style={{ padding: "10px 4px 4px" }}>
+                    <ReglagesMobilier
+                      key={piece.id}
+                      piece={piece}
+                      concert={concert}
+                      onSave={(reglages, pourTout) => updateConcert(concert.id, (c) => appliquerReglages(c, piece.id, reglages, pourTout))}
+                    />
                     {/* MOBILIER GÉNÉRAL */}
                     <div style={{
                       background: col.bg, border: `1px solid ${col.hex}33`, borderRadius: 8,
@@ -3473,6 +3551,7 @@ export default function App() {
                         <div>• Pupitres : <strong>{mob.general.pupitres}</strong></div>
                         <div>• Chaises normales : <strong>{mob.general.chaisesNormales}</strong></div>
                         <div>• Chaises hautes : <strong>{mob.general.chaisesHautesDetail || mob.general.chaisesHautes}</strong></div>
+                        <LignesMobilierPlus general={mob.general} />
                         {mob.general.quantitesInconnues > 0 && (
                           <div style={{ fontSize: 12, color: "#92400E" }}>• ? {mob.general.quantitesInconnues} ligne(s) de l'effectif sans quantité écrite : non comptée(s) ci-dessus</div>
                         )}
@@ -3525,6 +3604,8 @@ export default function App() {
                       );
                     })}
 
+                    <InfosMobilier infos={mob.infos} />
+
                     {/* Custom autres stands */}
                     {(mob.stands.autresCustom || []).filter(s => s.qty > 0).length > 0 && (
                       <div style={{ marginBottom: 8 }}>
@@ -3541,7 +3622,7 @@ export default function App() {
 
                 {/* ── EDIT MODE ── */}
                 {isMobOpen && isEditing && (() => {
-                  const editMob = piece.mobilier || ensureMobilierStructure(calculateMobilier(piece.orchestre, piece.percus, chefOptions(piece.sansChef)));
+                  const editMob = piece.mobilier || ensureMobilierStructure(calculateMobilier(piece.orchestre, piece.percus, optionsMobilier(piece, concert)));
                   const liveText = generateMobilierStandaloneText({ ...piece, mobilier: editMob });
 
                   return (
@@ -3801,7 +3882,7 @@ export default function App() {
                           onClick={() => {
                             // Force recalc: remove _edited, recalculate mobilier
                             updatePiece(piece.id, (p) => {
-                              const newMob = calculateMobilier(p.orchestre, p.percus, chefOptions(p.sansChef));
+                              const newMob = calculateMobilier(p.orchestre, p.percus, optionsMobilier(p, concert));
                               if (newMob) newMob._edited = false;
                               return { ...p, mobilier: newMob };
                             });
