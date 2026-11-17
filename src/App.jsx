@@ -187,13 +187,28 @@ function ExportAllButton({ style, label = "Exporter toutes mes données", noteSt
 export function SyncBanner() {
   const status = useSyncStatus();
   const info = bannerInfo(status);
+  // Un encart d'alerte ne doit jamais cacher les plans : il s'affiche replié en pastille,
+  // se déploie au toucher et se referme (choix gardé pour la session).
+  const [ouvert, setOuvert] = useState(false);
   if (!info) return null;
   const alarm = info.tone === "alarm";
   const color = alarm ? "#991B1B" : info.tone === "warn" ? "#92400E" : "#57534E";
   const background = alarm ? "#FEF2F2" : info.tone === "warn" ? "#FFFBEB" : "#F5F5F4";
+  if (info.card && !ouvert) {
+    const court = info.kind === "oversize" ? "Trop lourd pour le compte · gardé sur le téléphone"
+      : info.kind === "degraded" ? "Mémoire du téléphone lente · modifications gardées"
+      : info.kind === "backupFailed" ? "Copie de secours impossible · données gardées"
+      : info.text;
+    return (
+      <div onClick={() => setOuvert(true)} role="status" data-testid={`sync-${info.kind}`} style={S.syncBanner(color, background, false)}>
+        {court} · détails ▸
+      </div>
+    );
+  }
   if (info.card) {
     return (
       <div role="alert" data-testid={`sync-${info.kind}`} style={S.syncBanner(color, background, true)}>
+        <button onClick={() => setOuvert(false)} aria-label="Fermer" style={{ float: "right", marginLeft: 8, border: "none", background: "transparent", color, fontSize: 18, fontWeight: 700, lineHeight: 1, cursor: "pointer", minWidth: 32, minHeight: 32 }}>×</button>
         <div>{info.text}</div>
         {info.action === "export" && (
           <ExportAllButton style={S.syncBannerBtn(color)} label="Exporter toutes mes données" noteStyle={{ ...S.exportNote, color }} />
