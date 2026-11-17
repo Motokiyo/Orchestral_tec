@@ -153,7 +153,7 @@ export function generatePercusGlobalText(percus) {
 }
 
 // ── Generate mobilier text section ──
-function generateMobilierText(mob) {
+export function generateMobilierText(mob) {
   if (!mob) return "[Aucun mobilier]\n";
   const lines = [];
 
@@ -290,7 +290,7 @@ export function downloadMobilierTxt(piece) {
 }
 
 // ── Generate orchestre text section ──
-function generateOrchestreText(orchestre) {
+export function generateOrchestreText(orchestre) {
   if (!orchestre) return "[Aucun orchestre]\n";
   const sections = [
     { key: "bois", label: "BOIS" },
@@ -437,7 +437,7 @@ export function applyWatermark(canvas, ctx, opts) {
   const y = canvas.height - bandH / 2;
   ctx.font = `bold ${Math.round(bandH * 0.4)}px -apple-system, sans-serif`;
   ctx.textAlign = "left";
-  ctx.fillText(`${titre} — ${percuNom} — ${zone}`, 16, y);
+  ctx.fillText([titre, percuNom, zone].filter(Boolean).join(" - "), 16, y);
 
   // Number
   ctx.font = `bold ${Math.round(bandH * 0.5)}px -apple-system, sans-serif`;

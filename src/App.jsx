@@ -10,7 +10,8 @@ import { LignesMobilierPlus, InfosMobilier, EcartsPlan, ReglagesMobilier } from 
 import { bannerInfo, reloadReportText, exportReportText, noteStockage } from "./syncUi.js";
 import { shrinkPlanForStorage } from "./planImages.js";
 import { PlanImage } from "./PlanImage.jsx";
-import JSZip from "jszip";
+import { SavePhotosButton, ArchiveModal } from "./ArchiveUi.jsx";
+import { bakeWatermark, downloadPiecePhotosZip, downloadConcertPhotosZip } from "./photoExport.js";
 
 // ── De-duplicate piece ids across all concerts so photos (which are stored in a
 // single map keyed by piece id) never bleed from one concert into another.
@@ -83,39 +84,6 @@ function importImageFile() {
     };
     input.click();
   });
-}
-
-// ── Bake watermark onto image for export/download ──
-function bakeWatermark(rawDataUrl, watermarkOpts) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0);
-      applyWatermark(canvas, ctx, watermarkOpts);
-      resolve(canvas.toDataURL("image/jpeg", 0.85));
-    };
-    img.onerror = () => resolve(rawDataUrl);
-    img.src = rawDataUrl;
-  });
-}
-
-// ── Helper: dataUrl → Blob ──
-function dataUrlToBlob(dataUrl) {
-  const [header, b64] = dataUrl.split(",");
-  const mime = header.match(/:(.*?);/)?.[1] || "image/jpeg";
-  const bin = atob(b64);
-  const arr = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-  return new Blob([arr], { type: mime });
-}
-
-// ── Helper: sanitize filename part ──
-function sanitize(str) {
-  return (str || "Sans_titre").replace(/[/\\?%*:|"<>]/g, "_").replace(/\s+/g, "_");
 }
 
 // ── Offline session ──
@@ -823,91 +791,6 @@ function omrMetaInputStyle(strong = false) {
     outline: "none",
     background: "#fff",
   };
-}
-
-// ── Download photos as ZIP (piece level) ──
-async function downloadPiecePhotosZip(piece, photosList, onProgress) {
-  if (!photosList || photosList.length === 0) return;
-  const zip = new JSZip();
-  const col = BARNIER[piece.couleur] || BARNIER.blanc;
-
-  for (let i = 0; i < photosList.length; i++) {
-    const ph = photosList[i];
-    const percu = piece.percus?.find((r) => r.id === ph.percuId);
-    const wmOpts = {
-      titre: piece.titre || "",
-      percuNom: percu?.nom || "",
-      zone: ph.zone || "",
-      num: ph.num || i + 1,
-      total: ph.total || photosList.length,
-      couleur: col,
-    };
-    const baked = await bakeWatermark(ph.dataUrl, wmOpts);
-    const blob = dataUrlToBlob(baked);
-    const fname = `${sanitize(piece.titre)}_${sanitize(percu?.nom || "Percu")}_${sanitize(ph.zone || "Photo")}_${i + 1}.jpg`;
-    zip.file(fname, blob);
-    if (onProgress) onProgress(i + 1, photosList.length);
-  }
-
-  const content = await zip.generateAsync({ type: "blob" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(content);
-  a.download = `${sanitize(piece.titre)}_photos.zip`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
-}
-
-// ── Download photos as ZIP (concert level, multi-piece) ──
-async function downloadConcertPhotosZip(concert, pieces, photos, selectedPieceIds, onProgress) {
-  const zip = new JSZip();
-  let total = 0;
-  let done = 0;
-
-  // Count total photos
-  for (const pid of selectedPieceIds) {
-    total += (photos[pid] || []).length;
-  }
-  if (total === 0) return;
-
-  for (const pid of selectedPieceIds) {
-    const piece = pieces.find((p) => p.id === pid);
-    if (!piece) continue;
-    const piecePhotos = photos[pid] || [];
-    if (piecePhotos.length === 0) continue;
-
-    const folder = zip.folder(sanitize(piece.titre));
-    const col = BARNIER[piece.couleur] || BARNIER.blanc;
-
-    for (let i = 0; i < piecePhotos.length; i++) {
-      const ph = piecePhotos[i];
-      const percu = piece.percus?.find((r) => r.id === ph.percuId);
-      const wmOpts = {
-        titre: piece.titre || "",
-        percuNom: percu?.nom || "",
-        zone: ph.zone || "",
-        num: ph.num || i + 1,
-        total: ph.total || piecePhotos.length,
-        couleur: col,
-      };
-      const baked = await bakeWatermark(ph.dataUrl, wmOpts);
-      const blob = dataUrlToBlob(baked);
-      const fname = `${sanitize(piece.titre)}_${sanitize(percu?.nom || "Percu")}_${sanitize(ph.zone || "Photo")}_${i + 1}.jpg`;
-      folder.file(fname, blob);
-      done++;
-      if (onProgress) onProgress(done, total);
-    }
-  }
-
-  const content = await zip.generateAsync({ type: "blob" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(content);
-  a.download = `${sanitize(concert.titre)}_photos.zip`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
 }
 
 // ── Photo Download Modal (piece level) ──
@@ -2573,6 +2456,10 @@ export default function App() {
             <ExportAllButton style={S.exportBtn} />
             <div style={S.exportNote}>Un fichier de sauvegarde (concerts, photos, partitions) est téléchargé sur ce téléphone. Rien n'est envoyé.</div>
             <NoteStockage />
+            <div style={{ marginTop: 10 }}>
+              <SavePhotosButton concerts={concerts} photos={photos} />
+              <div style={S.exportNote}>Un fichier zip des photos, avec le filigrane, est mis dans Téléchargements : un dossier par concert, puis par pièce. Rien n'est envoyé.</div>
+            </div>
           </div>
           {omrScores.length > 0 && (
             <div style={{ marginTop: 18 }}>
@@ -3076,8 +2963,14 @@ export default function App() {
               <button onClick={() => setShowPhotoDownload("concert")} style={{ ...S.btnSecondary, marginTop: 6 }}>
                 📥 Télécharger photos du concert
               </button>
+              <div style={{ marginTop: 6 }}>
+                <SavePhotosButton concerts={[concert]} photos={photos} concertSeul style={S.btnSecondary} />
+              </div>
             </>
           )}
+          <button onClick={() => setShowPhotoDownload("archive")} style={{ ...S.btnPrimary("#1C1917"), marginTop: 8, width: "100%" }}>
+            📁 Préparer le dossier pour la salle
+          </button>
 
           {/* Concert notes */}
           <textarea
@@ -3093,6 +2986,9 @@ export default function App() {
           />
         </div>
         <NavBar active="pieces" onPieces={goHome} onPhotos={() => goGallery(null)} onTxt={() => { setPieceId(null); setScreen("txt"); }} />
+        {showPhotoDownload === "archive" && concert && (
+          <ArchiveModal concert={concert} photos={photos} onClose={() => setShowPhotoDownload(null)} />
+        )}
         {showPhotoDownload === "concert" && concert && (
           <PhotoDownloadConcertModal concert={concert} pieces={pieces} photos={photos} onClose={() => setShowPhotoDownload(null)} />
         )}
