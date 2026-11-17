@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { openDB } from "idb";
+import {
+  buildImageIndex, collectImageRefs, downloadPlanImage, externalizeImages, prepareConcertsUpload,
+  rehydrateImages, rememberSentImages,
+} from "./planImages.js";
 
 const DB_NAME = "orkmap-db";
 const DB_VERSION = 4;
@@ -156,6 +160,46 @@ function mergeConcerts(localData, remoteData, email) {
 
 function remoteConcertPayload(data, email) {
   return data.map((item) => withOwner(item, email));
+}
+
+// ── Images des plans reçues du compte (références « orkimg: », voir planImages.js) ──
+// Une référence dont l'image est sur le téléphone (même empreinte, dans les concerts locaux) est
+// remplacée par cette image, sans réseau. Les autres restent des références : JAMAIS une référence
+// ne remplace une image locale. Les références reçues sont des images que le compte possède déjà :
+// elles sont notées « connues du compte » pour ne pas être renvoyées.
+export async function resolveImagesFromDevice(remoteData, localList, email) {
+  const refs = collectImageRefs(remoteData);
+  if (!refs.size) return remoteData;
+  rememberSentImages(email, refs);
+  const index = await buildImageIndex(localList);
+  return rehydrateImages(remoteData, index).data;
+}
+
+// Télécharge les images manquantes, une par une. S'arrête à la première erreur réseau (on réessaiera) ;
+// une image absente du compte (404) est signalée dans `gone`. Renvoie Map<empreinte, data URL>.
+export async function downloadMissingImages(hashes, { email, gone = new Set(), stillValid = () => true } = {}) {
+  const found = new Map();
+  for (const hash of hashes) {
+    if (gone.has(hash)) continue;
+    if (isOffline() || !stillValid()) break;
+    try {
+      const dataUrl = await downloadPlanImage(hash, { onUnauthorized: () => setSessionExpired(true) });
+      if (dataUrl === null) gone.add(hash);
+      else found.set(hash, dataUrl);
+    } catch (err) {
+      console.warn("[OrkMap] Plan image download deferred:", err?.message || err);
+      break;
+    }
+  }
+  if (found.size) rememberSentImages(email, found.keys());
+  return found;
+}
+
+function prepareConcerts(email) {
+  return (list) => prepareConcertsUpload(email, list, {
+    maxBytes: MAX_PAYLOAD_BYTES,
+    onUnauthorized: () => setSessionExpired(true),
+  });
 }
 
 function mergeRecordsById(localData, remoteData, email) {
@@ -346,8 +390,9 @@ async function runExclusive(key, fn) {
   }
 }
 
-function setOversize(email, type, bytes, rev) {
-  oversize.set(`${email}:${type}`, { type, bytes, rev });
+// what : « plan » quand c'est une seule image de plan qui dépasse (et non le JSON entier).
+function setOversize(email, type, bytes, rev, what = null) {
+  oversize.set(`${email}:${type}`, { type, bytes, rev, what });
   notifySyncStatus();
 }
 
@@ -361,7 +406,9 @@ function clearOversize(email, type) {
 // Trop volumineux (> MAX_PAYLOAD_BYTES) : rien n'est envoyé, la marque « en
 // attente » est gardée (les données restent sur l'appareil) et l'état est exposé.
 // Tant que rien n'a changé (même révision), on ne recalcule pas toutes les minutes.
-export function pushPending({ email, type, getPayload, absorbRemote }) {
+// `prepare` (concerts) : transforme la liste avant envoi (images des plans envoyées une par une et
+// remplacées par leur référence, voir planImages.js). S'il échoue, rien n'est envoyé, la marque reste.
+export function pushPending({ email, type, getPayload, absorbRemote, prepare }) {
   return runExclusive(`${email}:${type}`, async () => {
     const pending = readPending(email, type);
     if (!pending || isOffline()) return;
@@ -370,14 +417,15 @@ export function pushPending({ email, type, getPayload, absorbRemote }) {
     // send another account's (or an empty) list in its place.
     const payload = getPayload();
     if (payload === null) return;
+    const send = async (list) => saveRemote(type, prepare ? await prepare(list) : list, pending.removedIds);
     try {
-      await saveRemote(type, payload, pending.removedIds);
+      await send(payload);
       clearOversize(email, type);
       settlePending(email, type, pending);
     } catch (err) {
       if (err.tooLarge) {
         console.warn(`[OrkMap] ${type} too large to sync (${err.bytes} bytes), kept on device`);
-        setOversize(email, type, err.bytes, pending.rev);
+        setOversize(email, type, err.bytes, pending.rev, err.what);
         return;
       }
       if (err.status !== 409 || !absorbRemote) {
@@ -389,12 +437,12 @@ export function pushPending({ email, type, getPayload, absorbRemote }) {
         if (remote.available) await absorbRemote(remote.data, pending.removedIds);
         const merged = getPayload();
         if (merged === null) return;
-        await saveRemote(type, merged, pending.removedIds);
+        await send(merged);
         clearOversize(email, type);
         settlePending(email, type, pending);
       } catch (retryErr) {
         if (retryErr.tooLarge) {
-          setOversize(email, type, retryErr.bytes, pending.rev);
+          setOversize(email, type, retryErr.bytes, pending.rev, retryErr.what);
           return;
         }
         console.warn(`[OrkMap] ${type} sync conflict unresolved:`, retryErr.message);
@@ -471,16 +519,21 @@ export function requestSyncRetry() {
   window.dispatchEvent(new Event(SYNC_RETRY_EVENT));
 }
 
+// Un type bloqué « trop lourd » n'est pas compté : rien n'est en cours d'envoi pour lui, et le bandeau
+// ne doit pas afficher « Envoi des modifications… » pour toujours (cas des photos, jamais envoyées).
 function countPending() {
+  const blocked = (key) => oversize.has(String(key).slice(PENDING_PREFIX.length));
   let count = 0;
   try {
     for (let index = 0; index < localStorage.length; index += 1) {
-      if (String(localStorage.key(index)).startsWith(PENDING_PREFIX)) count += 1;
+      const key = String(localStorage.key(index));
+      if (key.startsWith(PENDING_PREFIX) && !memoryPending.has(key) && !blocked(key)) count += 1;
     }
   } catch {
-    return memoryPending.size;
+    count = 0;
   }
-  return count + memoryPending.size;
+  for (const key of memoryPending.keys()) if (!blocked(key)) count += 1;
+  return count;
 }
 
 export function readSyncStatus() {
@@ -490,7 +543,7 @@ export function readSyncStatus() {
     sessionExpired,
     backupFailed: syncFlags.backupFailed,
     degraded: syncFlags.degraded,
-    oversize: Array.from(oversize.values()).map(({ type, bytes }) => ({ type, bytes })),
+    oversize: Array.from(oversize.values()).map(({ type, bytes, what }) => ({ type, bytes, what })),
   };
 }
 
@@ -989,6 +1042,10 @@ export function useConcerts(initialConcerts, userEmail) {
   const degradedRef = useRef(false);
   const degradedBaseRef = useRef(new Map());
   const loadTokenRef = useRef(0);
+  // Images des plans à télécharger : un seul passage à la fois, pas pendant un rechargement.
+  const hydratingRef = useRef(false);
+  const reloadingRef = useRef(false);
+  const goneImagesRef = useRef(new Set());
   const email = normalizeEmail(userEmail);
   const setConcerts = useCallback((data) => {
     latestRef.current = data;
@@ -1031,6 +1088,7 @@ export function useConcerts(initialConcerts, userEmail) {
       if (readyRef.current && readyRef.current !== email) setConcerts([]);
       readyRef.current = "";
       degradedRef.current = false;
+      goneImagesRef.current = new Set();
       setSyncFlag("degraded", false);
       setLoaded(false);
       setLoadedFor("");
@@ -1093,8 +1151,11 @@ export function useConcerts(initialConcerts, userEmail) {
           const remote = await withTimeout(loadRemote(SYNC_TYPES.concerts), REMOTE_LOAD_TIMEOUT_MS, "Concert sync load");
           if (remote.available && Array.isArray(remote.data)) {
             await absorbRemote(remote.data, readPending(email, SYNC_TYPES.concerts)?.removedIds || []);
-            if (canSeedRemoteFromLocal && JSON.stringify(remote.data) !== JSON.stringify(remoteConcertPayload(latestRef.current, email))) {
-              markPending(email, SYNC_TYPES.concerts);
+            // Le compte garde des références d'images : on compare avec ce qui PARTIRAIT (images
+            // remplacées par leur référence), sinon chaque ouverture renverrait tout.
+            if (canSeedRemoteFromLocal) {
+              const outgoing = (await externalizeImages(remoteConcertPayload(latestRef.current, email))).data;
+              if (JSON.stringify(remote.data) !== JSON.stringify(outgoing)) markPending(email, SYNC_TYPES.concerts);
             }
           } else if (remote.available && canSeedRemoteFromLocal && localCount > 0) {
             markPending(email, SYNC_TYPES.concerts);
@@ -1184,20 +1245,52 @@ export function useConcerts(initialConcerts, userEmail) {
   // Bring server records into the current list (local version wins on the same
   // id), skipping the ones deleted on this device and not yet synced. Built on
   // the latest list, so an edit made while the server answered is kept.
+  // Les références d'images reçues sont d'abord remplacées par les images du téléphone.
   const absorbRemote = useCallback(async (remoteData, removedIds = []) => {
     if (!Array.isArray(remoteData)) return;
-    const mergedData = mergeConcerts(latestRef.current, withoutRemoved(remoteData, removedIds), email);
+    const resolved = await resolveImagesFromDevice(remoteData, latestRef.current, email);
+    const mergedData = mergeConcerts(latestRef.current, withoutRemoved(resolved, removedIds), email);
     setConcerts(mergedData);
     writeConcertsBackup(email, mergedData, { removedIds });
     await withTimeout(saveLocal(mergedData), LOCAL_LOAD_TIMEOUT_MS, "Concert cache save");
   }, [email, saveLocal, setConcerts]);
 
-  const flush = useCallback(() => pushPending({
-    email,
-    type: SYNC_TYPES.concerts,
-    getPayload: () => (readyRef.current === email && !degradedRef.current ? remoteConcertPayload(latestRef.current, email) : null),
-    absorbRemote,
-  }), [email, absorbRemote]);
+  // Références restées sans image (concerts venus du compte, téléphone hors ligne à ce moment-là) :
+  // téléchargées en arrière-plan quand le réseau est là, puis rangées dans IndexedDB avec les concerts.
+  const hydrateMissing = useCallback(async () => {
+    if (hydratingRef.current || !email || isOffline()) return;
+    const usable = () => readyRef.current === email && !degradedRef.current && !reloadingRef.current;
+    if (!usable()) return;
+    const wanted = Array.from(collectImageRefs(latestRef.current)).filter((hash) => !goneImagesRef.current.has(hash));
+    if (!wanted.length) return;
+    hydratingRef.current = true;
+    try {
+      const found = await downloadMissingImages(wanted, { email, gone: goneImagesRef.current, stillValid: usable });
+      if (!found.size || !usable()) return;
+      const { data, changed } = rehydrateImages(latestRef.current, found);
+      if (!changed) return;
+      setConcerts(data);
+      writeConcertsBackup(email, data);
+      try {
+        await saveLocal(data);
+      } catch (err) {
+        console.warn("[OrkMap] Downloaded plan images not saved yet:", err);
+      }
+    } finally {
+      hydratingRef.current = false;
+    }
+  }, [email, saveLocal, setConcerts]);
+
+  const flush = useCallback(async () => {
+    await pushPending({
+      email,
+      type: SYNC_TYPES.concerts,
+      getPayload: () => (readyRef.current === email && !degradedRef.current ? remoteConcertPayload(latestRef.current, email) : null),
+      absorbRemote,
+      prepare: prepareConcerts(email),
+    });
+    hydrateMissing().catch((err) => console.warn("[OrkMap] Plan image hydration failed:", err));
+  }, [email, absorbRemote, hydrateMissing]);
 
   useSyncRetry(email, flush);
 
@@ -1272,6 +1365,7 @@ export function useConcerts(initialConcerts, userEmail) {
     if (degradedRef.current) return refuse("Le stockage du téléphone répond lentement : attends un instant, rien n'a été changé.");
     let reloadBase = [];
     let userChanges = null; // modifications faites par l'utilisateur pendant l'écriture du rechargement
+    reloadingRef.current = true;
     const result = await runSafeReload({
       email,
       isOffline,
@@ -1284,7 +1378,14 @@ export function useConcerts(initialConcerts, userEmail) {
       fetchServer: async () => {
         const remote = await withTimeout(loadRemote(SYNC_TYPES.concerts), REMOTE_LOAD_TIMEOUT_MS * 2, "Concert reload");
         if (!remote.available) throw new Error("synchronisation indisponible");
-        return remote.data;
+        if (!Array.isArray(remote.data)) return remote.data;
+        // Images : d'abord celles du téléphone, puis téléchargement des autres. Une image introuvable
+        // reste une référence (cadre « Plan non disponible »), le reste du rechargement se fait.
+        const fromDevice = await resolveImagesFromDevice(remote.data, latestRef.current, email);
+        const missing = collectImageRefs(fromDevice);
+        if (!missing.size) return fromDevice;
+        const found = await downloadMissingImages(missing, { email, gone: goneImagesRef.current });
+        return rehydrateImages(fromDevice, found).data;
       },
       saveSafetyCopy: (list) => saveSafetyCopy(email, list),
       download: options.download === false ? null : async () => (await exportLocalDataToFile({ email })).filename,
@@ -1315,7 +1416,7 @@ export function useConcerts(initialConcerts, userEmail) {
         setConcerts(list);
         writeConcertsBackup(email, list, { removedIds });
       },
-    });
+    }).finally(() => { reloadingRef.current = false; });
     // Les concerts gardés parce qu'absents du compte partent vers le compte (ajout, jamais suppression).
     // Même chose si l'utilisateur a modifié pendant l'écriture : un envoi parti entre-temps portait
     // l'ancienne liste, la liste finale est renvoyée.

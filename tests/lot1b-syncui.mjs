@@ -12,7 +12,8 @@ test("rien à afficher quand tout est synchronisé", () => assert.equal(bannerIn
 test("oversize : message exact, bouton d'export, jamais « Envoi en cours »", () => {
   const i = bannerInfo({ ...ok, pending: 1, oversize: [{ type: "concerts", bytes: 4.6 * 1048576 }] });
   assert.equal(i.kind, "oversize");
-  assert.equal(i.text, "Tes données sont trop lourdes pour être envoyées au compte (4,6 Mo). Elles restent sur ce téléphone. Exporte-les.");
+  // Lot 5 (17/11/2026) : le message dit de quel type il s'agit (avant : « Tes données sont trop lourdes… »).
+  assert.equal(i.text, "Tes concerts sont trop lourds pour être envoyés au compte (4,6 Mo). Ils restent sur ce téléphone. Exporte-les.");
   assert.equal(i.action, "export");
   assert.ok(!/Envoi des modifications/.test(i.text));
 });

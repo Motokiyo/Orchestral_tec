@@ -12,14 +12,14 @@ export const config = {
   },
 };
 
-function supabaseConfig() {
+export function supabaseConfig() {
   const url = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
   if (!url || !key) return null;
   return { url, key };
 }
 
-async function supabaseFetch(path, options = {}) {
+export async function supabaseFetch(path, options = {}) {
   const config = supabaseConfig();
   if (!config) {
     const error = new Error("Supabase is not configured");
@@ -45,7 +45,9 @@ async function supabaseFetch(path, options = {}) {
   }
 
   if (resp.status === 204) return null;
-  return resp.json();
+  // « Prefer: return=minimal » : PostgREST répond 201 sans corps. Un corps vide n'est pas une erreur.
+  const text = await resp.text();
+  return text ? JSON.parse(text) : null;
 }
 
 function parseType(value) {
@@ -95,6 +97,31 @@ export function validateNonDestructiveSync(type, existingData, incomingData, rem
       throw error;
     }
   }
+}
+
+// Lot 5 : les images des plans voyagent à part (api/plan-image.js) et le JSON des concerts ne porte
+// plus que des références « orkimg:<sha256> ». Un ancien téléphone (version d'avant) peut encore
+// envoyer des concerts AVEC leurs images : c'est accepté tel quel tant que la requête passe (la
+// plateforme refuse au-delà de 4,5 Mo), on le note seulement dans le journal.
+const INLINE_IMAGE_MIN_CHARS = 4096;
+
+export function countInlineImages(value) {
+  let count = 0;
+  let chars = 0;
+  const visit = (v) => {
+    if (typeof v === "string") {
+      if (v.length >= INLINE_IMAGE_MIN_CHARS && v.startsWith("data:image/")) {
+        count += 1;
+        chars += v.length;
+      }
+    } else if (Array.isArray(v)) {
+      for (const item of v) visit(item);
+    } else if (v && typeof v === "object") {
+      for (const key of Object.keys(v)) visit(v[key]);
+    }
+  };
+  visit(value);
+  return { count, chars };
 }
 
 async function writeHistory(email, type, data, source) {
@@ -147,6 +174,10 @@ export default async function handler(req, res) {
       const incomingData = req.body?.data ?? null;
       const removedIds = Array.isArray(req.body?.removedIds) ? req.body.removedIds : [];
       validateNonDestructiveSync(type, existingRow?.data ?? null, incomingData, removedIds);
+      if (type === "concerts") {
+        const inline = countInlineImages(incomingData);
+        if (inline.count > 0) console.warn(`[orkmap-sync] concerts with ${inline.count} inline image(s) (${inline.chars} chars) accepted (older app version)`);
+      }
       await writeHistory(session.email, type, incomingData, "incoming");
       if (existingRow) await writeHistory(session.email, type, existingRow.data ?? null, "previous");
 

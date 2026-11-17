@@ -8,6 +8,7 @@ import { S } from "./styles.js";
 import { optionsMobilier, recalculerMobilier, appliquerReglages, ajouterPoles } from "./mobilierUi.js";
 import { LignesMobilierPlus, InfosMobilier, EcartsPlan, ReglagesMobilier } from "./MobilierBlocs.jsx";
 import { bannerInfo, reloadReportText, exportReportText } from "./syncUi.js";
+import { isImageRef } from "./planImages.js";
 import JSZip from "jszip";
 
 // ── De-duplicate piece ids across all concerts so photos (which are stored in a
@@ -2124,9 +2125,15 @@ export default function App() {
       return;
     }
     if (isOffline()) { alert(OFFLINE_AI_MESSAGE); return; }
+    // Seuls les plans dont l'image est sur ce téléphone partent à la lecture (pas les références « orkimg: »).
+    const plansLisibles = targetPiece.plans.filter((p) => !isImageRef(p));
+    if (!plansLisibles.length) {
+      alert("Les plans de cette pièce ne sont pas encore téléchargés sur ce téléphone. Réessaie dans un instant.");
+      return;
+    }
     setAiLoading(true);
     try {
-      const extracted = await extractWithGemini(targetPiece.plans, "concert", { totalPages: targetPiece.plans.length });
+      const extracted = await extractWithGemini(plansLisibles, "concert", { totalPages: plansLisibles.length });
       const ex = extracted || {};
       const autoFilled = [];
 
@@ -3155,12 +3162,20 @@ export default function App() {
             <div style={{ marginBottom: 10 }}>
               {(piece.plans || []).map((planUrl, idx) => (
                 <div key={idx} style={{ marginBottom: 6, borderRadius: 8, overflow: "hidden", border: `2px solid ${col.hex}33`, position: "relative" }}>
-                  <img
-                    src={planUrl}
-                    onClick={() => setFullPhoto({ id: `plan-${idx}`, dataUrl: planUrl })}
-                    style={{ width: "100%", display: "block", cursor: "pointer" }}
-                    alt={`Plan ${idx + 1}`}
-                  />
+                  {isImageRef(planUrl) ? (
+                    // Plan venu du compte dont l'image n'est pas encore sur ce téléphone (hors ligne) :
+                    // un cadre au lieu d'une image cassée ; elle se télécharge au retour du réseau.
+                    <div data-testid="plan-indisponible" style={{ padding: "28px 12px", textAlign: "center", background: "#F5F5F4", color: "#78716C", fontSize: 13, fontWeight: 600 }}>
+                      Plan non disponible hors ligne
+                    </div>
+                  ) : (
+                    <img
+                      src={planUrl}
+                      onClick={() => setFullPhoto({ id: `plan-${idx}`, dataUrl: planUrl })}
+                      style={{ width: "100%", display: "block", cursor: "pointer" }}
+                      alt={`Plan ${idx + 1}`}
+                    />
+                  )}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: col.bg, padding: "4px 10px" }}>
                     <span style={{ fontSize: 11, fontWeight: 600, color: col.hex }}>
                       Plan {(piece.plans || []).length > 1 ? `${idx + 1}/${(piece.plans || []).length}` : ""}

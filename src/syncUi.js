@@ -28,16 +28,31 @@ function networkInfo({ online, pending, sessionExpired }) {
   return null;
 }
 
+// Texte « trop lourd » selon ce qui bloque : concerts, une image de plan, partitions (ou inconnu).
+function oversizeText(list) {
+  const biggest = list.reduce((best, o) => ((Number(o?.bytes) || 0) > (Number(best?.bytes) || 0) ? o : best), list[0]);
+  const mo = formatMo(Number(biggest?.bytes) || 0);
+  if (biggest?.what === "plan") {
+    return `Un plan est trop lourd pour être envoyé au compte (${mo} Mo). Tes concerts restent sur ce téléphone et ne partent pas tant que ce plan est là. Exporte-les.`;
+  }
+  if (biggest?.type === "concerts") {
+    return `Tes concerts sont trop lourds pour être envoyés au compte (${mo} Mo). Ils restent sur ce téléphone. Exporte-les.`;
+  }
+  if (biggest?.type === "omr-scores") {
+    return `Tes partitions sont trop lourdes pour être envoyées au compte (${mo} Mo). Elles restent sur ce téléphone. Exporte-les.`;
+  }
+  return `Tes données sont trop lourdes pour être envoyées au compte (${mo} Mo). Elles restent sur ce téléphone. Exporte-les.`;
+}
+
 export function bannerInfo({ online, pending, sessionExpired, oversize, backupFailed, degraded } = {}) {
   const network = networkInfo({ online, pending, sessionExpired });
   const withNetwork = (info) => (network ? { ...info, also: network } : info);
-  const tooBig = Array.isArray(oversize) && oversize.length > 0;
-  if (tooBig) {
-    const bytes = oversize.reduce((max, o) => Math.max(max, Number(o?.bytes) || 0), 0);
-    return withNetwork({
-      kind: "oversize", tone: "alarm", action: "export", card: true,
-      text: `Tes données sont trop lourdes pour être envoyées au compte (${formatMo(bytes)} Mo). Elles restent sur ce téléphone. Exporte-les.`,
-    });
+  const list = Array.isArray(oversize) ? oversize.filter(Boolean) : [];
+  // Les photos n'ont jamais été envoyées au compte (chantier séparé) : un avis discret, pas une alarme.
+  const photosBig = list.filter((o) => o.type === "photos");
+  const dataBig = list.filter((o) => o.type !== "photos");
+  if (dataBig.length > 0) {
+    return withNetwork({ kind: "oversize", tone: "alarm", action: "export", card: true, text: oversizeText(dataBig) });
   }
   if (degraded) {
     return withNetwork({
@@ -47,6 +62,13 @@ export function bannerInfo({ online, pending, sessionExpired, oversize, backupFa
   }
   if (network) return network;
   if (pending) return { kind: "pending", tone: "neutral", action: "retry", card: false, text: "Envoi des modifications…" };
+  if (photosBig.length > 0) {
+    const bytes = photosBig.reduce((max, o) => Math.max(max, Number(o?.bytes) || 0), 0);
+    return {
+      kind: "oversizePhotos", tone: "neutral", action: "export", card: false,
+      text: `Photos gardées sur ce téléphone seulement (${formatMo(bytes)} Mo, trop lourdes pour le compte). Tu peux les exporter.`,
+    };
+  }
   // Copie de secours en mémoire du navigateur impossible (souvent la place, sur iPhone) : les données restent
   // dans la base du téléphone et sur le compte ; simple information discrète, jamais un encart d'alarme permanent.
   if (backupFailed) {
