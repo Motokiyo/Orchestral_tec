@@ -57,12 +57,19 @@ export function extractNumberFromItem(item) {
   return null;
 }
 
+// Une annotation entre crochets (« [Cel/Pno] ») précise un instrument déjà compté : ce n'est pas
+// une ligne de musiciens, elle n'est ni additionnée ni signalée « sans quantité ».
+export function isAnnotationItem(item) {
+  return typeof item === "string" && /^\s*\[[^\]]*\]\s*$/.test(item);
+}
+
 // ── Total d'une liste de lignes d'effectif : quantités lues + nombre de lignes sans quantité ──
 export function sumItemQuantities(items) {
   let total = 0;
   let unknown = 0;
   for (const it of items || []) {
     if (typeof it !== "string" || !it.trim()) continue;
+    if (isAnnotationItem(it)) continue;
     const n = extractNumberFromItem(it);
     if (n === null) unknown++; else total += n;
   }
@@ -90,11 +97,21 @@ export function formatMusicianTotal({ total, unknown }) {
   return total > 0 ? `${total} + ? (${lignes})` : `? (${lignes})`;
 }
 
+// ── Chef : trois états (sansChef vaut true, false ou null/absent = inconnu) ──
+// Un chef présent (sansChef === false) a son mobilier ; un chef absent (true) n'en a pas ;
+// un chef inconnu (null, ou champ absent) n'est PAS compté comme s'il était certain : le mobilier du
+// chef (podium, pupitre, chaise haute) est laissé de côté et signalé « à confirmer ».
+export function chefOptions(sansChef) {
+  if (sansChef === false) return { hasChef: true, chefInconnu: false };
+  if (sansChef === true) return { hasChef: false, chefInconnu: false };
+  return { hasChef: false, chefInconnu: true };
+}
+
 // ── Calculate mobilier (furniture) from orchestre + percus ──
 export function calculateMobilier(orchestre, percus, options = {}) {
   if (!orchestre) return null;
 
-  const { hasChef = false } = options;
+  const { hasChef = false, chefInconnu = false } = options;
 
   const boisItems = orchestre.bois || [];
   const cuivresItems = orchestre.cuivres || [];
@@ -207,6 +224,7 @@ export function calculateMobilier(orchestre, percus, options = {}) {
       chaisesHautesDetail,
       chaisesSpeciales: [],
       ...(quantitesInconnues > 0 ? { quantitesInconnues } : {}),
+      ...(chefInconnu && !hasChef ? { chefAConfirmer: true } : {}),
     },
     stands: {
       cordes: cordesStands,
@@ -240,7 +258,7 @@ export function generatePercusGlobalText(percus) {
   if (!percus || percus.length === 0) return "";
   let text = "";
   percus.forEach((pole, index) => {
-    text += `Pôle ${index + 1} : ${pole.nom}\n`;
+    text += `Pôle ${index + 1} : ${pole.nom}${pole.nonVerifie ? " (NON VÉRIFIÉ : lecture locale, pas lu par l'IA)" : ""}\n`;
     if (pole.items && pole.items.length > 0) {
       pole.items.forEach(item => {
         const nom = typeof item === "string" ? item : item.nom || "";
@@ -270,6 +288,9 @@ function generateMobilierText(mob) {
     lines.push("• Chaises hautes : " + (mob.general.chaisesHautesDetail || mob.general.chaisesHautes || 0));
     if (mob.general.quantitesInconnues > 0) {
       lines.push("• Lignes de l'effectif sans quantité (non comptées) : " + mob.general.quantitesInconnues);
+    }
+    if (mob.general.chefAConfirmer) {
+      lines.push("• Chef : présence non lue, à confirmer (podium, pupitre et chaise haute du chef NON comptés)");
     }
     const cs = mob.general.chaisesSpeciales;
     if (Array.isArray(cs) && cs.length > 0) {
@@ -338,7 +359,7 @@ export function generateMobilierObserveText(list) {
 // ── Generate standalone mobilier text (title + separator + content) ──
 export function generateMobilierStandaloneText(piece) {
   if (!piece) return "";
-  const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef });
+  const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, chefOptions(piece.sansChef));
   let text = "";
   text += "═".repeat(35) + "\n";
   text += "📦 MOBILIER — " + (piece.titre || "Sans titre") + "\n";
@@ -407,7 +428,7 @@ export function generatePieceText(piece) {
   text += "═".repeat(35) + "\n";
   text += "📦 MOBILIER\n";
   text += "═".repeat(35) + "\n\n";
-  const mob1 = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef });
+  const mob1 = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, chefOptions(piece.sansChef));
   text += generateMobilierText(mob1) + "\n";
   const observe1 = generateMobilierObserveText(piece.mobilierObserve);
   if (observe1) text += "\n" + observe1 + "\n";
@@ -454,7 +475,7 @@ export function generateTxt(piece) {
   text += "═".repeat(35) + "\n";
   text += "📦 MOBILIER\n";
   text += "═".repeat(35) + "\n\n";
-  const mob2 = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef });
+  const mob2 = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, chefOptions(piece.sansChef));
   text += generateMobilierText(mob2) + "\n";
   const observe2 = generateMobilierObserveText(piece.mobilierObserve);
   if (observe2) text += "\n" + observe2 + "\n";

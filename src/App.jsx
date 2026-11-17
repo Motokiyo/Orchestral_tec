@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
-import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, countOrchestreMusicians, calculateMobilier, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
+import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, countOrchestreMusicians, calculateMobilier, chefOptions, isAnnotationItem, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
 import { mergeAiIntoLocal, failedAiLocal, offlineAiLocal, aiFailedStatus, aiStatusFromResult, dismissAiStatus, aiBannerInfo } from "./aiImport.js";
 import { exportLocalDataForRecovery, exportLocalDataToFile, useConcerts, usePhotos, useOmrScores, useSyncStatus, setSessionExpired, requestSyncRetry, requestPersistentStorage } from "./useStorage.js";
@@ -167,7 +167,7 @@ function ExportAllButton({ style, label = "Exporter toutes mes données", noteSt
     e.stopPropagation();
     if (busy) return;
     setBusy(true); setNote("");
-    try { setNote(exportReportText(await exportLocalDataToFile())); }
+    try { setNote(exportReportText(await exportLocalDataToFile({ email: readLastEmail() }))); }
     catch (err) { setNote("L'export a échoué : " + (err?.message || err) + ". Rien n'a été changé."); }
     finally { setBusy(false); }
   }
@@ -194,6 +194,17 @@ export function SyncBanner() {
         <div>{info.text}</div>
         {info.action === "export" && (
           <ExportAllButton style={S.syncBannerBtn(color)} label="Exporter toutes mes données" noteStyle={{ ...S.exportNote, color }} />
+        )}
+        {info.also && (
+          info.also.action === "reconnect" && status.online ? (
+            <button onClick={() => window.dispatchEvent(new Event("orkmap-reconnect"))} data-testid={`sync-${info.also.kind}`} style={S.syncBannerBtn("#991B1B")}>
+              {info.also.text}
+            </button>
+          ) : (
+            <div onClick={() => requestSyncRetry()} data-testid={`sync-${info.also.kind}`} style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: "#92400E", cursor: "pointer" }}>
+              {info.also.text}
+            </div>
+          )
         )}
       </div>
     );
@@ -1126,6 +1137,7 @@ function matchSection(items, patterns) {
   const matched = new Set();
   for (const item of items) {
     const str = typeof item === "string" ? item : item.nom || "";
+    if (isAnnotationItem(str)) continue;
     for (let i = 0; i < patterns.length; i++) {
       if (patterns[i].regex.test(str) && !matched.has(str)) {
         const n = extractNumberFromItem(str);
@@ -1506,7 +1518,7 @@ export default function App() {
       updated.percusGlobalText = generatePercusGlobalText(updated.percus || []);
       return updated;
     }
-    const mobilier = calculateMobilier(p.orchestre, p.percus, { hasChef: !p.sansChef });
+    const mobilier = calculateMobilier(p.orchestre, p.percus, chefOptions(p.sansChef));
     const updated = notation ? { ...p, effectif: notation } : { ...p };
     if (mobilier) {
       // Preserve manually edited chaisesSpeciales and autresStands
@@ -1901,6 +1913,7 @@ export default function App() {
                 id: `p${i + 1}`,
                 nom: p.nom,
                 items: p.items,
+                ...(p.nonVerifie ? { nonVerifie: true } : {}),
               }))
             : [];
         const newPiece = {
@@ -1916,7 +1929,7 @@ export default function App() {
           orchestre: data.orchestre || null,
           // sansChef à trois états : true / false lus, null = inconnu (jamais déduit d'une absence)
           sansChef: typeof data.sansChef === "boolean" ? data.sansChef : null,
-          mobilier: data.orchestre ? calculateMobilier(data.orchestre, percusList, { hasChef: !data.sansChef }) : null,
+          mobilier: data.orchestre ? calculateMobilier(data.orchestre, percusList, chefOptions(data.sansChef)) : null,
           // Mobilier lu sur le plan par l'IA : champ séparé, jamais mélangé au mobilier calculé ci-dessus
           mobilierObserve: Array.isArray(data.mobilierObserve) ? data.mobilierObserve : [],
           // État de la lecture IA (bandeau « à vérifier » tant que l'utilisateur ne l'a pas fermé)
@@ -3151,7 +3164,7 @@ export default function App() {
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>{r.nom}</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1917" }}>{r.nom}{r.nonVerifie && <span style={{ ...S.tag, marginLeft: 6, background: "#FFFBEB", color: "#92400E" }}>non vérifié</span>}</div>
                       <div style={{ fontSize: 12, color: "#78716C" }}>
                         {(() => {
                           const checkedCount = r.items.filter(it => it.checked).length;
@@ -3389,7 +3402,7 @@ export default function App() {
 
           {/* ── 📦 Mobilier section ── */}
           {piece.orchestre && (() => {
-            const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef });
+            const mob = piece.mobilier || calculateMobilier(piece.orchestre, piece.percus, chefOptions(piece.sansChef));
             if (!mob) return null;
             const isMobOpen = percuId === "mobilier";
             const isEditing = mobilierEditing === piece.id;
@@ -3397,7 +3410,7 @@ export default function App() {
             // ── Helper: update mobilier from editor ──
             function updateMob(updater) {
               updatePiece(piece.id, (p) => {
-                const m = ensureMobilierStructure(p.mobilier || calculateMobilier(p.orchestre, p.percus, { hasChef: !p.sansChef }));
+                const m = ensureMobilierStructure(p.mobilier || calculateMobilier(p.orchestre, p.percus, chefOptions(p.sansChef)));
                 updater(m);
                 return { ...p, mobilier: m };
               });
@@ -3407,7 +3420,7 @@ export default function App() {
             function getLiveMob() {
               const p = pieces.find(pp => pp.id === piece.id);
               if (!p) return "";
-              const m = p.mobilier || calculateMobilier(p.orchestre, p.percus, { hasChef: !p.sansChef });
+              const m = p.mobilier || calculateMobilier(p.orchestre, p.percus, chefOptions(p.sansChef));
               return m ? generateMobilierStandaloneText({ ...p, mobilier: m }) : "";
             }
 
@@ -3439,7 +3452,7 @@ export default function App() {
                           <span style={{ fontSize: 9, fontWeight: 700, color: "#D97706", background: "#FFFBEB", border: "1px solid #FCD34D", padding: "1px 6px", borderRadius: 8 }}>✎</span>
                         )}
                         <span style={{ fontSize: 11, fontWeight: 600, color: col.hex, background: col.bg, padding: "1px 8px", borderRadius: 10 }}>
-                          {mob.general.pupitres} pup. · {mob.general.chaisesNormales + mob.general.chaisesHautes} ch.{mob.general.quantitesInconnues > 0 ? " + ?" : ""}
+                          {mob.general.pupitres} pup. · {mob.general.chaisesNormales + mob.general.chaisesHautes} ch.{(mob.general.quantitesInconnues > 0 || mob.general.chefAConfirmer) ? " + ?" : ""}
                         </span>
                       </div>
                     </div>
@@ -3462,6 +3475,9 @@ export default function App() {
                         <div>• Chaises hautes : <strong>{mob.general.chaisesHautesDetail || mob.general.chaisesHautes}</strong></div>
                         {mob.general.quantitesInconnues > 0 && (
                           <div style={{ fontSize: 12, color: "#92400E" }}>• ? {mob.general.quantitesInconnues} ligne(s) de l'effectif sans quantité écrite : non comptée(s) ci-dessus</div>
+                        )}
+                        {mob.general.chefAConfirmer && (
+                          <div style={{ fontSize: 12, color: "#92400E" }}>• ? Chef : présence non lue sur le plan, à confirmer. Podium, pupitre et chaise haute du chef ne sont pas comptés ci-dessus.</div>
                         )}
                         {(Array.isArray(mob.general.chaisesSpeciales) && mob.general.chaisesSpeciales.filter(s => s.qty > 0).length > 0) ? (
                           <div>• Chaises spéciales : {mob.general.chaisesSpeciales.filter(s => s.qty > 0).map((s, i, arr) => (
@@ -3525,7 +3541,7 @@ export default function App() {
 
                 {/* ── EDIT MODE ── */}
                 {isMobOpen && isEditing && (() => {
-                  const editMob = piece.mobilier || ensureMobilierStructure(calculateMobilier(piece.orchestre, piece.percus, { hasChef: !piece.sansChef }));
+                  const editMob = piece.mobilier || ensureMobilierStructure(calculateMobilier(piece.orchestre, piece.percus, chefOptions(piece.sansChef)));
                   const liveText = generateMobilierStandaloneText({ ...piece, mobilier: editMob });
 
                   return (
@@ -3785,7 +3801,7 @@ export default function App() {
                           onClick={() => {
                             // Force recalc: remove _edited, recalculate mobilier
                             updatePiece(piece.id, (p) => {
-                              const newMob = calculateMobilier(p.orchestre, p.percus, { hasChef: !p.sansChef });
+                              const newMob = calculateMobilier(p.orchestre, p.percus, chefOptions(p.sansChef));
                               if (newMob) newMob._edited = false;
                               return { ...p, mobilier: newMob };
                             });

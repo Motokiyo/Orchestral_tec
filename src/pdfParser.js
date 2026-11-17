@@ -1223,9 +1223,11 @@ export function orchestreFromEffectif(detail) {
       if (count > 0) orchestre.cordes.push(formatEntry(name, count));
     }
   }
-  // Extras (keyboard instruments in brackets): [Cel/Pno]
+  // Extras (keyboard instruments in brackets): [Cel/Pno]. C'est une annotation du claviériste déjà
+  // compté (« 1 Clavier »), pas une ligne de musiciens : elle reste entre crochets pour ne pas être
+  // comptée « sans quantité » (voir isAnnotationItem dans utils.js).
   if (detail.extras) {
-    orchestre.autres.push(detail.extras);
+    orchestre.autres.push(`[${detail.extras}]`);
   }
   // From perc group: Harpe and Clavier go in "autres" (orchestra section)
   // Timbales and Percussion are separate poles, not in orchestre

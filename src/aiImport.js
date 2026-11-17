@@ -102,6 +102,7 @@ export function noPageError(plan) {
 //   warnings     : avertissements du serveur et de l'IA
 //   pages        : { total, analysed, skipped: [{ page, reason }] } | null
 //   localPercusIgnored : nombre de postes lus localement qui n'ont PAS été repris
+//   percusNonVerifiees : (état « skipped ») nombre de postes locaux gardés mais marqués nonVerifie
 //   dismissed    : le bandeau a été fermé par l'utilisateur
 
 function makeStatus(state, over = {}) {
@@ -197,11 +198,15 @@ export function failedAiLocal(local, err) {
 
 /** Hors ligne : l'IA n'a pas été interrogée (décision du 23/09 : lecture locale seule), c'est dit et visible. */
 export function offlineAiLocal(local) {
+  // Les percussions lues localement sont GARDÉES (rien n'est jeté sans réseau), mais marquées « non
+  // vérifiées » : sur un plan image, cette lecture n'est pas fiable. Elles ne sont pas présentées comme lues.
+  const localPercus = Array.isArray(local.percus) ? local.percus : [];
   return {
     ...local,
+    percus: localPercus.map((pole) => (pole && typeof pole === "object" ? { ...pole, nonVerifie: true } : pole)),
     sansChef: triSansChef(local.sansChef),
     mobilierObserve: [],
-    aiStatus: makeStatus("skipped", { percusState: "locale", message: "Pas de réseau" }),
+    aiStatus: makeStatus("skipped", { percusState: "locale", message: "Pas de réseau", percusNonVerifiees: localPercus.length }),
   };
 }
 
@@ -238,6 +243,9 @@ export function aiBannerInfo(piece) {
   } else if (st.state === "skipped") {
     title = "Lecture IA non faite (hors ligne), données à vérifier";
     lines.push("Import fait avec la lecture locale seulement. Relance « Extraire les données par IA » quand le réseau revient.");
+    if (st.percusNonVerifiees > 0) {
+      lines.push(`${st.percusNonVerifiees} poste(s) de percussion viennent de la lecture locale du fichier : NON vérifiés, ils n'ont pas été lus par l'IA.`);
+    }
   } else if (st.state === "partial") {
     title = "Lecture IA incomplète, données à vérifier";
   } else return null;

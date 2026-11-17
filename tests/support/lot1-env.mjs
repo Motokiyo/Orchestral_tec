@@ -53,6 +53,7 @@ export function fakeDb(initial = {}) {
     async getAllKeys(name) { return Array.from(stores[name].keys()); },
     async get(name, key) { return stores[name].get(key); },
     async put(name, value, key) { stores[name].set(key ?? value.id, value); return key ?? value.id; },
+    async delete(name, key) { stores[name].delete(key); },
   };
 }
 

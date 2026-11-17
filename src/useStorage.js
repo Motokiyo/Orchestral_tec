@@ -87,8 +87,13 @@ function idsOf(list) {
 // - si la nouvelle liste perd des concerts sans suppression explicite, l'ancienne
 //   copie est gardée dans une seconde clé (« -prev ») avant d'être remplacée.
 export function writeConcertsBackup(email, data, { removedIds = [] } = {}) {
-  if (!email || !Array.isArray(data) || data.length === 0) return { ok: true, skipped: true };
+  if (!email || !Array.isArray(data)) return { ok: true, skipped: true };
   const key = concertsBackupKey(email);
+  // Une liste vide n'écrase la copie que si TOUS les concerts de la copie ont été supprimés
+  // explicitement (suppression du dernier concert) : sinon une liste vide vient d'un chargement
+  // raté ou d'un état transitoire, et elle est ignorée comme avant.
+  const emptying = data.length === 0;
+  if (emptying && removedIds.length === 0) return { ok: true, skipped: true };
   try {
     const nextIds = idsOf(data);
     let previousIds = backupIdsCache.get(email);
@@ -101,8 +106,11 @@ export function writeConcertsBackup(email, data, { removedIds = [] } = {}) {
       }
     }
     const explicit = new Set(removedIds.map(String));
+    if (emptying && (previousIds.size === 0 || Array.from(previousIds).some((id) => !explicit.has(String(id))))) {
+      return { ok: true, skipped: true };
+    }
     const lost = Array.from(previousIds).filter((id) => !nextIds.has(id) && !explicit.has(String(id)));
-    if (lost.length > 0) {
+    if (lost.length > 0 || emptying) {
       try {
         const rawPrevious = localStorage.getItem(key);
         if (rawPrevious) localStorage.setItem(concertsBackupPrevKey(email), rawPrevious);
@@ -575,15 +583,34 @@ export async function exportLocalDataForRecovery() {
 // Contrairement à exportLocalDataForRecovery, rien n'est dupliqué dans le fichier
 // et rien n'est envoyé au serveur.
 // ───────────────────────────────────────────────────────────────────────────
-export async function buildLocalSnapshot(db) {
+const SAFETY_COPY_PREFIX = "orkmap-safety-copy:";
+
+// Nombre réel de photos d'un enregistrement { [pièce]: photo[] } (et non le nombre de clés).
+function countPhotosIn(value) {
+  if (!value || typeof value !== "object") return 0;
+  let n = 0;
+  for (const list of Object.values(value)) if (Array.isArray(list)) n += list.length;
+  return n;
+}
+
+// `email` : n'exporte que les données de ce compte (concerts, photos, partitions). Sans lui, tout
+// ce qui est sur l'appareil est exporté. Dans les deux cas, les copies de sécurité du rechargement
+// (clés « orkmap-safety-copy:… » rangées dans le magasin photos) ne sont JAMAIS exportées : ce ne
+// sont ni des photos ni des données à garder dans un fichier.
+export async function buildLocalSnapshot(db, { email } = {}) {
   const database = db || (await getDB());
-  const concerts = await database.getAll(STORE);
+  const account = normalizeEmail(email);
+  const allConcerts = await database.getAll(STORE);
+  const concerts = account ? allConcerts.filter((item) => belongsToUser(item, account)) : allConcerts;
   const photoKeys = await database.getAllKeys(PHOTOS_STORE);
   const photos = [];
   for (const key of photoKeys) {
+    if (String(key).startsWith(SAFETY_COPY_PREFIX)) continue;
+    if (account && key !== photosKey(account)) continue;
     photos.push({ key, value: await database.get(PHOTOS_STORE, key) });
   }
-  const omrScores = await database.getAll(OMR_STORE);
+  const allScores = await database.getAll(OMR_STORE);
+  const omrScores = account ? allScores.filter((item) => belongsToUser(item, account)) : allScores;
   return {
     kind: "orkmap-local-export",
     version: 1,
@@ -592,7 +619,11 @@ export async function buildLocalSnapshot(db) {
     userAgent: typeof navigator !== "undefined" ? navigator.userAgent : undefined,
     dbName: DB_NAME,
     dbVersion: DB_VERSION,
-    counts: { concerts: concerts.length, photos: photos.length, omrScores: omrScores.length },
+    counts: {
+      concerts: concerts.length,
+      photos: photos.reduce((sum, entry) => sum + countPhotosIn(entry.value), 0),
+      omrScores: omrScores.length,
+    },
     concerts,
     photos,
     omrScores,
@@ -623,8 +654,8 @@ export function downloadTextFile(filename, text, mime = "application/json") {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
-export async function exportLocalDataToFile({ db, download = downloadTextFile } = {}) {
-  const snapshot = await buildLocalSnapshot(db);
+export async function exportLocalDataToFile({ db, download = downloadTextFile, email } = {}) {
+  const snapshot = await buildLocalSnapshot(db, { email });
   const text = JSON.stringify(snapshot);
   const filename = localExportFilename();
   download(filename, text);
@@ -682,15 +713,61 @@ export function planSafeReload({ serverData, localConcerts, email }) {
 // Dans IndexedDB d'abord (grand quota, relue pour vérifier) ; localStorage
 // seulement si IndexedDB refuse, pour ne pas manger le quota de la copie courante.
 let safetyCopyCounter = 0;
+export const SAFETY_COPIES_KEPT = 3;
+
+// Une clé de copie = « orkmap-safety-copy:<email>:<date ISO>:<compteur> ». Tri du plus récent au plus ancien.
+function compareSafetyCopies(a, b) {
+  const split = (cle) => {
+    const i = cle.lastIndexOf(":");
+    return { at: cle.slice(0, i), n: Number(cle.slice(i + 1)) || 0 };
+  };
+  const x = split(a.cle);
+  const y = split(b.cle);
+  if (x.at !== y.at) return x.at < y.at ? 1 : -1;
+  return y.n - x.n;
+}
+
+// Ne garde que les `keep` copies les plus récentes DE CE COMPTE (IndexedDB et localStorage réunis).
+// Ne touche jamais aux copies d'un autre compte, ni aux photos, ni aux concerts.
+export async function pruneSafetyCopies(email, { db, keep = SAFETY_COPIES_KEPT } = {}) {
+  const prefix = `${SAFETY_COPY_PREFIX}${email}:`;
+  const entries = [];
+  const database = db || (await getDB());
+  for (const cle of await database.getAllKeys(PHOTOS_STORE)) {
+    if (String(cle).startsWith(prefix)) entries.push({ cle: String(cle), where: "idb" });
+  }
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const cle = localStorage.key(i);
+      if (cle && cle.startsWith(prefix)) entries.push({ cle, where: "ls" });
+    }
+  } catch {
+    // localStorage illisible : on ne purge que IndexedDB
+  }
+  entries.sort(compareSafetyCopies);
+  let removed = 0;
+  for (const entry of entries.slice(keep)) {
+    try {
+      if (entry.where === "idb") await database.delete(PHOTOS_STORE, entry.cle);
+      else localStorage.removeItem(entry.cle);
+      removed += 1;
+    } catch (err) {
+      console.warn("[OrkMap] Old safety copy could not be removed:", err);
+    }
+  }
+  return removed;
+}
+
 export async function saveSafetyCopy(email, concerts, { db } = {}) {
   safetyCopyCounter += 1;
   const savedAt = new Date().toISOString();
-  const cle = `orkmap-safety-copy:${email}:${savedAt}:${safetyCopyCounter}`;
+  const cle = `${SAFETY_COPY_PREFIX}${email}:${savedAt}:${safetyCopyCounter}`;
   const record = { kind: "orkmap-safety-copy", email, savedAt, count: concerts.length, concerts };
   let idb = false;
   let ls = false;
+  let database = db || null;
   try {
-    const database = db || (await getDB());
+    database = database || (await getDB());
     await database.put(PHOTOS_STORE, record, cle);
     const back = await database.get(PHOTOS_STORE, cle);
     idb = Boolean(back) && Array.isArray(back.concerts) && back.concerts.length === concerts.length;
@@ -706,6 +783,12 @@ export async function saveSafetyCopy(email, concerts, { db } = {}) {
     }
   }
   if (!idb && !ls) throw new Error("Impossible de mettre la version locale de côté.");
+  // La nouvelle copie est écrite et relue : seulement alors, les plus anciennes (au-delà de 3) sont purgées.
+  try {
+    if (database) await pruneSafetyCopies(email, { db: database });
+  } catch (err) {
+    console.warn("[OrkMap] Safety copies purge failed:", err);
+  }
   return { cle, idb, ls, copies: concerts.length };
 }
 
@@ -837,6 +920,15 @@ export function reconcileAfterDegraded({ editedIds, current, idb, removedIds = [
   }
   return Array.from(byId.values()).filter((item) => !removed.has(String(item.id)));
 }
+
+// Ids présents dans la liste de départ (signatures) et absents de la liste actuelle : supprimés depuis.
+export function idsMissingFrom(baseSig, current) {
+  const present = new Set((Array.isArray(current) ? current : []).filter((item) => item?.id).map((item) => String(item.id)));
+  return Array.from(baseSig.keys()).filter((id) => !present.has(id));
+}
+
+// Nombre maximal de passes quand l'utilisateur continue de modifier pendant une écriture longue.
+const MAX_REBASE_PASSES = 20;
 
 // Marqueur persistant : ce qui a été modifié pendant un mode dégradé et qui n'est
 // pas encore revenu dans IndexedDB (survit à la fermeture de l'application).
@@ -1032,17 +1124,28 @@ export function useConcerts(initialConcerts, userEmail) {
           const result = await retryLocalRead({ read: readIdb, isCurrent });
           if (!result || !isCurrent()) return;
           try {
-            const marker = readDegradedMarker(email) || { editedIds: [], removedIds: [] };
-            const merged = reconcileAfterDegraded({
-              editedIds: marker.editedIds,
-              current: latestRef.current,
-              idb: result.localData,
-              removedIds: marker.removedIds,
-            });
-            await withTimeout(saveLocal(merged, marker.removedIds), LOCAL_LOAD_TIMEOUT_MS * 4, "Concert degraded recovery save");
+            // L'écriture de réintégration peut durer (IndexedDB est lent) : pendant ce temps, l'utilisateur
+            // peut modifier ou supprimer. Après chaque écriture on vérifie que la liste affichée n'a pas
+            // bougé ; sinon on refait le calcul avec ces modifications, jusqu'à ce que plus rien ne bouge.
+            // Le marqueur n'est effacé qu'à ce moment-là, sans aucune attente entre la vérification et la fin.
+            let idbList = result.localData;
+            let outcome = null;
+            for (let pass = 0; pass < MAX_REBASE_PASSES && !outcome; pass += 1) {
+              const snapshot = latestRef.current;
+              const stored = readDegradedMarker(email) || { editedIds: [], removedIds: [] };
+              const editedIds = Array.from(new Set([...stored.editedIds, ...changedIds(degradedBaseRef.current, snapshot)]));
+              const removedIds = Array.from(new Set([...stored.removedIds, ...idsMissingFrom(degradedBaseRef.current, snapshot)]));
+              const merged = reconcileAfterDegraded({ editedIds, current: snapshot, idb: idbList, removedIds });
+              await withTimeout(saveLocal(merged, removedIds), LOCAL_LOAD_TIMEOUT_MS * 4, "Concert degraded recovery save");
+              if (!isCurrent()) return;
+              if (latestRef.current === snapshot) outcome = { merged, editedIds, removedIds };
+              else idbList = merged;
+            }
+            if (!outcome) throw new Error("Des modifications continuent d'arriver : réintégration reportée");
+            const { merged, editedIds, removedIds } = outcome;
             setConcerts(merged);
-            writeConcertsBackup(email, merged, { removedIds: marker.removedIds });
-            if (marker.editedIds.length || marker.removedIds.length) markPending(email, SYNC_TYPES.concerts, marker.removedIds);
+            writeConcertsBackup(email, merged, { removedIds });
+            if (editedIds.length || removedIds.length) markPending(email, SYNC_TYPES.concerts, removedIds);
             clearDegradedMarker(email);
             degradedRef.current = false;
             setSyncFlag("degraded", false);
@@ -1167,29 +1270,57 @@ export function useConcerts(initialConcerts, userEmail) {
   const reloadFromAccountSafe = useCallback(async (options = {}) => {
     if (!email || readyRef.current !== email) return refuse("Les données de ce compte ne sont pas encore chargées.");
     if (degradedRef.current) return refuse("Le stockage du téléphone répond lentement : attends un instant, rien n'a été changé.");
+    let reloadBase = [];
+    let userChanges = null; // modifications faites par l'utilisateur pendant l'écriture du rechargement
     const result = await runSafeReload({
       email,
       isOffline,
       hasUnsavedEdits: () => saveTimer.current !== null,
       hasPending: () => readPending(email, SYNC_TYPES.concerts) !== null || hasUploadInFlight(email, SYNC_TYPES.concerts),
-      getLocal: () => latestRef.current,
+      getLocal: () => {
+        reloadBase = latestRef.current;
+        return reloadBase;
+      },
       fetchServer: async () => {
         const remote = await withTimeout(loadRemote(SYNC_TYPES.concerts), REMOTE_LOAD_TIMEOUT_MS * 2, "Concert reload");
         if (!remote.available) throw new Error("synchronisation indisponible");
         return remote.data;
       },
       saveSafetyCopy: (list) => saveSafetyCopy(email, list),
-      download: options.download === false ? null : async () => (await exportLocalDataToFile()).filename,
+      download: options.download === false ? null : async () => (await exportLocalDataToFile({ email })).filename,
       apply: async (merged) => {
-        // Écriture sans aucune suppression (aucun removedIds), puis seulement ensuite l'état affiché.
-        await withTimeout(saveLocal(merged), LOCAL_LOAD_TIMEOUT_MS * 4, "Concert reload save");
-        setConcerts(merged);
-        writeConcertsBackup(email, merged);
+        // Écriture sans suppression issue du compte (aucun removedIds hérité du serveur). Pendant cette écriture,
+        // l'utilisateur peut avoir modifié ou supprimé un concert : ses modifications gagnent toujours sur la
+        // version du compte, on refait le calcul tant que la liste affichée bouge, puis seulement on l'affiche.
+        const baseSig = signaturesOf(reloadBase);
+        const rebased = (snapshot) => {
+          const removedIds = idsMissingFrom(baseSig, snapshot);
+          const editedIds = changedIds(baseSig, snapshot);
+          if (removedIds.length || editedIds.length) userChanges = { removedIds };
+          return { removedIds, list: reconcileAfterDegraded({ editedIds, current: snapshot, idb: merged, removedIds }) };
+        };
+        for (let pass = 0; pass < MAX_REBASE_PASSES; pass += 1) {
+          const snapshot = latestRef.current;
+          const { list, removedIds } = rebased(snapshot);
+          await withTimeout(saveLocal(list, removedIds), LOCAL_LOAD_TIMEOUT_MS * 4, "Concert reload save");
+          if (latestRef.current === snapshot) {
+            setConcerts(list);
+            writeConcertsBackup(email, list, { removedIds });
+            return;
+          }
+        }
+        // Les modifications n'arrêtent pas : on affiche le résultat à jour sans attendre, la sauvegarde différée
+        // (déjà programmée par ces modifications) l'écrira dans IndexedDB.
+        const { list, removedIds } = rebased(latestRef.current);
+        setConcerts(list);
+        writeConcertsBackup(email, list, { removedIds });
       },
     });
     // Les concerts gardés parce qu'absents du compte partent vers le compte (ajout, jamais suppression).
-    if (!result.refus && result["conservés"] > 0) {
-      markPending(email, SYNC_TYPES.concerts);
+    // Même chose si l'utilisateur a modifié pendant l'écriture : un envoi parti entre-temps portait
+    // l'ancienne liste, la liste finale est renvoyée.
+    if (!result.refus && (result["conservés"] > 0 || userChanges)) {
+      markPending(email, SYNC_TYPES.concerts, userChanges?.removedIds || []);
       flush();
     }
     return result;
