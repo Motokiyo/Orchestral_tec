@@ -40,7 +40,7 @@ export function reset() {
   globalThis.document = Object.assign({ visibilityState: "visible" }, { addEventListener: target.addEventListener.bind(target), removeEventListener: target.removeEventListener.bind(target) });
   Object.defineProperty(globalThis, "navigator", { value: { onLine: true, userAgent: "test", storage: {} }, configurable: true, writable: true });
   for (const s of Object.values(world.stores)) s.clear();
-  world.delay = 0; world.onPut = null; world.onOp = null; world.frozen = false; world.hold = null;
+  world.delay = 0; world.onPut = null; world.onOp = null; world.frozen = false; world.hold = null; world.opens = 0; world.closes = 0; world.openOptions = null;
   server.data = { concerts: null, photos: null, "omr-scores": null }; server.posts = [];
   globalThis.fetch = async (url, init = {}) => {
     const u = new URL(url, "https://t.invalid");

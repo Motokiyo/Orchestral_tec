@@ -78,7 +78,8 @@ function concertsBackupPrevKey(email) {
 //   (quota plein) : la copie de secours ou la file d'attente peut être périmée.
 // degraded : IndexedDB est lent ou en échec ; rien n'est envoyé au serveur.
 // oversize : types de données trop volumineux pour l'envoi (limite Vercel).
-const syncFlags = { backupFailed: false, degraded: false };
+// upgradeBlocked : une autre fenêtre OrkMap (ancienne version) empêche la mise à jour de la base.
+const syncFlags = { backupFailed: false, degraded: false, upgradeBlocked: false };
 const oversize = new Map();
 // imageRetry : une image de plan n'a pas pu partir, nouvel essai plus tard (les concerts attendent).
 // unsentPlans : plans gardés sur ce téléphone seulement (trop lourds ou illisibles pour le compte).
@@ -258,6 +259,23 @@ function noteStored(hash) {
   if (storedHashes) storedHashes.add(hash);
 }
 
+// Rangement des images (relecture du lot 6, S3) : une image déjà dans le magasin n'est ni relue ni
+// réécrite ; une image refusée (place) attend 1, 5, 15 puis 60 min avant un nouvel essai.
+const storeRetry = new Map();
+
+export async function storeImagesOnce(list, { now = () => Date.now() } = {}) {
+  const known = await ensureStoredHashes();
+  return storeInlineImages(await getDB(), list, {
+    known,
+    shouldTry: (hash) => !(storeRetry.get(hash)?.nextAt > now()),
+    onStored: (hash) => { noteStored(hash); storeRetry.delete(hash); },
+    onFailed: (hash) => {
+      const failures = (storeRetry.get(hash)?.failures || 0) + 1;
+      storeRetry.set(hash, { failures, nextAt: now() + RETRY_DELAYS_MS[Math.min(failures, RETRY_DELAYS_MS.length) - 1] });
+    },
+  });
+}
+
 // Source « images du téléphone » pour l'envoi (planImages.js) : has() sans attente, get() lit le magasin.
 async function localImageSource() {
   const hashes = await ensureStoredHashes();
@@ -299,7 +317,10 @@ export function onPlanImageStored(listener) {
 // Image à afficher (ou à envoyer à la lecture IA) pour une valeur de plans[] : un data URL est rendu tel
 // quel ; une référence est lue dans le cache mémoire, sinon dans le magasin local (ou l'original d'une copie
 // réduite), sinon téléchargée du compte si le réseau est là (`download`). null : pas disponible.
-export async function loadPlanImage(value, { download = true } = {}) {
+// Délai au-delà duquel le plan n'attend plus (cadre avec message, nouvel essai à l'arrivée de l'image).
+export const PLAN_LOAD_TIMEOUT_MS = 20000;
+
+export async function loadPlanImage(value, { download = true, timeoutMs = PLAN_LOAD_TIMEOUT_MS } = {}) {
   if (typeof value !== "string") return null;
   if (!isAnyImageRef(value)) return value;
   const hash = hashOfRef(value);
@@ -329,7 +350,9 @@ export async function loadPlanImage(value, { download = true } = {}) {
     }
   })();
   imageLoads.set(key, job);
-  return job;
+  // Jamais « Chargement du plan… » sans fin : passé le délai, null (le téléchargement peut finir ensuite ;
+  // il range l'image et prévient l'écran).
+  return withTimeout(job, timeoutMs, "Plan image load").catch(() => null);
 }
 
 // Toutes les images d'une liste de plans, pour la lecture IA : seules celles disponibles sont rendues.
@@ -709,6 +732,10 @@ function useSyncRetry(email, flush) {
 // run the debounced save right away: on a phone the page may never come back.
 function useSaveOnHide(runNow) {
   useEffect(() => {
+    pendingWriters.add(runNow);
+    return () => { pendingWriters.delete(runNow); };
+  }, [runNow]);
+  useEffect(() => {
     const onHide = () => { if (document.visibilityState === "hidden") runNow(); };
     document.addEventListener("visibilitychange", onHide);
     window.addEventListener("pagehide", runNow);
@@ -777,6 +804,7 @@ export function readSyncStatus() {
     sessionExpired,
     backupFailed: syncFlags.backupFailed,
     degraded: syncFlags.degraded,
+    upgradeBlocked: syncFlags.upgradeBlocked,
     oversize: Array.from(oversize.values()).map(({ type, bytes, what }) => ({ type, bytes, what })),
     imageRetry: imageRetry.size > 0,
     unsentPlans: Array.from(unsentPlans.values()).reduce((sum, n) => sum + n, 0),
@@ -808,8 +836,39 @@ export function requestPersistentStorage() {
   }
 }
 
-async function getDB() {
-  return openDB(DB_NAME, DB_VERSION, {
+// Une SEULE connexion IndexedDB, gardée (avant le lot 6 : une connexion neuve à chaque appel, jamais
+// fermée ; une mise à jour de la base dans un autre onglet restait alors bloquée en silence).
+// - blocking : une version plus récente de l'app (autre fenêtre) veut monter la base. On écrit ce qui
+//   attend (enregistrements différés, 2 s au plus), on ferme la connexion et on recharge la page, qui
+//   repart sur la nouvelle version.
+// - blocked : c'est NOUS qui attendons qu'une ancienne fenêtre se ferme : message clair à l'écran.
+// - terminated : le navigateur a coupé la connexion ; la suivante sera rouverte.
+// Retour arrière : la base est en version 5 ; une version de l'app antérieure au lot 6 (version 4) ne
+// peut plus l'ouvrir (voir DECISIONS.md, 17/11/2026).
+const pendingWriters = new Set(); // enregistrements différés à faire tout de suite (fermeture, mise à jour)
+let dbPromise = null;
+const UPGRADE_FLUSH_MS = 2000;
+const defaultReload = () => { try { window.location.reload(); } catch { /* pas de page (tests) */ } };
+let reloadPage = defaultReload;
+// Pour les tests : remplace le rechargement de la page.
+export function setPageReloader(fn) { reloadPage = fn || defaultReload; }
+
+async function closeForUpgrade() {
+  const current = dbPromise;
+  try {
+    const writes = Array.from(pendingWriters, (run) => Promise.resolve().then(run));
+    await Promise.race([Promise.allSettled(writes), new Promise((r) => setTimeout(r, UPGRADE_FLUSH_MS))]);
+  } catch {
+    // rien de plus à écrire
+  }
+  try { (await current)?.close(); } catch { /* déjà fermée */ }
+  if (dbPromise === current) dbPromise = null;
+  reloadPage();
+}
+
+function getDB() {
+  if (dbPromise) return dbPromise;
+  const opening = openDB(DB_NAME, DB_VERSION, {
     upgrade(db) {
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: "id" });
@@ -825,7 +884,24 @@ async function getDB() {
         db.createObjectStore(IMAGES_STORE);
       }
     },
+    blocked() {
+      setSyncFlag("upgradeBlocked", true);
+    },
+    blocking() {
+      closeForUpgrade();
+    },
+    terminated() {
+      if (dbPromise === opening) dbPromise = null;
+    },
+  }).then((db) => {
+    setSyncFlag("upgradeBlocked", false);
+    return db;
+  }, (err) => {
+    if (dbPromise === opening) dbPromise = null;
+    throw err;
   });
+  dbPromise = opening;
+  return opening;
 }
 
 export async function exportLocalDataForRecovery() {
@@ -899,12 +975,14 @@ export async function buildLocalSnapshot(db, { email } = {}) {
   const account = normalizeEmail(email);
   const allConcerts = await database.getAll(STORE);
   const ownConcerts = account ? allConcerts.filter((item) => belongsToUser(item, account)) : allConcerts;
-  let registry = null;
-  if (account) {
-    try { registry = createImageRegistry(await database.get(PHOTOS_STORE, imageRegistryKey(account))); } catch { registry = null; }
+  // Table copie réduite → original : celle du compte demandé, sinon celles des comptes des concerts exportés.
+  const owners = account ? [account] : Array.from(new Set(ownConcerts.map((c) => normalizeEmail(c?.ownerEmail || ALEX_EMAIL)).filter(Boolean)));
+  const registries = [];
+  for (const owner of owners) {
+    try { registries.push(createImageRegistry(await database.get(PHOTOS_STORE, imageRegistryKey(owner)))); } catch { /* illisible : sans */ }
   }
   const { data: concerts, missing: plansNonInclus } = await inlineStoredImages(database, ownConcerts, {
-    originalOf: (hash) => registry?.originalOf(hash) || null,
+    originalOf: (hash) => registries.map((r) => r.originalOf(hash)).find(Boolean) || null,
   });
   const photoKeys = await database.getAllKeys(PHOTOS_STORE);
   const photos = [];
@@ -1332,51 +1410,63 @@ export function useConcerts(initialConcerts, userEmail) {
     await tx.done;
   }, [email]);
 
-  // Lot 6 : range dans le magasin « images » les images encore DANS les concerts de `list` (écrites, relues,
-  // empreinte revérifiée), puis rend `list` avec leurs références (tout ou rien par concert, voir
-  // localImages.js). Si `allowed()`, la liste affichée la plus récente est convertie de la même façon
-  // (aucune modification de l'utilisateur n'est perdue : seules les images vérifiées sont remplacées).
-  // Toute erreur : `list` est rendue telle quelle, rien n'est perdu.
-  const moveImagesToStore = useCallback(async (list, allowed) => {
-    if (!email || !hasInlineImages(list)) return list;
-    try {
-      const db = await getDB();
-      const verified = await storeInlineImages(db, list, { onStored: noteStored });
-      if (!verified.size) return list;
-      if (allowed()) {
-        const current = applyStoredRefs(latestRef.current, verified);
-        if (current.changed) setConcerts(current.data);
-      }
-      return applyStoredRefs(list, verified).data;
-    } catch (err) {
-      console.warn("[OrkMap] Plan images not moved to the image store yet:", err?.message || err);
-      return list;
-    }
-  }, [email, setConcerts]);
+  // ── File d'écriture (relecture du lot 6, B1) ──
+  // Toutes les écritures de la liste complète par ce hook (enregistrement, migration des images) passent
+  // l'une après l'autre, et chacune écrit la liste LA PLUS RÉCENTE au moment où elle s'exécute : une
+  // écriture lente ne peut plus finir après une plus récente avec une version périmée.
+  const writeChainRef = useRef(Promise.resolve());
+  const enqueueWrite = useCallback((job) => {
+    const run = writeChainRef.current.then(job).catch((err) => console.warn("[OrkMap] Local write failed:", err?.message || err));
+    writeChainRef.current = run;
+    return run;
+  }, []);
 
-  // Migration de l'ancien format (images dans les concerts) : en arrière-plan, jamais bloquante.
-  // 1. images écrites dans le magasin, relues, empreinte vérifiée ; 2. SEULEMENT ENSUITE, concerts réécrits
-  // avec leurs références. Interrompue n'importe où (application fermée) : IndexedDB garde soit l'ancien
-  // concert (images dedans), soit le nouveau (références dont l'image est déjà dans le magasin) ; le
-  // lancement suivant reprend (les images déjà rangées ne sont pas réécrites). Idempotente.
+  // Lot 6 : range dans le magasin « images » les images encore DANS les concerts (écrites, relues, empreinte
+  // revérifiée ; déjà rangées ou en attente après un refus : pas de nouvelle lecture, voir storeImagesOnce),
+  // puis convertit la liste affichée la plus récente (tout ou rien par concert, voir localImages.js) et
+  // l'écrit par la file. Aucune modification de l'utilisateur n'est perdue : seules les images vérifiées
+  // sont remplacées par leur référence, sur la liste à jour.
+  // Migration de l'ancien format : en arrière-plan, jamais bloquante, UNE seule à la fois (un appel pendant
+  // qu'elle tourne la relance à la fin). Interrompue n'importe où (application fermée) : IndexedDB garde
+  // soit l'ancien concert (images dedans), soit le nouveau (références dont l'image est déjà dans le
+  // magasin) ; le lancement suivant reprend. Idempotente.
   const migrateImages = useCallback((allowed) => {
-    if (movingRef.current) return movingRef.current;
+    if (movingRef.current) {
+      movingRef.current.again = true;
+      return movingRef.current.job;
+    }
     if (!email || !hasInlineImages(latestRef.current)) return Promise.resolve();
-    const job = (async () => {
-      const before = latestRef.current;
-      const after = await moveImagesToStore(before, allowed);
-      if (after === before || !allowed() || latestRef.current === before) return;
-      writeConcertsBackup(email, latestRef.current);
-      try {
-        await withTimeout(saveLocal(latestRef.current), LOCAL_LOAD_TIMEOUT_MS * 4, "Plan images migration save");
-      } catch (err) {
-        // Les images sont rangées et vérifiées ; les concerts seront réécrits au prochain enregistrement.
-        console.warn("[OrkMap] Concerts not rewritten with image references yet:", err?.message || err);
-      }
+    const state = { again: false, job: null };
+    state.job = (async () => {
+      do {
+        state.again = false;
+        if (!allowed() || !hasInlineImages(latestRef.current)) break;
+        let verified;
+        try {
+          verified = await storeImagesOnce(latestRef.current);
+        } catch (err) {
+          console.warn("[OrkMap] Plan images not moved to the image store yet:", err?.message || err);
+          break;
+        }
+        if (!verified.size) continue;
+        await enqueueWrite(async () => {
+          if (!allowed()) return;
+          const { data, changed } = applyStoredRefs(latestRef.current, verified);
+          if (!changed) return;
+          setConcerts(data);
+          writeConcertsBackup(email, data);
+          try {
+            await withTimeout(saveLocal(data), LOCAL_LOAD_TIMEOUT_MS * 4, "Plan images migration save");
+          } catch (err) {
+            // Les images sont rangées et vérifiées ; les concerts seront réécrits au prochain enregistrement.
+            console.warn("[OrkMap] Concerts not rewritten with image references yet:", err?.message || err);
+          }
+        });
+      } while (state.again);
     })().finally(() => { movingRef.current = null; });
-    movingRef.current = job;
-    return job;
-  }, [email, moveImagesToStore, saveLocal]);
+    movingRef.current = state;
+    return state.job;
+  }, [email, enqueueWrite, saveLocal, setConcerts]);
 
   // Load from IndexedDB first, then prefer the account sync when available.
   useEffect(() => {
@@ -1602,34 +1692,47 @@ export function useConcerts(initialConcerts, userEmail) {
   useSyncRetry(email, flush);
 
   // Auto-save to IndexedDB, then queue + send to the account (debounced)
-  const save = useCallback(async (data, removedIds = []) => {
+  // Relecture du lot 6 : les enregistrements passent par la file d'écriture, un à la fois, et chacun écrit
+  // la liste la plus récente AU MOMENT où il s'exécute (les suppressions demandées entre-temps sont
+  // réunies). Ordre : copie de secours, puis IndexedDB tout de suite (même si un nouveau plan y est encore
+  // avec son image : une fermeture par Android juste après ne perd rien), puis seulement le rangement
+  // de l'image dans le magasin, qui réécrit le concert avec sa référence par la même file.
+  const queuedRemovalsRef = useRef([]);
+  const queuedSaveRef = useRef(null);
+  const save = useCallback(async (_data, removedIds = []) => {
     if (!email) return;
-    let owned = data.map((item) => withOwner(item, email));
-    // Nouveau plan (import, ancienne sauvegarde, ancien téléphone…) : son image va dans le magasin local
-    // avant l'écriture du concert, qui ne garde que la référence. Pas en mode dégradé (IndexedDB non relu).
-    if (!degradedRef.current && hasInlineImages(owned)) {
-      owned = await moveImagesToStore(owned, () => readyRef.current === email && !degradedRef.current && !reloadingRef.current);
-    }
-    writeConcertsBackup(email, owned, { removedIds });
-    if (degradedRef.current) {
-      // Mode dégradé : IndexedDB n'a pas été relu, on n'y écrit pas (cela pourrait
-      // écraser des données plus récentes avec la copie de secours) et on n'envoie
-      // rien. Ce qui a changé est noté pour être réintégré dès que IndexedDB répond.
-      const previous = readDegradedMarker(email) || { editedIds: [], removedIds: [] };
-      writeDegradedMarker(email, {
-        editedIds: [...previous.editedIds, ...changedIds(degradedBaseRef.current, owned)],
-        removedIds: [...previous.removedIds, ...removedIds],
+    queuedRemovalsRef.current.push(...removedIds);
+    if (!queuedSaveRef.current) {
+      queuedSaveRef.current = enqueueWrite(async () => {
+        queuedSaveRef.current = null;
+        const removed = Array.from(new Set(queuedRemovalsRef.current.splice(0)));
+        const owned = latestRef.current.map((item) => withOwner(item, email));
+        writeConcertsBackup(email, owned, { removedIds: removed });
+        if (degradedRef.current) {
+          // Mode dégradé : IndexedDB n'a pas été relu, on n'y écrit pas (cela pourrait
+          // écraser des données plus récentes avec la copie de secours) et on n'envoie
+          // rien. Ce qui a changé est noté pour être réintégré dès que IndexedDB répond.
+          const previous = readDegradedMarker(email) || { editedIds: [], removedIds: [] };
+          writeDegradedMarker(email, {
+            editedIds: [...previous.editedIds, ...changedIds(degradedBaseRef.current, owned)],
+            removedIds: [...previous.removedIds, ...removed],
+          });
+          return { degraded: true };
+        }
+        try {
+          await saveLocal(owned, removed);
+        } catch (err) {
+          console.warn("[OrkMap] IndexedDB save failed:", err);
+        }
+        markPending(email, SYNC_TYPES.concerts, removed);
+        return { degraded: false };
       });
-      return;
     }
-    try {
-      await saveLocal(owned, removedIds);
-    } catch (err) {
-      console.warn("[OrkMap] IndexedDB save failed:", err);
-    }
-    markPending(email, SYNC_TYPES.concerts, removedIds);
+    const outcome = await queuedSaveRef.current;
+    if (!outcome || outcome.degraded) return;
+    // Envoi (et rangement des nouvelles images) HORS de la file : le réseau ne retarde jamais une écriture locale.
     await flush();
-  }, [email, saveLocal, flush, moveImagesToStore]);
+  }, [email, saveLocal, flush, enqueueWrite]);
 
   const runSaveNow = useCallback(() => {
     if (!saveTimer.current) return;
@@ -1637,7 +1740,7 @@ export function useConcerts(initialConcerts, userEmail) {
     saveTimer.current = null;
     const removals = removalsRef.current;
     removalsRef.current = [];
-    save(latestRef.current, removals);
+    return save(latestRef.current, removals);
   }, [save]);
 
   useSaveOnHide(runSaveNow);

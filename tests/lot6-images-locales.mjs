@@ -544,3 +544,238 @@ test("mode mémoire lente (dégradé) : aucune migration tant qu'IndexedDB n'a p
     assertNoOrphanRef();
   } finally { w.restore(); }
 });
+
+// ───────────── Relecture hostile du lot 6 ─────────────
+
+// B1 : deux enregistrements qui se chevauchent (l'un retenu par le rangement d'une image) : l'ordre
+// d'écriture suit l'ordre des modifications. `order` : "apres-liberation" (T3 après la fin de la
+// migration retenue, script course-save.mjs de la relecture) ou "avant-liberation" (T3 pendant).
+async function courseSave({ online, order }) {
+  const w = online ? await setupWorld() : offlineWorld();
+  try {
+    const a = image();
+    world.stores.concerts.set("c1", owned("c1", { titre: "ORIGINE", pieces: [piece("p1", [a])] }));
+    const held = [];
+    world.hold = (op, store) => (op === "put" && store === "images" ? new Promise((r) => held.push(r)) : null);
+    const m = await freshStorage();
+    const h = renderHook(m.useConcerts, [[], EMAIL]);
+    await waitFor(() => held.length === 1, 4000, "migration retenue");
+    h.result[1]((list) => list.map((c) => ({ ...c, titre: "T0" })));
+    await waitFor(() => world.stores.concerts.get("c1").titre === "T0", 2000, "S2 : T0 écrit tout de suite malgré la migration retenue");
+    if (order === "avant-liberation") {
+      h.result[1]((list) => list.map((c) => ({ ...c, titre: "T3" })));
+      await waitFor(() => world.stores.concerts.get("c1").titre === "T3", 2000, "T3 écrit");
+      world.hold = null;
+      for (const r of held) r();
+    } else {
+      world.hold = null;
+      for (const r of held) r();
+      await waitFor(() => !hasInline(world.stores.concerts.get("c1")), 3000, "migration écrite");
+      assert.equal(world.stores.concerts.get("c1").titre, "T0");
+      await waitFor(() => h.result[2], 4000, "chargé");
+      h.result[1]((list) => list.map((c) => ({ ...c, titre: "T3" })));
+    }
+    const done = () => world.stores.concerts.get("c1").titre === "T3" && !hasInline(world.stores.concerts.get("c1"))
+      && (!online || (w.serverConcerts()?.[0]?.titre === "T3" && localStorage.getItem(pendingKey) === null));
+    await waitFor(done, 6000, "T3 écrit (et envoyé)");
+    await sleep(400); // une écriture en retard aurait le temps de passer
+    const backup = JSON.parse(localStorage.getItem(BACKUP_KEY));
+    assert.equal(world.stores.concerts.get("c1").titre, "T3", "IndexedDB");
+    assert.equal(h.result[0][0].titre, "T3", "écran");
+    assert.equal(backup[0].titre, "T3", "copie de secours");
+    if (online) assert.equal(w.serverConcerts()[0].titre, "T3", "compte");
+    assert.deepEqual(surTel(world.stores.concerts.get("c1").pieces[0].plans), [a]);
+    assertNoOrphanRef();
+    unmountAll();
+    const m2 = await freshStorage();
+    const h2 = await open(m2);
+    await sleep(online ? 600 : 200);
+    assert.equal(h2.result[0][0].titre, "T3", "réouverture");
+    assert.equal(world.stores.concerts.get("c1").titre, "T3");
+    if (online) assert.equal(w.serverConcerts()[0].titre, "T3");
+  } finally { w.restore(); }
+}
+
+for (const online of [false, true]) {
+  for (const order of ["apres-liberation", "avant-liberation"]) {
+    test(`B1 : deux enregistrements qui se chevauchent (${online ? "en ligne" : "hors ligne"}, T3 ${order === "avant-liberation" ? "pendant" : "après"} la migration retenue) : la dernière modification partout`, async () => {
+      await courseSave({ online, order });
+    });
+  }
+}
+
+test("B1 : un enregistrement s'exécute avec la liste la plus récente et réunit les suppressions demandées entre-temps", async () => {
+  const w = offlineWorld();
+  try {
+    seedLocal([owned("c1", { titre: "un" }), owned("c2", { titre: "deux" }), owned("c3", { titre: "trois" })]);
+    const m = await freshStorage();
+    const h = await open(m);
+    let release;
+    const held = new Promise((r) => { release = r; });
+    world.hold = (op, store) => (op === "put" && store === "concerts" ? held : null);
+    h.result[1]((list) => list.filter((c) => c.id !== "c2").map((c) => (c.id === "c1" ? { ...c, titre: "un modifié" } : c)));
+    await sleep(150); // premier enregistrement retenu en pleine écriture
+    h.result[1]((list) => list.filter((c) => c.id !== "c3"));
+    await sleep(150);
+    world.hold = null;
+    release();
+    await waitFor(() => !world.stores.concerts.has("c2") && !world.stores.concerts.has("c3") && world.stores.concerts.get("c1")?.titre === "un modifié", 3000, "état final");
+    await sleep(200);
+    assert.deepEqual(Array.from(world.stores.concerts.keys()), ["c1"]);
+    assert.deepEqual(JSON.parse(localStorage.getItem(BACKUP_KEY)).map((c) => c.id), ["c1"]);
+  } finally { w.restore(); }
+});
+
+test("S2 : nouveau plan puis fermeture par Android pendant le rangement : la modification n'est jamais perdue", async () => {
+  const w = offlineWorld();
+  try {
+    seedLocal([owned("c1", { titre: "avant", pieces: [piece("p1", [])] })]);
+    const m = await freshStorage();
+    const h = await open(m);
+    const plan = image();
+    world.hold = (op, store) => (op === "put" && store === "images" ? new Promise(() => {}) : null); // rangement jamais fini
+    h.result[1]((list) => list.map((c) => ({ ...c, titre: "après", pieces: c.pieces.map((p) => ({ ...p, plans: [plan], planDataUrl: plan })) })));
+    await waitFor(() => world.stores.concerts.get("c1").titre === "après", 2000, "écrit avant le rangement de l'image");
+    assert.deepEqual(world.stores.concerts.get("c1").pieces[0].plans, [plan], "écrit avec son image (pas encore rangée)");
+    assert.equal(JSON.parse(localStorage.getItem(BACKUP_KEY))[0].titre, "après", "copie de secours écrite aussi");
+    // Android tue l'application ici.
+    world.frozen = true;
+    unmountAll();
+    const ls = new Map(localStorage.map);
+    const fresh = Object.create(Object.getPrototypeOf(localStorage)); fresh.map = ls; globalThis.localStorage = fresh;
+    world.frozen = false; world.hold = null;
+    const m2 = await freshStorage();
+    const h2 = await open(m2);
+    assert.equal(h2.result[0][0].titre, "après");
+    await waitFor(migrated, 4000, "rangement repris");
+    assert.deepEqual(surTel(world.stores.concerts.get("c1").pieces[0].plans), [plan]);
+    assertNoOrphanRef();
+  } finally { w.restore(); }
+});
+
+test("S3 : une modification après la migration ne relit ni ne réécrit aucune image ; une seule migration au premier lancement", async () => {
+  const w = offlineWorld();
+  try {
+    const { a, b, c, logo, list } = ancienFormat();
+    seedLocal(list);
+    const imageOps = [];
+    world.onOp = (op, store, key) => { if (store === "images") imageOps.push(`${op}:${key ?? ""}`); };
+    const m = await freshStorage();
+    const h = await open(m);
+    m.requestSyncRetry(); m.requestSyncRetry(); // autres déclencheurs pendant la migration
+    await waitFor(migrated, 4000, "migration");
+    await sleep(200);
+    const puts = imageOps.filter((x) => x.startsWith("put:"));
+    assert.equal(puts.length, 4, `une écriture par image, pas de migrations parallèles (${puts.length})`);
+    assert.deepEqual(new Set(puts.map((x) => x.slice(4))), new Set([a, b, c, logo].map(sha)));
+    imageOps.length = 0;
+    for (let i = 0; i < 3; i += 1) {
+      h.result[1]((l) => l.map((x) => ({ ...x, titre: `modif ${i}` })));
+      await waitFor(() => world.stores.concerts.get("c1").titre === `modif ${i}`, 2000, "écrit");
+    }
+    assert.deepEqual(imageOps, [], "aucune lecture ni écriture d'image pour une modification de texte");
+    // Nouveau plan sur un concert : seule SA nouvelle image est écrite et vérifiée.
+    const neuf = image();
+    h.result[1]((l) => l.map((x) => (x.id === "c1" ? { ...x, pieces: x.pieces.map((p) => ({ ...p, plans: [...p.plans, neuf] })) } : x)));
+    await waitFor(() => refsIn(world.stores.concerts.get("c1")).includes(sha(neuf)) && migrated(), 3000, "nouveau plan rangé");
+    assert.deepEqual(imageOps.filter((x) => x.startsWith("put:")), [`put:${sha(neuf)}`]);
+  } finally { w.restore(); }
+});
+
+test("S3 : image refusée (place) : nouvel essai seulement après l'attente, pas à chaque enregistrement", async () => {
+  const w = offlineWorld();
+  try {
+    seedLocal([owned("c1", { pieces: [piece("p1", [])] })]);
+    let tries = 0;
+    let full = true;
+    const plan = image();
+    world.onOp = (op, store, key) => {
+      if (op === "put" && store === "images" && key === sha(plan)) {
+        tries += 1;
+        if (full) { const e = new Error("QuotaExceededError"); e.name = "QuotaExceededError"; throw e; }
+      }
+    };
+    const m = await freshStorage();
+    const h = await open(m);
+    h.result[1]((l) => l.map((x) => ({ ...x, pieces: x.pieces.map((p) => ({ ...p, plans: [plan] })) })));
+    await waitFor(() => tries === 1, 2000, "premier essai");
+    for (let i = 0; i < 4; i += 1) {
+      h.result[1]((l) => l.map((x) => ({ ...x, titre: `t${i}` })));
+      await waitFor(() => world.stores.concerts.get("c1").titre === `t${i}`, 2000, "écrit");
+    }
+    assert.equal(tries, 1, "pas de nouvel essai pendant l'attente (1 min)");
+    assert.deepEqual(world.stores.concerts.get("c1").pieces[0].plans, [plan], "le plan reste dans le concert : rien n'est perdu");
+    assertNoOrphanRef();
+    // Après l'attente : nouvel essai, réussi.
+    full = false;
+    const realNow = Date.now;
+    Date.now = () => realNow() + 61_000;
+    try {
+      h.result[1]((l) => l.map((x) => ({ ...x, titre: "plus tard" })));
+      await waitFor(() => world.stores.concerts.get("c1").titre === "plus tard" && migrated(), 3000, "rangé après l'attente");
+    } finally { Date.now = realNow; }
+    assert.equal(tries, 2);
+  } finally { w.restore(); }
+});
+
+test("S1 : une seule connexion IndexedDB ; « blocked » → message clair ; « blocking » → écrit ce qui attend, ferme, recharge ; « terminated » → rouverte", async () => {
+  const w = offlineWorld();
+  try {
+    seedLocal([owned("c1", { titre: "avant" })]);
+    const m = await freshStorage();
+    const h = await open(m);
+    h.result[1]((l) => l.map((x) => ({ ...x, titre: "x" })));
+    await waitFor(() => world.stores.concerts.get("c1").titre === "x", 2000, "écrit");
+    assert.equal(world.opens, 1, `une seule ouverture pour toute la session (${world.opens})`);
+    const options = world.openOptions;
+    assert.equal(typeof options.blocked, "function");
+    options.blocked();
+    const { bannerInfo } = await imp("src/syncUi.js");
+    assert.equal(m.readSyncStatus().upgradeBlocked, true);
+    assert.match(bannerInfo(m.readSyncStatus()).text, /Ferme les autres fenêtres OrkMap pour terminer la mise à jour/);
+    // Modification en attente (enregistrement différé pas encore parti), puis une autre fenêtre veut monter la base.
+    let reloaded = 0;
+    m.setPageReloader(() => { reloaded += 1; });
+    h.result[1]((l) => l.map((x) => ({ ...x, titre: "juste avant la mise à jour" })));
+    options.blocking();
+    await waitFor(() => reloaded === 1, 3000, "page rechargée");
+    assert.equal(world.stores.concerts.get("c1").titre, "juste avant la mise à jour", "ce qui attendait est écrit avant la fermeture");
+    assert.equal(world.closes, 1, "connexion fermée pour laisser monter la nouvelle version");
+    // Connexion coupée par le navigateur : la suivante est rouverte.
+    const before = world.opens;
+    world.openOptions.terminated?.();
+    await m.loadPlanImage(ref(image()), { download: false });
+    assert.ok(world.opens > before, "rouverte après « terminated » ou « blocking »");
+    m.setPageReloader(null);
+  } finally { w.restore(); }
+});
+
+test("S1 : « Chargement du plan… » jamais sans fin : délai, puis null (cadre avec message)", async () => {
+  const w = offlineWorld();
+  try {
+    const a = image();
+    world.stores.images.set(sha(a), a);
+    seedLocal([owned("c1", { pieces: [piece("p1", [ref(a)])] })]);
+    const m = await freshStorage();
+    await open(m);
+    world.hold = (op, store) => (op === "get" && store === "images" ? new Promise(() => {}) : null);
+    const t0 = Date.now();
+    assert.equal(await m.loadPlanImage(ref(a), { timeoutMs: 150 }), null);
+    assert.ok(Date.now() - t0 < 1000);
+    world.hold = null;
+  } finally { w.restore(); }
+});
+
+test("export sans adresse : la table copie → original du compte des concerts est utilisée", async () => {
+  const w = offlineWorld();
+  try {
+    const original = image(); const copie = image();
+    world.stores.images.set(sha(original), original);
+    world.stores.photos.set(`orkmap-image-registry:${EMAIL}`, { variants: { [sha(original)]: sha(copie) }, rejected: {}, retry: {} });
+    seedLocal([owned("c1", { pieces: [piece("p1", [ref(copie)])] })]);
+    const m = await freshStorage();
+    const snap = await m.buildLocalSnapshot(null, {});
+    assert.deepEqual(snap.concerts[0].pieces[0].plans, [original]);
+    assert.equal(snap.plansNonInclus, 0);
+  } finally { w.restore(); }
+});

@@ -40,8 +40,12 @@ function storeApi(name) {
     async delete(k) { world.onOp?.("delete", name, k); await gate("delete", name, k); m().delete(k); },
   };
 }
-export async function openDB() {
+// Lot 6 : nombre d'ouvertures, options passées (blocked / blocking / terminated) et fermetures, pour les tests.
+export async function openDB(name, version, options) {
+  world.opens = (world.opens || 0) + 1;
+  world.openOptions = options;
   return {
+    close() { world.closes = (world.closes || 0) + 1; },
     objectStoreNames: { contains: () => true, [Symbol.iterator]: function* () { yield* Object.keys(world.stores); } },
     async getAll(n) { return storeApi(n).getAll(); },
     async getAllKeys(n) { return storeApi(n).getAllKeys(); },

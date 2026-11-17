@@ -44,9 +44,16 @@ function oversizeText(list) {
   return `Tes données sont trop lourdes pour être envoyées au compte (${mo} Mo). Elles restent sur ce téléphone. Exporte-les.`;
 }
 
-export function bannerInfo({ online, pending, sessionExpired, oversize, backupFailed, degraded, imageRetry, unsentPlans } = {}) {
+export function bannerInfo({ online, pending, sessionExpired, oversize, backupFailed, degraded, imageRetry, unsentPlans, upgradeBlocked } = {}) {
   const network = networkInfo({ online, pending, sessionExpired });
   const withNetwork = (info) => (network ? { ...info, also: network } : info);
+  // Lot 6 : la base du téléphone passe en version 5 ; une autre fenêtre OrkMap (ancienne version) la retient.
+  if (upgradeBlocked) {
+    return withNetwork({
+      kind: "upgradeBlocked", tone: "alarm", action: null, card: true,
+      text: "Ferme les autres fenêtres OrkMap pour terminer la mise à jour. Tes données sont gardées.",
+    });
+  }
   const list = Array.isArray(oversize) ? oversize.filter(Boolean) : [];
   // Les photos n'ont jamais été envoyées au compte (chantier séparé) : un avis discret, pas une alarme.
   const photosBig = list.filter((o) => o.type === "photos");

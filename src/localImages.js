@@ -68,16 +68,20 @@ export async function writeVerifiedImage(db, hash, dataUrl) {
 
 // Range dans le magasin les images contenues dans `list` (concerts, ancien format).
 // Renvoie Map texte de l'image → empreinte, pour les SEULES images écrites, relues et vérifiées.
+// `known` : empreintes déjà présentes dans le magasin (vérifiées à leur écriture) : ni relues ni réécrites.
+// `shouldTry(empreinte)` : faux pendant l'attente après un refus (place) ; `onFailed(empreinte)` à chaque refus.
 // `onStored(empreinte)` : appelé pour chaque image vérifiée (mise à jour de l'index en mémoire).
-export async function storeInlineImages(db, list, { onStored } = {}) {
+export async function storeInlineImages(db, list, { onStored, onFailed, known = null, shouldTry = () => true } = {}) {
   const verified = new Map();
   if (!hasImagesStore(db)) return verified;
   const hashes = await findImageHashes(list);
   for (const [text, hash] of hashes) {
+    if (known?.has(hash)) { verified.set(text, hash); continue; }
+    if (!shouldTry(hash)) continue;
     if (await writeVerifiedImage(db, hash, text)) {
       verified.set(text, hash);
       onStored?.(hash);
-    }
+    } else onFailed?.(hash);
   }
   return verified;
 }

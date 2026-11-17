@@ -1273,6 +1273,7 @@ export default function App() {
   const [archiveModal, setArchiveModal] = useState(null);
   const [mergeData, setMergeData] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const aiBusyRef = useRef(false); // double appui : l'état React n'est pas encore à jour au second appui
   const [mobilierEditing, setMobilierEditing] = useState(null); // pieceId currently editing mob
   const [mobilierBackup, setMobilierBackup] = useState(null);
 
@@ -2148,14 +2149,19 @@ export default function App() {
       return;
     }
     if (isOffline()) { alert(OFFLINE_AI_MESSAGE); return; }
+    if (aiBusyRef.current) return;
+    // Bouton grisé AVANT de lire les images (un double appui ne lance pas deux lectures).
+    aiBusyRef.current = true;
+    setAiLoading(true);
     // Les vraies images partent à la lecture : lues dans le magasin du téléphone (ou téléchargées du compte).
     // Un plan dont l'image n'est pas disponible est laissé de côté.
     const plansLisibles = await loadPlanImages(targetPiece.plans);
     if (!plansLisibles.length) {
+      aiBusyRef.current = false;
+      setAiLoading(false);
       alert("Les plans de cette pièce ne sont pas encore téléchargés sur ce téléphone. Réessaie dans un instant.");
       return;
     }
-    setAiLoading(true);
     try {
       const extracted = await extractWithGemini(plansLisibles, "concert", { totalPages: plansLisibles.length });
       const ex = extracted || {};
@@ -2225,6 +2231,7 @@ export default function App() {
       updatePiece(targetPieceId, p => ({ ...p, aiStatus: aiFailedStatus(err) }));
       alert("Erreur extraction IA : " + err.message);
     } finally {
+      aiBusyRef.current = false;
       setAiLoading(false);
     }
   }
