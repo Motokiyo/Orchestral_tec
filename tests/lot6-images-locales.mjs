@@ -779,3 +779,96 @@ test("export sans adresse : la table copie → original du compte des concerts e
     assert.equal(snap.plansNonInclus, 0);
   } finally { w.restore(); }
 });
+
+// ───────────── Seconde relecture du lot 6 ─────────────
+
+const backupTitle = () => JSON.parse(localStorage.getItem(BACKUP_KEY) || "[]").find((c) => c.id === "c1")?.titre;
+
+test("A1 : une écriture IndexedDB figée ne fige pas la file : copie de secours et « en attente » tout de suite, la suite reprend la liste la plus récente (relecture6b/file-bloquee.mjs)", async () => {
+  const w = offlineWorld();
+  try {
+    seedLocal([owned("c1", { titre: "ORIGINE", pieces: [] })]);
+    const m = await freshStorage();
+    const h = await open(m);
+    await sleep(100);
+    let stuck = false;
+    world.hold = (op, store) => { if (op === "put" && store === "concerts" && !stuck) { stuck = true; return new Promise(() => {}); } return null; };
+    h.result[1]((l) => l.map((c) => ({ ...c, titre: "E1" })));
+    await sleep(300);
+    assert.equal(world.stores.concerts.get("c1").titre, "ORIGINE", "écriture figée");
+    assert.equal(backupTitle(), "E1", "copie de secours écrite tout de suite");
+    assert.ok(localStorage.getItem(pendingKey) !== null, "marque « en attente » posée tout de suite");
+    world.hold = null;
+    h.result[1]((l) => l.map((c) => ({ ...c, titre: "E2" })));
+    await sleep(300);
+    h.result[1]((l) => l.map((c) => ({ ...c, titre: "E3" })));
+    assert.equal(backupTitle(), "E3");
+    await waitFor(() => world.stores.concerts.get("c1").titre === "E3", 4000, "la file reprend après le délai de l'écriture figée");
+    await waitFor(() => !m.readSyncStatus().degraded, 2000, "alerte « mémoire lente » levée une fois l'écriture faite");
+    assert.ok(localStorage.getItem(pendingKey) !== null, "toujours en attente d'envoi (hors ligne)");
+    assert.equal(h.result[0][0].titre, "E3");
+    unmountAll();
+    const m2 = await freshStorage();
+    const h2 = await open(m2);
+    await sleep(200);
+    assert.equal(h2.result[0][0].titre, "E3", "réouverture");
+  } finally { w.restore(); }
+});
+
+test("A1 : IndexedDB figée puis application tuée avant le nouvel essai : la réouverture montre la dernière modification", async () => {
+  const w = offlineWorld();
+  try {
+    seedLocal([owned("c1", { titre: "ORIGINE", pieces: [] }), owned("c2", { titre: "deux", pieces: [] })]);
+    const m = await freshStorage();
+    const h = await open(m);
+    world.hold = (op, store) => (op === "put" && store === "concerts" ? new Promise(() => {}) : null);
+    h.result[1]((l) => l.filter((c) => c.id !== "c2").map((c) => ({ ...c, titre: "E1" })));
+    await waitFor(() => m.readSyncStatus().degraded, 4000, "écriture abandonnée après son délai, alerte affichée");
+    // Android tue l'application ; IndexedDB refonctionne au relancement.
+    world.frozen = true;
+    unmountAll();
+    const ls = new Map(localStorage.map);
+    const fresh = Object.create(Object.getPrototypeOf(localStorage)); fresh.map = ls; globalThis.localStorage = fresh;
+    world.frozen = false; world.hold = null;
+    const m2 = await freshStorage();
+    const h2 = await open(m2);
+    await sleep(200);
+    assert.deepEqual(h2.result[0].map((c) => `${c.id}:${c.titre}`), ["c1:E1"], "modification et suppression gardées");
+    await waitFor(() => world.stores.concerts.get("c1")?.titre === "E1" && !world.stores.concerts.has("c2"), 3000, "réécrites dans IndexedDB");
+  } finally { w.restore(); }
+});
+
+test("A2 : « blocking » pendant une écriture lente : la file se vide et la copie de secours est à jour avant le rechargement (relecture6b/blocking-file-lente.mjs)", async () => {
+  const w = offlineWorld();
+  try {
+    seedLocal([owned("c1", { titre: "ORIGINE", pieces: [] })]);
+    const m = await freshStorage();
+    let reloads = 0; let atReload = null;
+    m.setPageReloader(() => { reloads += 1; atReload = { idb: world.stores.concerts.get("c1").titre, copie: backupTitle() }; });
+    const h = await open(m);
+    await sleep(100);
+    let first = true;
+    world.hold = (op, store) => { if (op === "put" && store === "concerts" && first) { first = false; return sleep(1000); } return null; };
+    h.result[1]((l) => l.map((c) => ({ ...c, titre: "E1" })));
+    await sleep(120);
+    h.result[1]((l) => l.map((c) => ({ ...c, titre: "E2" }))); // enregistrement différé
+    world.openOptions.blocking();
+    await waitFor(() => reloads === 1, 5000, "rechargement");
+    assert.deepEqual(atReload, { idb: "E2", copie: "E2" });
+    m.setPageReloader(null);
+  } finally { w.restore(); }
+});
+
+test("upgradeBlocked : le message disparaît aussi quand l'ouverture échoue après le blocage", async () => {
+  reset();
+  const m = await freshStorage();
+  // Ouverture qui annonce un blocage puis échoue (world.failOpen : le faux openDB lève une erreur).
+  await m.loadPlanImage(ref(image()), { download: false }); // ouvre la base (stub)
+  world.openOptions.blocked();
+  assert.equal(m.readSyncStatus().upgradeBlocked, true);
+  world.openOptions.terminated(); // connexion perdue : la prochaine ouverture repart de zéro
+  world.failOpen = true;
+  await m.loadPlanImage(ref(image()), { download: false });
+  world.failOpen = false;
+  assert.equal(m.readSyncStatus().upgradeBlocked, false);
+});

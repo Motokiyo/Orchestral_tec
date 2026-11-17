@@ -44,6 +44,7 @@ function storeApi(name) {
 export async function openDB(name, version, options) {
   world.opens = (world.opens || 0) + 1;
   world.openOptions = options;
+  if (world.failOpen) throw Object.assign(new Error("VersionError"), { name: "VersionError" });
   return {
     close() { world.closes = (world.closes || 0) + 1; },
     objectStoreNames: { contains: () => true, [Symbol.iterator]: function* () { yield* Object.keys(world.stores); } },

@@ -23,6 +23,8 @@ const LOCAL_LOAD_TIMEOUT_MS = 4000;
 // d'écriture dans IndexedDB tant qu'une lecture n'a pas réussi.
 export const LOCAL_RETRY_TIMEOUTS_MS = [15000, 30000, 60000];
 const LOCAL_RETRY_PAUSE_MS = 5000;
+// Délai maximal d'une écriture des concerts dans IndexedDB (au-delà : abandonnée, nouvel essai, voir save).
+const SAVE_TIMEOUT_MS = LOCAL_LOAD_TIMEOUT_MS * 4;
 // Vercel refuse tout corps de requête au-delà de 4,5 Mo : on s'arrête à 4 Mo
 // (mesure en octets) et on le dit, au lieu d'un faux « Envoi en cours ».
 export const MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
@@ -847,7 +849,8 @@ export function requestPersistentStorage() {
 // peut plus l'ouvrir (voir DECISIONS.md, 17/11/2026).
 const pendingWriters = new Set(); // enregistrements différés à faire tout de suite (fermeture, mise à jour)
 let dbPromise = null;
-const UPGRADE_FLUSH_MS = 2000;
+// Plafond d'attente des écritures en cours avant de laisser la place à une nouvelle version.
+const UPGRADE_FLUSH_MS = 8000;
 const defaultReload = () => { try { window.location.reload(); } catch { /* pas de page (tests) */ } };
 let reloadPage = defaultReload;
 // Pour les tests : remplace le rechargement de la page.
@@ -897,6 +900,7 @@ function getDB() {
     setSyncFlag("upgradeBlocked", false);
     return db;
   }, (err) => {
+    setSyncFlag("upgradeBlocked", false);
     if (dbPromise === opening) dbPromise = null;
     throw err;
   });
@@ -1692,55 +1696,85 @@ export function useConcerts(initialConcerts, userEmail) {
   useSyncRetry(email, flush);
 
   // Auto-save to IndexedDB, then queue + send to the account (debounced)
-  // Relecture du lot 6 : les enregistrements passent par la file d'écriture, un à la fois, et chacun écrit
-  // la liste la plus récente AU MOMENT où il s'exécute (les suppressions demandées entre-temps sont
-  // réunies). Ordre : copie de secours, puis IndexedDB tout de suite (même si un nouveau plan y est encore
-  // avec son image : une fermeture par Android juste après ne perd rien), puis seulement le rangement
-  // de l'image dans le magasin, qui réécrit le concert avec sa référence par la même file.
+  // Relecture du lot 6 : la copie de secours et la marque « en attente » sont écrites TOUT DE SUITE,
+  // hors de la file (elles reflètent la dernière modification même si IndexedDB ne répond plus). Puis
+  // l'écriture IndexedDB passe par la file, une à la fois, avec la liste la plus récente au moment où elle
+  // s'exécute (suppressions réunies). Une écriture qui dépasse son délai est abandonnée proprement : la
+  // file continue, le bandeau « mémoire lente » s'affiche, le marqueur de réintégration garde la liste à
+  // jour (copie de secours) pour un relancement, et un nouvel essai reprend la liste la plus récente.
+  // Le rangement d'un nouveau plan dans le magasin d'images vient après (migrateImages, même file).
   const queuedRemovalsRef = useRef([]);
   const queuedSaveRef = useRef(null);
+  const stalledRef = useRef(false);
+  const stallRetryRef = useRef(null);
+  const saveRef = useRef(null);
+  useEffect(() => () => clearTimeout(stallRetryRef.current), []);
   const save = useCallback(async (_data, removedIds = []) => {
     if (!email) return;
+    const now = latestRef.current.map((item) => withOwner(item, email));
+    writeConcertsBackup(email, now, { removedIds });
+    if (degradedRef.current) {
+      // Mode dégradé : IndexedDB n'a pas été relu, on n'y écrit pas (cela pourrait
+      // écraser des données plus récentes avec la copie de secours) et on n'envoie
+      // rien. Ce qui a changé est noté pour être réintégré dès que IndexedDB répond.
+      const previous = readDegradedMarker(email) || { editedIds: [], removedIds: [] };
+      writeDegradedMarker(email, {
+        editedIds: [...previous.editedIds, ...changedIds(degradedBaseRef.current, now)],
+        removedIds: [...previous.removedIds, ...removedIds],
+      });
+      return;
+    }
+    markPending(email, SYNC_TYPES.concerts, removedIds);
     queuedRemovalsRef.current.push(...removedIds);
     if (!queuedSaveRef.current) {
       queuedSaveRef.current = enqueueWrite(async () => {
         queuedSaveRef.current = null;
         const removed = Array.from(new Set(queuedRemovalsRef.current.splice(0)));
         const owned = latestRef.current.map((item) => withOwner(item, email));
-        writeConcertsBackup(email, owned, { removedIds: removed });
-        if (degradedRef.current) {
-          // Mode dégradé : IndexedDB n'a pas été relu, on n'y écrit pas (cela pourrait
-          // écraser des données plus récentes avec la copie de secours) et on n'envoie
-          // rien. Ce qui a changé est noté pour être réintégré dès que IndexedDB répond.
+        try {
+          await withTimeout(saveLocal(owned, removed), SAVE_TIMEOUT_MS, "Concert IndexedDB save");
+          if (stalledRef.current) {
+            // IndexedDB répond de nouveau et la liste à jour y est : fin de l'alerte et du marqueur.
+            stalledRef.current = false;
+            clearDegradedMarker(email);
+            setSyncFlag("degraded", false);
+          }
+          return { ok: true };
+        } catch (err) {
+          console.warn("[OrkMap] IndexedDB save failed or too slow, will retry:", err?.message || err);
+          // Rien n'est perdu : les suppressions repartent avec le prochain essai ; si l'application est
+          // fermée avant, le relancement réintègre la copie de secours (liste à jour) pour tous les concerts.
+          queuedRemovalsRef.current.push(...removed);
           const previous = readDegradedMarker(email) || { editedIds: [], removedIds: [] };
           writeDegradedMarker(email, {
-            editedIds: [...previous.editedIds, ...changedIds(degradedBaseRef.current, owned)],
+            editedIds: [...previous.editedIds, ...owned.map((c) => String(c.id))],
             removedIds: [...previous.removedIds, ...removed],
           });
-          return { degraded: true };
+          stalledRef.current = true;
+          setSyncFlag("degraded", true);
+          clearTimeout(stallRetryRef.current);
+          stallRetryRef.current = setTimeout(() => saveRef.current?.(latestRef.current, []), LOCAL_RETRY_PAUSE_MS);
+          return { ok: false };
         }
-        try {
-          await saveLocal(owned, removed);
-        } catch (err) {
-          console.warn("[OrkMap] IndexedDB save failed:", err);
-        }
-        markPending(email, SYNC_TYPES.concerts, removed);
-        return { degraded: false };
       });
     }
-    const outcome = await queuedSaveRef.current;
-    if (!outcome || outcome.degraded) return;
+    await queuedSaveRef.current;
     // Envoi (et rangement des nouvelles images) HORS de la file : le réseau ne retarde jamais une écriture locale.
     await flush();
   }, [email, saveLocal, flush, enqueueWrite]);
 
+  saveRef.current = save;
+
+  // Écrit tout de suite ce qui attend (fermeture, mise à jour de la base) ; rend la fin des écritures locales.
   const runSaveNow = useCallback(() => {
-    if (!saveTimer.current) return;
-    clearTimeout(saveTimer.current);
-    saveTimer.current = null;
-    const removals = removalsRef.current;
-    removalsRef.current = [];
-    return save(latestRef.current, removals);
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      const removals = removalsRef.current;
+      removalsRef.current = [];
+      save(latestRef.current, removals);
+    }
+    return writeChainRef.current;
   }, [save]);
 
   useSaveOnHide(runSaveNow);
@@ -1754,6 +1788,12 @@ export function useConcerts(initialConcerts, userEmail) {
     const nextIds = new Set(next.map((c) => c.id));
     const removedIds = prev.filter((c) => c && c.id && !nextIds.has(c.id)).map((c) => c.id);
     setConcerts(next);
+    // Relecture du lot 6 : copie de secours et marque « en attente » dès la modification (pas seulement à
+    // l'enregistrement différé) : elles reflètent toujours la dernière modification, même si IndexedDB est figée.
+    if (email) {
+      writeConcertsBackup(email, next.map((item) => withOwner(item, email)), { removedIds });
+      if (!degradedRef.current && !removedIds.length) markPending(email, SYNC_TYPES.concerts);
+    }
     // Deletions are recorded at once (not at the debounced save), so a quick
     // second edit cannot make them disappear from the queue.
     if (removedIds.length) {
