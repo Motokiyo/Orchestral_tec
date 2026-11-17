@@ -206,6 +206,7 @@ export async function extractFromPdf(file) {
     result.titre = file.name.replace(/\.pdf$/i, "").replace(/[-_]/g, " ");
   }
 
+  finaliserLecture(result, lines);
   return result;
 }
 
@@ -1351,7 +1352,27 @@ function buildDetail(notation, { boisG, cuivresG, percG, cordesG, lab, extras, r
   }
   if (Object.keys(lab.autres).length) detail.autres = lab.autres;
   detail.remarques = [...remarques, ...lab.remarques];
+  detail.effectifPercus = computeEffectifPercus(percG, lab);
   return detail;
+}
+
+/**
+ * Timbaliers et percussionnistes lus (musiciens, pas instruments) : { timbaliers, percussionnistes }.
+ * « T+2 » = 1 timbalier + 2 percussionnistes. Un champ non écrit reste null ; null entier si rien n'est dit.
+ * (« 2 timb. » ambigu fait refuser tout le décodage en amont : on n'arrive jamais ici.)
+ */
+function computeEffectifPercus(percG, lab) {
+  let timb = null; let perc = null;
+  if (percG) {
+    const parts = parseGroup(percG);
+    if (parts[0]) timb = parts[0].count;
+    if (parts[1]) perc = parts[1].count;
+  }
+  if (lab.timbales) timb = (timb || 0) + lab.timbales;
+  if (lab.percussion) perc = (perc || 0) + lab.percussion;
+  if (timb === null && perc === null) return null;
+  // Convention Daniels : « -Timb » seul dit 1 timbalier et aucun percussionniste nommé.
+  return { timbaliers: timb === null ? 0 : timb, percussionnistes: perc === null ? 0 : perc };
 }
 
 // Notation anglaise du LSO : « 2220 / 0400 / 0T 2P 2 x Vibraphones 0H 2Pno / 1BassGuitar / 10.8.6.6.0 ».
@@ -1389,6 +1410,12 @@ function decodeLetterNotation(notation, s0) {
   if (!found) return null;
   const d = buildDetail(notation, { boisG, cuivresG, percG: null, cordesG, lab, extras: null, remarques });
   if (d.percussions === null) d.percussions = { total: 0 };
+  // « 0T 2P » : les deux chiffres sont écrits, donc connus (zéro compris).
+  const hasT = /(?<![A-Za-z\d.])\d+\s?T(?![A-Za-z])/.test(t); const hasP = /(?<![A-Za-z\d.])\d+\s?P(?![A-Za-z])/.test(t);
+  d.effectifPercus = (hasT || hasP) ? { timbaliers: lab.timbales, percussionnistes: lab.percussion } : null;
+  // Instruments de percussion écrits avec leur nombre : « 2 x Vibraphones », « (2 Marimba, 2 Xylo, Vibraphone) ».
+  const inst = lireInstrumentsPercuEcrits(s0);
+  if (inst.length) d.instrumentsPercu = inst;
   return d;
 }
 
@@ -1412,6 +1439,12 @@ export function decodeEffectif(notation) {
   if (!s) return null;
 
   if ((s.match(/(?<![A-Za-z\d.])\d+\s?(?:T|P|H|Pno|Kb)(?![A-Za-z])/g) || []).length >= 2) return decodeLetterNotation(notation, s);
+
+  // LSO sans percussions : « 2220 / 0400 » = 2.2.2.0 / 0.4.0.0 (bois / cuivres, rien d'autre n'est dit).
+  const compact = /^(\d{4})\s*\/\s*(\d{4})$/.exec(s);
+  if (compact) {
+    return buildDetail(notation, { boisG: compact[1].split("").join("."), cuivresG: compact[2].split("").join("."), percG: null, cordesG: null, lab: newLabelled(), extras: null, remarques });
+  }
 
   // Cordes données à part : « Cordes[12.10.8.6.4] », « [Cordes 8.8.6.5.3] », « - cordes 16.14… »
   let cordesG = null;
@@ -1457,6 +1490,8 @@ export function decodeEffectif(notation) {
   // Cordes en premier (7.6.5.4.3 / 2.1.2.1 / 3.2.2.0 / 1timb.1perc.1harpe) : un groupe à 5 nombres en tête,
   // alors que la dernière ligne est nommée.
   if (cordesG === null && numerics.length >= 3 && tok(numerics[0]) === 5 && labelled.length > 0) cordesG = numerics.shift();
+  // Même cas sans ligne nommée : 5 nombres décroissants en tête (7.6.5.4.3), les autres groupes n'en ont pas 5.
+  if (cordesG === null && numerics.length === 4 && ressembleACordes(numerics[0]) && tok(numerics[3]) !== 5) cordesG = numerics.shift();
   // 4 groupes numériques : le dernier est celui des cordes
   if (cordesG === null && numerics.length === 4) cordesG = numerics.pop();
   // 3 groupes numériques dont le dernier a 5 pupitres ou plus : cordes (bois/cuivres + cordes)
@@ -1474,6 +1509,14 @@ export function decodeEffectif(notation) {
 
   const extras = extrasFound.find(Boolean) || null;
   return buildDetail(notation, { boisG, cuivresG, percG, cordesG, lab, extras, remarques: remarques.filter(Boolean) });
+}
+
+/** 5 nombres décroissants (jamais croissants, premier > dernier, premier au moins 3) : ressemble à des cordes (7.6.5.4.3, 16.14.12.10.8). */
+function ressembleACordes(g) {
+  const n = String(g).replace(/\+\d+/g, "").match(/\d+/g) || [];
+  if (n.length !== 5) return false;
+  const v = n.map(Number);
+  return v[0] >= 3 && v[0] > v[4] && v.every((x, i) => i === 0 || x <= v[i - 1]);
 }
 
 // Nombre de pupitres d'un groupe : « 6+2 » compte pour un seul (le « +2 » sont des auxiliaires).
@@ -1580,6 +1623,304 @@ function addSummary(summary, group) {
 }
 
 // ══════════════════════════════════════════
+// LOT 4B — ORDRE DANIELS, EFFECTIF DES PERCUSSIONS, NOMS BAROQUES, PLAN DE DÉTAIL PERCUSSION
+// ══════════════════════════════════════════
+
+/** Instruments de percussion à clavier écrits avec leur nombre : « 2 x Vibraphones », « (2 Marimba, 2 Xylo, Vibraphone) ». */
+export function lireInstrumentsPercuEcrits(text) {
+  const out = {};
+  const re = /(?:(\d+)\s*(?:x\s*)?)?\b(vibraphones?|marimbas?|xylophones?|xylos?|glockenspiels?|glocks?|crotales?)\b/gi;
+  let m;
+  while ((m = re.exec(String(text || ""))) !== null) {
+    const w = stripAccents(m[2]);
+    const nom = /^vibra/.test(w) ? "Vibraphone" : /^marimba/.test(w) ? "Marimba" : /^xylo/.test(w) ? "Xylophone" : /^glock/.test(w) ? "Glockenspiel" : "Crotales";
+    out[nom] = (out[nom] || 0) + (m[1] ? parseInt(m[1], 10) : 1);
+  }
+  return Object.entries(out).map(([nom, qte]) => ({ nom, qte }));
+}
+
+// ── Ligne d'effectif remise en ordre Daniels ──
+
+const SLOTS_BOIS = ["Flûte", "Hautbois", "Clarinette", "Basson"];
+const SLOTS_CUIVRES = ["Cor", "Trompette", "Trombone", "Tuba"];
+const SLOTS_CORDES = ["Violon I", "Violon II", "Alto", "Violoncelle", "Contrebasse"];
+// Instrument « dédié » écrit seul (Piccolo, Cor anglais…) : rattaché à son pupitre, compté comme auxiliaire.
+const DEDIES = { "Piccolo": ["Flûte", "pic"], "Flûte alto": ["Flûte", "afl"], "Cor anglais": ["Hautbois", "eh"], "Clarinette basse": ["Clarinette", "bcl"], "Petite clarinette (Mib)": ["Clarinette", "ecl"], "Contrebasson": ["Basson", "cbn"] };
+const ABBR_DOUBLING = { "Piccolo": "pic", "Flûte alto": "afl", "Cor anglais": "eh", "Clarinette basse": "bcl", "Petite clarinette (Mib)": "ecl", "Contrebasson": "cbn" };
+
+function ligneGroupe(group, slots) {
+  if (group === null || group === undefined) return null;
+  const aux = Array(slots.length).fill(0); const base = Array(slots.length).fill(0); const dbl = Array(slots.length).fill("");
+  let sax = 0;
+  for (const [k, n] of Object.entries(group)) {
+    if (typeof n !== "number" || n <= 0 || k === "total") continue;
+    if (/^Saxophone/.test(k)) { sax += n; continue; }
+    if (DEDIES[k]) { const i = slots.indexOf(DEDIES[k][0]); if (i >= 0) aux[i] += n; continue; }
+    const i = slots.findIndex((s) => k === s || k.startsWith(s + " ("));
+    if (i < 0) continue;
+    if (/\(auxiliaire\)/.test(k)) aux[i] += n;
+    else if (/\(\+/.test(k)) { base[i] += n; const nm = /\(\+([^)]+)\)/.exec(k); const ab = nm && ABBR_DOUBLING[nm[1]]; if (ab) dbl[i] = ab; }
+    else base[i] += n;
+  }
+  const toks = slots.map((_, i) => `${base[i]}${aux[i] ? "+" + aux[i] : ""}${dbl[i] ? "(" + dbl[i] + ")" : ""}`);
+  if (sax > 0) toks.push(`${sax}sax`);
+  return toks.join(".");
+}
+
+function singulier(w) { return stripAccents(w).replace(/\b(\w{3,})s\b/g, (m, b) => (b === "hautboi" ? m : b)); }
+
+/** « Orchestre » de l'app (listes de chaînes « 2 Flûtes ») ramené à la forme du décodeur. */
+function orchestreVersDetail(orch) {
+  const d = { bois: {}, cuivres: {}, cordes: {}, percussions: {}, autres: {}, extras: null };
+  const add = (o, k, n) => { o[k] = (o[k] || 0) + n; };
+  const read = (s) => { const m = /^\s*(\d+)?\s*(?:x\s*)?(.+?)\s*$/i.exec(String(s)); return m ? { n: m[1] ? parseInt(m[1], 10) : 1, w: singulier(m[2]) } : null; };
+  for (const s of orch.bois || []) { const r = read(s); if (!r) continue;
+    if (/^flute$/.test(r.w)) add(d.bois, "Flûte", r.n); else if (/^hautbois$/.test(r.w)) add(d.bois, "Hautbois", r.n);
+    else if (/^clarinette$/.test(r.w)) add(d.bois, "Clarinette", r.n); else if (/^basson$/.test(r.w)) add(d.bois, "Basson", r.n);
+    else if (/^piccolo$/.test(r.w)) add(d.bois, "Piccolo", r.n); else if (/^cor anglais$/.test(r.w)) add(d.bois, "Cor anglais", r.n);
+    else if (/^clarinette basse$/.test(r.w)) add(d.bois, "Clarinette basse", r.n); else if (/^contrebasson$/.test(r.w)) add(d.bois, "Contrebasson", r.n);
+    else if (/^saxophone/.test(r.w)) add(d.bois, "Saxophone", r.n); }
+  for (const s of orch.cuivres || []) { const r = read(s); if (!r) continue;
+    if (/^cor$/.test(r.w)) add(d.cuivres, "Cor", r.n); else if (/^trompette$/.test(r.w)) add(d.cuivres, "Trompette", r.n);
+    else if (/^trombone$/.test(r.w)) add(d.cuivres, "Trombone", r.n); else if (/^tuba$/.test(r.w)) add(d.cuivres, "Tuba", r.n); }
+  for (const s of orch.cordes || []) { const r = read(s); if (!r) continue;
+    if (/^violon\s*(?:i|1)$/.test(r.w)) add(d.cordes, "Violon I", r.n); else if (/^violon\s*(?:ii|2)$/.test(r.w)) add(d.cordes, "Violon II", r.n);
+    else if (/^alto$/.test(r.w)) add(d.cordes, "Alto", r.n); else if (/^violoncelle$/.test(r.w)) add(d.cordes, "Violoncelle", r.n);
+    else if (/^contrebasse$/.test(r.w)) add(d.cordes, "Contrebasse", r.n); }
+  const noms = [];
+  for (const s of orch.autres || []) { const r = read(s); if (!r) continue;
+    if (/^harpe$/.test(r.w)) add(d.percussions, "Harpe", r.n);
+    else if (/^(?:celesta|piano|orgue|clavecin|clavier)$/.test(r.w)) { add(d.percussions, "Clavier", r.n); noms.push(r.w); }
+    else if (/^guitare basse$/.test(r.w)) add(d.autres, "Guitare basse", r.n); else if (/^accordeon$/.test(r.w)) add(d.autres, "Accordéon", r.n); else if (/^soprano$/.test(r.w)) add(d.autres, "Soprano", r.n); }
+  if (noms.length) d.extras = noms.join(", ");
+  return d;
+}
+
+const estDetail = (x) => x && typeof x === "object" && !Array.isArray(x.bois) && !Array.isArray(x.cordes) && ("bois" in x || "cordes" in x || "percussions" in x);
+
+/**
+ * Ligne d'effectif en ORDRE DANIELS, cordes à la fin, nombres séparés par des points :
+ * bois / cuivres / timbales + percussions / claviers et harpes / autres musiciens / cordes.
+ * Exemple : « 2.2.2.0 / 0.4.0.0 / T+2 / 2hp+cel / 16.14.12.10.8 ».
+ * source : chaîne de notation (Daniels, LSO, cordes d'abord…), détail décodé (decodeEffectif), orchestre de
+ * l'app (listes « 2 Flûtes »), ou pièce ({ effectifDetail, effectif }). options.effectifPercus complète le cas
+ * orchestre (qui ne porte pas les percussionnistes). Un groupe non lu est écrit « -.-.-.- » (jamais des zéros
+ * inventés) ; renvoie "" si rien n'est lisible.
+ */
+export function formatEffectifDaniels(source, options = {}) {
+  let d = source;
+  if (typeof source === "string") d = decodeEffectif(source);
+  else if (source && !estDetail(source) && !Array.isArray(source.bois) && (source.effectifDetail || source.effectif)) d = source.effectifDetail || decodeEffectif(source.effectif);
+  else if (source && Array.isArray(source.bois)) d = orchestreVersDetail(source);
+  if (!d || typeof d !== "object") return "";
+  const sections = [];
+  sections.push(ligneGroupe(d.bois, SLOTS_BOIS) || "-.-.-.-");
+  sections.push(ligneGroupe(d.cuivres, SLOTS_CUIVRES) || "-.-.-.-");
+
+  const ep = options.effectifPercus || d.effectifPercus || null;
+  const perc = d.percussions || {};
+  if (ep) {
+    const t = ep.timbaliers || 0; const p = ep.percussionnistes || 0;
+    if (t > 0 && p > 0) sections.push(t === 1 ? `T+${p}` : `${t}T+${p}`);
+    else if (t > 0) sections.push(t === 1 ? "T" : `${t}T`);
+    else if (p > 0) sections.push(`${p}perc`);
+  }
+  const claviers = [];
+  if (perc.Harpe > 0) claviers.push(`${perc.Harpe}hp`);
+  if (perc.Clavier > 0) {
+    const noms = typeof d.extras === "string" ? d.extras.split(/[,/]/).map((x) => x.trim().toLowerCase()).filter(Boolean) : [];
+    const pianos = typeof d.extras === "string" ? /^(\d+)\s*pianos?$/i.exec(d.extras.trim()) : null;
+    if (pianos && parseInt(pianos[1], 10) === perc.Clavier) claviers.push(`${perc.Clavier}pno`);
+    else if (noms.length === perc.Clavier && noms.every((x) => /^(?:cel|celesta|orgue|piano|pno|clavecin|cembalo)$/.test(stripAccents(x)))) claviers.push(...noms.map((x) => (/^celesta$/.test(stripAccents(x)) ? "cel" : stripAccents(x))));
+    else claviers.push(`${perc.Clavier}clav`);
+  }
+  if (claviers.length) sections.push(claviers.join("+"));
+  const autres = [];
+  for (const [k, n] of Object.entries(d.autres || {})) {
+    if (!(n > 0)) continue;
+    autres.push(k === "Guitare basse" ? `${n}guitbasse` : k === "Guitare" ? `${n}guit` : k === "Accordéon" ? `${n}acc` : k === "Soprano" ? `${n}sop` : null);
+  }
+  const autresOk = autres.filter(Boolean);
+  if (autresOk.length) sections.push(autresOk.join("+"));
+  if (d.cordes && typeof d.cordes === "object" && SLOTS_CORDES.some((k) => d.cordes[k] > 0)) {
+    sections.push(SLOTS_CORDES.map((k) => d.cordes[k] || 0).join("."));
+  }
+  if (sections.every((x) => x === "-.-.-.-")) return "";
+  return sections.join(" / ");
+}
+
+const GROUPES_COMPARES = ["bois", "cuivres", "percussions", "cordes", "autres"];
+function memeDetail(a, b) {
+  if (!a || !b) return false;
+  for (const g of GROUPES_COMPARES) {
+    const x = Object.entries(a[g] || {}).filter(([k, v]) => k !== "total" && v > 0).sort(); const y = Object.entries(b[g] || {}).filter(([k, v]) => k !== "total" && v > 0).sort();
+    if (JSON.stringify(x) !== JSON.stringify(y)) return false;
+  }
+  return true;
+}
+
+// ── Noms baroques ──
+
+// Chaque entrée : motif (accents et pluriel ignorés), nom canonique, pluriel, famille. moderne = sert seulement
+// de compagnon dans une liste qui contient au moins un nom baroque.
+const BAROQUE = [
+  { re: /^(?:traverso|flute traversiere baroque|flute traversiere ancienne)$/, nom: "Traverso", pl: "Traversos", fam: "bois" },
+  { re: /^hautbois baroque$/, nom: "Hautbois baroque", pl: "Hautbois baroques", fam: "bois" },
+  { re: /^basson baroque$/, nom: "Basson baroque", pl: "Bassons baroques", fam: "bois" },
+  { re: /^flute a bec$/, nom: "Flûte à bec", pl: "Flûtes à bec", fam: "bois" },
+  { re: /^cornet a bouquin$/, nom: "Cornet à bouquin", pl: "Cornets à bouquin", fam: "cuivres" },
+  { re: /^(?:sacqueboute|saqueboute)$/, nom: "Sacqueboute", pl: "Sacqueboutes", fam: "cuivres" },
+  { re: /^cor naturel$/, nom: "Cor naturel", pl: "Cors naturels", fam: "cuivres" },
+  { re: /^trompette naturelle$/, nom: "Trompette naturelle", pl: "Trompettes naturelles", fam: "cuivres" },
+  { re: /^viole de gambe$/, nom: "Viole de gambe", pl: "Violes de gambe", fam: "cordes" },
+  { re: /^viole$/, nom: "Viole", pl: "Violes", fam: "cordes" },
+  { re: /^violone$/, nom: "Violone", pl: "Violones", fam: "cordes" },
+  { re: /^dessus(?: de violon)?$/, nom: "Dessus de violon", pl: "Dessus de violon", fam: "cordes" },
+  { re: /^taille(?: de violon)?$/, nom: "Taille", pl: "Tailles", fam: "cordes" },
+  { re: /^haute-?contre(?: de violon)?$/, nom: "Haute-contre", pl: "Hautes-contre", fam: "cordes" },
+  { re: /^quinte(?: de violon)?$/, nom: "Quinte", pl: "Quintes", fam: "cordes" },
+  { re: /^theorbe$/, nom: "Théorbe", pl: "Théorbes", fam: "continuo" },
+  { re: /^archiluth$/, nom: "Archiluth", pl: "Archiluths", fam: "continuo" },
+  { re: /^luth$/, nom: "Luth", pl: "Luths", fam: "continuo" },
+  { re: /^clavecin$/, nom: "Clavecin", pl: "Clavecins", fam: "continuo" },
+  { re: /^orgue positif$/, nom: "Orgue positif", pl: "Orgues positifs", fam: "continuo" },
+  { re: /^violon$/, nom: "Violon", pl: "Violons", fam: "cordes", moderne: true },
+  { re: /^alto$/, nom: "Alto", pl: "Altos", fam: "cordes", moderne: true },
+  { re: /^violoncelle$/, nom: "Violoncelle", pl: "Violoncelles", fam: "cordes", moderne: true },
+  { re: /^contrebasse$/, nom: "Contrebasse", pl: "Contrebasses", fam: "cordes", moderne: true },
+];
+
+const normNom = (t) => stripAccents(String(t || "")).replace(/[’']/g, "'").replace(/\s+/g, " ").trim();
+// Les pluriels sont ramenés au singulier mot à mot (« violes de gambe », « cors naturels », « hautes-contre »).
+const sansPluriel = (t) => normNom(t).replace(/\b(\w{3,}?)s\b/g, "$1").replace(/\bhaute-contre/, "haute-contre");
+
+/**
+ * Reconnaît un nom d'instrument baroque (traverso, hautbois baroque, basson baroque, théorbe, archiluth,
+ * viole de gambe, violone, clavecin, orgue positif, cornet à bouquin, sacqueboute, cor naturel, trompette
+ * naturelle, dessus, taille…). Renvoie { famille, nom, pluriel, moderne } ou null. Famille : bois | cuivres |
+ * cordes | continuo (théorbe, luth, clavecin, orgue positif : la basse continue).
+ */
+export function classerInstrumentBaroque(texte) {
+  const n = normNom(texte).replace(/^(?:\d+\s*(?:x\s*)?|un |une |le |la |les |des )/, "");
+  const cands = [n, sansPluriel(n), n.replace(/s$/, "")];
+  for (const c of cands) for (const e of BAROQUE) if (e.re.test(c)) return { famille: e.fam, nom: e.nom, pluriel: e.pl, moderne: !!e.moderne };
+  return null;
+}
+
+/**
+ * Liste écrite d'instruments (« 5 dessus, 2 tailles, 1 viole, 1 violoncelle, 1 théorbe, 1 violone ») rangée par
+ * famille. Renvoie null si aucun nom baroque n'y figure (une liste moderne n'est pas touchée). Rien n'est inventé :
+ * un nom sans nombre reste sans nombre.
+ */
+export function lireOrchestreBaroque(texte) {
+  const parts = String(texte || "").replace(/[()]/g, ",").split(/[,;\n]|\s+et\s+|\s+&\s+|\s+\+\s+/).map((x) => x.trim()).filter(Boolean);
+  const orch = { bois: [], cuivres: [], cordes: [], autres: [], continuo: [] };
+  let baroque = 0;
+  const found = [];
+  for (const p of parts) {
+    const m = /^(\d+)?\s*(?:x\s*)?(.+)$/i.exec(p);
+    if (!m) continue;
+    const c = classerInstrumentBaroque(m[2]);
+    if (!c) continue;
+    if (!c.moderne) baroque++;
+    found.push({ n: m[1] ? parseInt(m[1], 10) : null, c });
+  }
+  if (!baroque) return null;
+  for (const { n, c } of found) {
+    const sec = c.famille === "continuo" ? "continuo" : c.famille;
+    const label = n === null ? c.nom : `${n} ${n > 1 ? c.pluriel : c.nom}`;
+    if (!orch[sec].includes(label)) orch[sec].push(label);
+  }
+  return orch;
+}
+
+/** Ajoute à result.orchestre les instruments baroques lus dans le texte, sans doublon ni écrasement. */
+function fusionnerBaroque(result, text) {
+  const bar = lireOrchestreBaroque(text);
+  if (!bar) return;
+  result.orchestre = result.orchestre || { bois: [], cuivres: [], cordes: [], autres: [] };
+  const cle = (s) => sansPluriel(String(s).replace(/^\d+\s*/, ""));
+  for (const sec of ["bois", "cuivres", "cordes", "autres", "continuo"]) {
+    if (!bar[sec].length) continue;
+    const cur = Array.isArray(result.orchestre[sec]) ? result.orchestre[sec] : [];
+    const existantes = new Set(cur.map(cle));
+    result.orchestre[sec] = [...cur, ...bar[sec].filter((x) => !existantes.has(cle(x)))];
+  }
+}
+
+// ── Plan de détail percussion (un ou plusieurs postes dessinés à part) ──
+
+const PERCU_ECRITE = /(?:^|\s)(?:\d+\s*)?(?:timbales?|cymbales?|caisse|grosse caisse|tablette|triangle|tambour|tam-?tam|gong|vibraphone|xylophone|marimba|glockenspiel|crotales?|temple-?blocks?|claves|tom|toms|bongos?|congas?|cloches?|tambourin)\b/i;
+
+const catDetail = (nom) => (/^(?:tablette|si[eè]ge|r[aâ]teau|pied|stand|support)/i.test(nom) ? "Stands & supports" : categorizeInstrument(nom));
+const majuscule = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * Lit un plan de poste(s) de percussion seul : une ligne = un poste. « 4 timbales + siège + râteau » donne
+ * 4 timbales (un item par timbale), 1 siège de timbalier, 1 râteau ; « Caisse claire (+ siège de caisse) »
+ * donne la caisse et son siège. Renvoie { percus, detailPercussion: true } ou null si aucune ligne n'est un poste.
+ * Les lignes qui ne sont pas des instruments (« Pupitres », « Chaises ») sont ignorées.
+ */
+export function lireDetailPercussion(input) {
+  const lines = (Array.isArray(input) ? input : String(input || "").split(/\r?\n/)).map((l) => String(l).trim()).filter(Boolean);
+  const percus = [];
+  let k = 0;
+  for (const line of lines) {
+    if (/:/.test(line) || /\b(?:aucune?|n[ée]ant|sans)\b/i.test(line)) continue; // « Timbales : aucune » n'est pas un poste
+    const segs = line.replace(/[()]/g, " + ").split(/\s*\+\s*/).map((x) => x.trim()).filter(Boolean);
+    if (!segs.length || !PERCU_ECRITE.test(" " + segs[0]) || /^(?:pupitres?|chaises?)\b/i.test(segs[0])) continue;
+    const timb = /^(\d+)\s*timbales?$/i.exec(segs[0]) || /^timbales?$/i.test(segs[0]);
+    const items = [];
+    if (timb) {
+      const n = timb === true ? 1 : parseInt(timb[1], 10);
+      for (let i = 1; i <= n; i++) items.push({ cat: "Timbales & Peaux", nom: `Timbale ${i}` });
+    } else {
+      const nom = majuscule(segs[0].replace(/\s+/g, " "));
+      items.push({ cat: catDetail(nom), nom });
+    }
+    for (const seg of segs.slice(1)) {
+      if (/^si[eè]ge$/i.test(seg)) items.push({ cat: "Stands & supports", nom: timb ? "Siège de timbalier" : "Siège" });
+      else if (/^r[aâ]teau$/i.test(seg)) items.push({ cat: "Stands & supports", nom: "Râteau" });
+      else { const nom = majuscule(seg.replace(/\s+/g, " ")); items.push({ cat: catDetail(nom), nom }); }
+    }
+    percus.push({ nom: timb ? "Timbalier" : `Percu ${++k}`, items });
+  }
+  return percus.length ? { percus, detailPercussion: true } : null;
+}
+
+const orchestreVide = (o) => !o || !["bois", "cuivres", "cordes", "autres", "continuo"].some((s) => Array.isArray(o[s]) && o[s].length > 0);
+
+/**
+ * Dernière passe commune à toutes les lectures locales (PDF, image, texte) : instruments baroques écrits, plan de
+ * détail percussion, effectif des percussions et ligne d'effectif en ordre Daniels.
+ * Ajoute à result : effectifPercus ({ timbaliers, percussionnistes } ou null), detailPercussion (booléen),
+ * effectifBrut (texte écrit, seulement si la ligne a été remise en ordre).
+ */
+export function finaliserLecture(result, lines) {
+  const texte = Array.isArray(lines) ? lines.join("\n") : String(lines || "");
+  if (texte) fusionnerBaroque(result, texte);
+  appliquerOrdreDaniels(result);
+  if (!result.effectif && orchestreVide(result.orchestre) && !(result.percus && result.percus.length) && texte) {
+    const det = lireDetailPercussion(texte);
+    if (det) result.percus = det.percus;
+  }
+  result.detailPercussion = !result.effectif && orchestreVide(result.orchestre) && Array.isArray(result.percus) && result.percus.length > 0;
+  return result;
+}
+
+/** Remplit effectifPercus et remet result.effectif en ordre Daniels (la ligne écrite est gardée dans effectifBrut). */
+export function appliquerOrdreDaniels(result) {
+  result.effectifPercus = result.effectifDetail && result.effectifDetail.effectifPercus ? result.effectifDetail.effectifPercus : null;
+  if (!result.effectifDetail || !result.effectif) return result;
+  const ordre = formatEffectifDaniels(result.effectifDetail);
+  if (ordre && ordre !== result.effectif && memeDetail(decodeEffectif(ordre), result.effectifDetail)) {
+    result.effectifBrut = result.effectif;
+    result.effectif = ordre;
+  }
+  return result;
+}
+
+// ══════════════════════════════════════════
 // IMAGE EXTRACTION (JPEG/PNG) — OCR via Tesseract.js
 // ══════════════════════════════════════════
 
@@ -1653,6 +1994,7 @@ export async function extractFromImage(file) {
   // Create percu slots from effectif if none found
   buildPercuFromEffectif(result);
 
+  finaliserLecture(result, ocrText);
   return result;
 }
 
@@ -1706,6 +2048,7 @@ export async function extractFromTxt(file) {
 
   buildPercuFromEffectif(result);
 
+  finaliserLecture(result, text);
   return result;
 }
 
@@ -2186,6 +2529,10 @@ export async function extractWithGemini(imageDataUrls, mode, options = {}) {
     result.effectifDetail = decodeEffectif(result.effectif);
     if (result.effectifDetail && !result.orchestre) result.orchestre = orchestreFromEffectif(result.effectifDetail);
   }
+  appliquerOrdreDaniels(result);
+  // Plan de détail percussion : le moteur le dit, ou il n'y a ni effectif ni orchestre mais des postes de percussion.
+  result.detailPercussion = parsed.detailPercussion === true
+    || (!result.effectif && orchestreVide(result.orchestre) && result.percus.length > 0);
 
   // Décompte des pages : celles écartées avant l'envoi + celles que le serveur a écartées.
   const meta = isRecord(parsed.meta) ? parsed.meta : {};

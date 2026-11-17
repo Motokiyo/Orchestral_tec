@@ -14,7 +14,8 @@
  *       (ancien format accepté : { image: "data:image/jpeg;base64,...", mode })
  * Returns (enveloppe additive, tous les anciens champs gardent leur nom et leur type) :
  *   { titre, compositeur, duree, salle, chef, date, sansChef (true|false|null), effectif, orchestre, percus,
- *     mobilierObserve: [{type, qte (nombre|null), details?, source?, position?}],   // lu sur le plan, jamais calculé
+ *     mobilierObserve: [{type, qte (nombre|null), details?, source? ("écrit"|"dessiné"), position?}],   // lu sur le plan, jamais calculé
+ *     detailPercussion (true|false|null) : plan de poste(s) de percussion seul,
  *     warnings: [string],
  *     meta: { pages: { received, analysed, skipped: [{page, reason}] }, percusStatut: "lues"|"aucune"|"inconnu" } }
  * Erreurs : { error, code, warnings? } avec 400, 401, 422, 429, 502 ou 504 (jamais de détail du fournisseur).
@@ -183,6 +184,10 @@ export function normalizeExtraction(parsed) {
   else percusStatut = "inconnu";
 
   const mobilierObserve = cleanMobilierObserve(parsed.mobilierObserve, warn);
+  // detailPercussion : booléen seulement si le modèle l'affirme (jamais déduit ici ; l'écran croise avec l'effectif).
+  let detailPercussion = null;
+  if (parsed.detailPercussion === true || parsed.detailPercussion === false) detailPercussion = parsed.detailPercussion;
+  else if (parsed.detailPercussion !== undefined && parsed.detailPercussion !== null) warn(`Champ « detailPercussion » de type inattendu (${typeName(parsed.detailPercussion)}) : ignoré.`);
 
   // Réserves exprimées par le modèle lui-même (déductions, conflits entre sources, zones illisibles)
   if (Array.isArray(parsed.avertissements)) {
@@ -190,7 +195,7 @@ export function normalizeExtraction(parsed) {
   }
 
   return {
-    data: { titre, compositeur, duree, salle, chef, date, sansChef, effectif, orchestre, percus, mobilierObserve },
+    data: { titre, compositeur, duree, salle, chef, date, sansChef, effectif, orchestre, percus, mobilierObserve, detailPercussion },
     percusStatut,
     warnings,
   };
@@ -216,7 +221,7 @@ PROCÈDE EN 6 ÉTAPES :
 
 ABRÉVIATIONS (FR/EN/DE) :
 Fl/Flûte/Flöte, Picc/Petite flûte, Hb/Ob/Hautbois, CA/Cor anglais/Englischhorn, Cl/Clarinette/Klarinette, Bcl/Clarinette basse, Fg/Bn/Basson/Fagott, Cbn/Contrebasson/Kontrafagott, Cor/Hn/Horn, Tp/Trp/Trompette, Tb/Tbn/Trombone/Posaune/Pos, Tuba, Vl/Vn/Violon/Geige, Vla/Va/Alto/Bratsche, Vlc/Vc/Violoncelle/Cello, CB/Cb/DB/Kb/Contrebasse/Kontrabass, Hp/Harpe, Pno/Piano/Klavier, Cel→CONTEXTE(voir règle), Org/Orgue, Clav/Clavecin/Cembalo.
-Baroque : Dessus, Tailles, Viole, Violone, Théorbe → GARDER tels quels.
+Baroque : Dessus, Tailles, Viole, Violone, Théorbe, Archiluth, Viole de gambe, Traverso, Hautbois baroque, Basson baroque, Cornet à bouquin, Sacqueboute, Cor naturel, Trompette naturelle, Clavecin, Orgue positif → GARDER tels quels (ne les remplace pas par leur équivalent moderne).
 
 RÈGLES CRITIQUES :
 • Le CARTOUCHE (souvent en bas du plan) contient la ligne "Effectif" : lis-la EN PRIORITÉ, recopie-la, puis décode. Ignore les numéros de sièges/cotes/échelle.
@@ -234,7 +239,15 @@ RÈGLES CRITIQUES :
 • Une SALLE (Pflimlin, Rémy Pflimlin, Auditorium, Philharmonie, CMPP...) n'est PAS un compositeur. Pour un récital, le nom du titre est l'interprète, pas le compositeur.
 • Claviers (marimba, xylophone, vibraphone, glockenspiel, piano, célesta, clavecin) → orchestre.autres ; reconnais-les par leur FORME (légende) seulement quand elle est sans équivoque. Un rectangle ou une forme sans étiquette que tu ne reconnais pas avec certitude (table, support, pare-sons...) n'est PAS un clavier : ne le range pas, signale-le dans "avertissements".
 • orchestre.bois / cuivres / cordes / autres = liste de NOMS d'instruments avec quantité (ex : "4 Flûtes", "3 Hautbois", "14 Violons I"). N'écris une quantité que si elle est lue. JAMAIS la notation chiffrée brute ("4.3.5.4") dans ces listes : ça va dans "effectif" uniquement.
-• mobilierObserve : UNIQUEMENT le mobilier ÉCRIT ou DESSINÉ dans les pages du document (pas dans la légende) : chaises (distingue chaise haute, chaise normale, tabouret, banquette seulement si le document les distingue, sinon "chaise"), pupitres, stands, podium. Quantité = nombre lu, ou null si illisible. Ne déduis AUCUN mobilier de l'effectif. Rien d'observé = [].
+• mobilierObserve : UNIQUEMENT le mobilier ÉCRIT ou DESSINÉ dans les pages du document (pas dans la légende). Relève, un élément par ligne :
+   - PRATICABLES : leur nombre, et SOUS QUEL PUPITRE ou instrument (harpe, timbalier, percussions, contrebasses, bois, cuivres…) dans "details" (ex. « sous la harpe », « sous les contrebasses »). Compte-les sur le dessin, rangée par rangée (rangées de 3, de 2…).
+   - PODIUM du chef ; PUPITRES (pupitres à musique, pupitre du chef) ; STANDS spéciaux écrits (contrebasson, clarinette basse…).
+   - CHAISES, une ligne par TYPE écrit sur le plan : « chaise d'orchestre », « chaise haute », « chaise de contrebasse », « chaise de timbalier », « banquette », « tournante Kolberg », « R&S » (Rythme et Son). Ne ramène pas un type à un autre : si le plan écrit seulement « chaise », mets "chaise".
+   - VOCABULAIRE : « tabouret » se dit BANQUETTE (piano, harpe, claviers) : écris « Banquette », jamais « Tabouret ».
+   - TIMBALES DESSINÉES : donne le nombre de timbales réellement dessinées (3, 2 ou 1) dans une entrée « Timbales » ; ne suppose JAMAIS 4.
+   - Pour chaque entrée : "qte" = nombre lu, ou null si illisible (jamais un nombre deviné) ; "source" = "écrit" (c'est un texte du plan) ou "dessiné" (tu l'as compté sur le dessin) ; "details" = l'emplacement (sous quel pupitre, côté, rangée).
+   - Ne déduis AUCUN mobilier de l'effectif. Rien d'observé = [].
+• detailPercussion : true UNIQUEMENT si le document est un plan de détail de poste(s) de percussion SEUL (pas d'orchestre : 4 timbales + siège + râteau, cymbales frappées, tablette triangle…) ; sinon false. Dans ce cas, remplis "percus" (un poste par poste dessiné, un item par instrument, « 4 timbales + siège + râteau » = Timbale 1 à 4 + Siège de timbalier + Râteau) et laisse orchestre et effectif vides.
 • percusStatut : "lues" si tu as lu au moins un poste de percussion ; "aucune" si le document indique explicitement qu'il n'y a aucune percussion (W=0 et X=0 dans Daniels, ou mention « sans percussion ») ; "illisible" si tu ne peux pas trancher. Une liste vide SANS "aucune" signifie « je n'ai pas pu lire ».
 • Si illisible/ambigu : NE PAS inventer. Mets "" ou [] ou null, et explique dans "avertissements".
 
@@ -257,7 +270,8 @@ OUTPUT JSON STRICT (sans markdown, sans backticks) :
     {"nom": "Timbalier", "items": [{"cat": "Timbales & Peaux", "nom": "Timbale 1"}, ...]},
     {"nom": "Percu 1", "items": [{"cat": "Claviers", "nom": "Vibraphone"}, {"cat": "Accessoires", "nom": "Triangle"}]}
   ],
-  "mobilierObserve": [{"type": "Chaise haute", "qte": 3, "source": "dessin"}],
+  "detailPercussion": false,
+  "mobilierObserve": [{"type": "Praticable", "qte": 3, "details": "sous les contrebasses", "source": "dessiné"}, {"type": "Chaise haute", "qte": null, "details": "rangée du fond", "source": "écrit"}],
   "avertissements": ["ce qui est déduit, en conflit ou illisible"]
 }
 Catégories percus : "Claviers", "Timbales & Peaux", "Accessoires", "Grosses pièces", "Stands & supports", "Baguettes & spécial"`;

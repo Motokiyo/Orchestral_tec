@@ -1,4 +1,5 @@
 import { BARNIER } from './data.js';
+import { calculateMobilier } from './mobilier.js';
 
 // ── Deep merge helper (plain objects only, no arrays) ──
 function deepMerge(target, source) {
@@ -21,6 +22,7 @@ export const DEFAULT_MOBILIER = {
     chaisesHautes: 0,
     chaisesHautesDetail: "",
     chaisesSpeciales: [],
+    banquettes: 0,
   },
   stands: {
     cordes: [],
@@ -29,7 +31,9 @@ export const DEFAULT_MOBILIER = {
     percus: [],
     autres: [],
     autresCustom: [],
+    speciaux: [],
   },
+  infos: [],
   _edited: false,
 };
 
@@ -107,134 +111,8 @@ export function chefOptions(sansChef) {
   return { hasChef: false, chefInconnu: true };
 }
 
-// ── Calculate mobilier (furniture) from orchestre + percus ──
-export function calculateMobilier(orchestre, percus, options = {}) {
-  if (!orchestre) return null;
-
-  const { hasChef = false, chefInconnu = false } = options;
-
-  const boisItems = orchestre.bois || [];
-  const cuivresItems = orchestre.cuivres || [];
-  const cordesItems = orchestre.cordes || [];
-
-  // Lignes de l'effectif dont la quantité n'est pas écrite : non comptées, signalées (jamais « 1 »).
-  let quantitesInconnues = 0;
-
-  // ── Parse cordes counts ──
-  const cordesCounts = { v1: 0, v2: 0, alto: 0, vlc: 0, cb: 0, other: 0 };
-  for (const item of cordesItems) {
-    const str = typeof item === "string" ? item : "";
-    const num = extractNumberFromItem(str);
-    if (num === null) { if (str.trim()) quantitesInconnues++; continue; }
-    if (/violons?\s*I(?:\b|$)/i.test(str)) cordesCounts.v1 = num;
-    else if (/violons?\s*II/i.test(str)) cordesCounts.v2 = num;
-    else if (/altos?/i.test(str)) cordesCounts.alto = num;
-    else if (/violoncelles?|vlc|vc\b/i.test(str)) cordesCounts.vlc = num;
-    else if (/contrebasses?|cb\b/i.test(str)) cordesCounts.cb = num;
-    else cordesCounts.other = num; // violes de gambe, théorbes, luths, etc.
-  }
-
-  // ── Parse bois items → stands ──
-  const boisStands = [];
-  for (const item of boisItems) {
-    const str = typeof item === "string" ? item : "";
-    const num = extractNumberFromItem(str);
-    if (num === null && str.trim()) quantitesInconnues++;
-    const name = str.replace(/^\d+\s*/, "").trim() || str;
-    boisStands.push({ type: `Stands pour ${name.toLowerCase()}`, qty: num });
-  }
-
-  // ── Parse cuivres items → stands ──
-  const cuivresStands = [];
-  for (const item of cuivresItems) {
-    const str = typeof item === "string" ? item : "";
-    const num = extractNumberFromItem(str);
-    if (num === null && str.trim()) quantitesInconnues++;
-    const name = str.replace(/^\d+\s*/, "").trim() || str;
-    cuivresStands.push({ type: `Stands pour ${name.toLowerCase()}`, qty: num });
-  }
-
-  // ── Percussions ──
-  const nbPercus = percus ? percus.length : 0;
-  const percusStands = [];
-  if (percus && percus.length > 0) {
-    let chaisesTimbalier = 0;
-    let chaisesHautesPercus = 0;
-    percus.forEach(pole => {
-      if (pole.nom && pole.nom.toLowerCase().includes('timbalier')) {
-        chaisesTimbalier++;
-      } else {
-        chaisesHautesPercus++;
-      }
-    });
-    if (chaisesTimbalier > 0) {
-      percusStands.push({ type: "Chaise timbalier", qty: chaisesTimbalier });
-    }
-    if (chaisesHautesPercus > 0) {
-      percusStands.push({ type: "Chaises hautes", qty: chaisesHautesPercus });
-    }
-  }
-
-  // ── Autres (conditional on chef presence) ──
-  const autresStands = [];
-  if (hasChef) {
-    autresStands.push({ type: "Podium chef", qty: 1 });
-    autresStands.push({ type: "Pupitre chef", qty: 1 });
-  }
-
-  // ── Cordes stands ──
-  const cordesStands = [];
-  if (cordesCounts.cb > 0) {
-    cordesStands.push({ type: "Stands de contrebasse", qty: cordesCounts.cb });
-    cordesStands.push({ type: "Planches à pic CB", qty: cordesCounts.cb });
-  }
-  if (cordesCounts.vlc > 0) {
-    cordesStands.push({ type: "Planches à pic Vlc", qty: cordesCounts.vlc });
-  }
-
-  // ── General counts ──
-  // For non-standard cordes (violes, luths, etc.), each musician gets 1 pupitre
-  const pupiCordes = Math.ceil(cordesCounts.v1 / 2) + Math.ceil(cordesCounts.v2 / 2) +
-    Math.ceil(cordesCounts.alto / 2) + Math.ceil(cordesCounts.vlc / 2) + cordesCounts.other;
-  const pupiBois = boisItems.length;
-  const pupiCuivres = cuivresItems.length;
-  const pupitres = pupiCordes + pupiBois + pupiCuivres + (nbPercus > 0 ? nbPercus : 0) + (hasChef ? 1 : 0);
-
-  const totalBois = sumItemQuantities(boisItems).total;
-  const totalCuivres = sumItemQuantities(cuivresItems).total;
-  // Non-standard cordes (violes, etc.) use chaises normales (standard chairs, not high chairs)
-  const chaisesNormales = cordesCounts.v1 + cordesCounts.v2 + cordesCounts.alto + cordesCounts.vlc +
-    cordesCounts.other + totalBois + totalCuivres;
-
-  // Chaises hautes = CB + chef (if present) + percussionists (if any)
-  const chaisesHautes = cordesCounts.cb + (hasChef ? 1 : 0) + nbPercus;
-  const chefPart = hasChef ? " + 1 (chef)" : "";
-  const percusPart = nbPercus > 0 ? ` + ${nbPercus} (percus)` : "";
-  let chaisesHautesDetail = `${cordesCounts.cb} (CB)${chefPart}${percusPart} = ${chaisesHautes}`;
-  // If total is 0, skip the detail
-  if (chaisesHautes === 0) {
-    chaisesHautesDetail = "0";
-  }
-
-  return {
-    general: {
-      pupitres,
-      chaisesNormales,
-      chaisesHautes,
-      chaisesHautesDetail,
-      chaisesSpeciales: [],
-      ...(quantitesInconnues > 0 ? { quantitesInconnues } : {}),
-      ...(chefInconnu && !hasChef ? { chefAConfirmer: true } : {}),
-    },
-    stands: {
-      cordes: cordesStands,
-      bois: boisStands,
-      cuivres: cuivresStands,
-      percus: percusStands,
-      autres: autresStands,
-    },
-  };
-}
+// ── Calcul du mobilier : déplacé dans mobilier.js (lot 4A), ré-exporté ici pour ne rien casser ──
+export { calculateMobilier } from './mobilier.js';
 
 function groupItemsByCategory(items) {
   const byCat = {};
@@ -286,6 +164,22 @@ function generateMobilierText(mob) {
     lines.push("• Pupitres : " + (mob.general.pupitres || 0));
     lines.push("• Chaises normales : " + (mob.general.chaisesNormales || 0));
     lines.push("• Chaises hautes : " + (mob.general.chaisesHautesDetail || mob.general.chaisesHautes || 0));
+    const modele = mob.general.chaisesHautesModele;
+    if (modele) {
+      const kol = [];
+      if (modele.contrebasses === "Kolberg") kol.push("contrebasses");
+      if (modele.percussions === "Kolberg") kol.push("percussions");
+      if (kol.length > 0) lines.push("• Chaises tournantes Kolberg à la place des chaises hautes R&S pour : " + kol.join(" et "));
+    }
+    if (Array.isArray(mob.general.banquettesDetail) && mob.general.banquettesDetail.length > 0) {
+      const det = mob.general.banquettesDetail
+        .filter(b => b.qty > 0 || b.qty === null)
+        .map(b => b.type.replace(/^Banquette /, "") + " " + (b.qty === null ? "?" : b.qty))
+        .join(", ");
+      lines.push("• Banquettes : " + (mob.general.banquettes || 0) + (det ? " (" + det + ")" : ""));
+    } else if (mob.general.banquettes > 0) {
+      lines.push("• Banquettes : " + mob.general.banquettes);
+    }
     if (mob.general.quantitesInconnues > 0) {
       lines.push("• Lignes de l'effectif sans quantité (non comptées) : " + mob.general.quantitesInconnues);
     }
@@ -314,6 +208,7 @@ function generateMobilierText(mob) {
     { key: "bois", emoji: "🎵", label: "BOIS" },
     { key: "cuivres", emoji: "🎺", label: "CUIVRES" },
     { key: "percus", emoji: "🥁", label: "PERCUSSIONS" },
+    { key: "speciaux", emoji: "⭐", label: "STANDS SPÉCIAUX" },
     { key: "autres", emoji: "➕", label: "AUTRES" },
   ];
 
@@ -340,6 +235,12 @@ function generateMobilierText(mob) {
         lines.push("• " + s.type + " : " + s.qty);
       }
     }
+  }
+
+  if (Array.isArray(mob.infos) && mob.infos.length > 0) {
+    lines.push("");
+    lines.push("À SAVOIR");
+    for (const t of mob.infos) lines.push("• " + t);
   }
 
   return lines.join("\n");
