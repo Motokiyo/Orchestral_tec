@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
-import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, extractNumberFromItem, countOrchestreMusicians, calculateMobilier, chefOptions, isAnnotationItem, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
+import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, libelleSupport, extractNumberFromItem, countOrchestreMusicians, calculateMobilier, chefOptions, isAnnotationItem, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, formatEffectifDaniels, memeDetail, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
 import { mergeAiIntoLocal, failedAiLocal, offlineAiLocal, aiFailedStatus, aiStatusFromResult, dismissAiStatus, aiBannerInfo } from "./aiImport.js";
 import { exportLocalDataForRecovery, exportLocalDataToFile, useConcerts, usePhotos, useOmrScores, useSyncStatus, setSessionExpired, requestSyncRetry, requestPersistentStorage, loadPlanImages } from "./useStorage.js";
@@ -10,6 +10,8 @@ import { LignesMobilierPlus, InfosMobilier, EcartsPlan, ReglagesMobilier } from 
 import { bannerInfo, reloadReportText, exportReportText, noteStockage } from "./syncUi.js";
 import { shrinkPlanForStorage } from "./planImages.js";
 import { PlanImage } from "./PlanImage.jsx";
+import { PercuItemSheet } from "./PercuItemSheet.jsx";
+import { ajouterItem, modifierItem, autresVersPoste, echangerPostes, texteSupports } from "./percuEdit.js";
 import { SavePhotosButton, ArchiveModal } from "./ArchiveUi.jsx";
 import { bakeWatermark, downloadPiecePhotosZip, downloadConcertPhotosZip } from "./photoExport.js";
 
@@ -1172,6 +1174,7 @@ export default function App() {
   const [concertId, setConcertId] = useState(null);
   const [pieceId, setPieceId] = useState(null);
   const [percuId, setPercuId] = useState(null);
+  const [itemSheet, setItemSheet] = useState(null); // volet d'édition d'un instrument de percussion (PercuItemSheet)
   const [photos, setPhotos, photosLoaded] = usePhotos(authEmail);
   const [omrScores, setOmrScores, omrLoaded] = useOmrScores(authEmail);
   const [omrScoreId, setOmrScoreId] = useState(null);
@@ -3208,6 +3211,14 @@ export default function App() {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 4 }} onClick={(e) => e.stopPropagation()}>
                       <DragHandle onMove={(dir) => { if (dir === -1 && ri > 0) movePercu(piece.id, ri, ri - 1); if (dir === 1 && ri < piece.percus.length - 1) movePercu(piece.id, ri, ri + 1); }} />
+                      {piece.percus.length >= 2 && (() => {
+                        const autre = piece.percus[(ri + 1) % piece.percus.length];
+                        return (
+                          <button onClick={() => updatePiece(piece.id, (p) => { const u = echangerPostes(p, r.id, autre.id); return { ...u, percusGlobalText: generatePercusGlobalText(u.percus) }; })}
+                            title={`Échanger ${r.nom} et ${autre.nom}`} aria-label={`Échanger ${r.nom} et ${autre.nom}`}
+                            style={{ background: "none", border: "none", fontSize: 15, color: "#78716C", cursor: "pointer", padding: "4px 6px" }}>⇄</button>
+                        );
+                      })()}
                       <button onClick={() => { const n = prompt("Renommer :", r.nom); if (n && n.trim()) renamePercu(piece.id, r.id, n.trim()); }} style={{ background: "none", border: "none", fontSize: 12, color: "#A8A29E", cursor: "pointer", padding: "4px" }}>✎</button>
                       <button onClick={() => deletePercu(piece.id, r.id)} style={{ background: "none", border: "none", fontSize: 14, color: "#A8A29E", cursor: "pointer", padding: "4px" }}>✕</button>
                     </div>
@@ -3231,6 +3242,8 @@ export default function App() {
                               onToggle={() => toggleItemCheck(piece.id, r.id, it._i)}
                               onRename={(v) => renameItem(piece.id, r.id, it._i, v)}
                               onDelete={() => deleteItem(piece.id, r.id, it._i)}
+                              onOpen={() => setItemSheet({ mode: "item", pieceId: piece.id, poleId: r.id, idx: it._i, initial: { nom: it.nom, cat: it.cat, support: it.support || "" } })}
+                              detail={libelleSupport(it)}
                             />
                           ))}
                         </div>
@@ -3249,10 +3262,7 @@ export default function App() {
                         📸 Photos
                       </button>
                       <button
-                        onClick={() => {
-                          const nom = prompt("Nom de l'instrument :");
-                          if (nom && nom.trim()) addItem(piece.id, r.id, "Accessoires", nom.trim());
-                        }}
+                        onClick={() => setItemSheet({ mode: "ajout", pieceId: piece.id, poleId: r.id, initial: null })}
                         style={{ ...S.btnSecondary, flex: 1, fontSize: 13, padding: "10px 12px" }}
                       >
                         + Ajouter
@@ -3291,6 +3301,31 @@ export default function App() {
 
           {/* Add pole button */}
           <button onClick={() => addPercu(piece.id)} style={{ ...S.btnSecondary, marginTop: 4, fontSize: 12 }}>+ Ajouter un pôle</button>
+          {texteSupports(piece.percus) && (
+            <div style={{ fontSize: 12, color: "#57534E", marginTop: 8 }}>À prévoir pour les percus : <b>{texteSupports(piece.percus)}</b></div>
+          )}
+          {itemSheet && itemSheet.pieceId === piece.id && (
+            <PercuItemSheet
+              mode={itemSheet.mode}
+              color={col.hex}
+              poles={piece.percus.map((p) => ({ id: p.id, nom: p.nom }))}
+              poleId={itemSheet.poleId}
+              initial={itemSheet.initial}
+              onFermer={() => setItemSheet(null)}
+              onSupprimer={itemSheet.mode === "item" ? () => { deleteItem(piece.id, itemSheet.poleId, itemSheet.idx); setItemSheet(null); } : null}
+              onValider={(champs) => {
+                const sh = itemSheet;
+                setItemSheet(null);
+                updatePiece(piece.id, (p) => {
+                  if (sh.mode === "ajout") { const u = ajouterItem(p, sh.poleId, champs); return { ...u, percusGlobalText: generatePercusGlobalText(u.percus) }; }
+                  if (sh.mode === "autres") return recalcDaniels(autresVersPoste(p, sh.idx, champs.vers));
+                  const u = modifierItem(p, sh.poleId, sh.idx, champs);
+                  // Changement de poste ou passage dans l'orchestre : nomenclature et mobilier recalculés.
+                  return champs.vers !== sh.poleId ? recalcDaniels(u) : { ...u, percusGlobalText: generatePercusGlobalText(u.percus) };
+                });
+              }}
+            />
+          )}
 
           {/* Orchestre section — below percus */}
           <div style={{ marginTop: 14, marginBottom: 10 }}>
@@ -3372,6 +3407,10 @@ export default function App() {
                           color={col.hex}
                           onRename={(v) => renameOrchestreItem(piece.id, g.key, i, v)}
                           onDelete={() => deleteOrchestreItem(piece.id, g.key, i)}
+                          extra={g.key === "autres" && piece.percus.length > 0 && !isAnnotationItem(item) ? (
+                            <button onClick={() => setItemSheet({ mode: "autres", pieceId: piece.id, idx: i, initial: { nom: item } })}
+                              title="C'est une percussion : la mettre dans un poste" style={{ background: "none", border: `1px solid ${col.hex}66`, borderRadius: 8, fontSize: 11, fontWeight: 600, color: "#57534E", cursor: "pointer", padding: "4px 8px", marginRight: 4 }}>→ percu</button>
+                          ) : null}
                         />
                       ))}
                       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -4182,7 +4221,7 @@ function FilterBtn({ label, color, active, onClick }) {
   );
 }
 
-function EditableItem({ nom, color, onRename, onDelete, checked, onToggle }) {
+function EditableItem({ nom, color, onRename, onDelete, checked, onToggle, onOpen, extra, detail }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(nom);
 
@@ -4208,7 +4247,10 @@ function EditableItem({ nom, color, onRename, onDelete, checked, onToggle }) {
   return (
     <div style={S.itemRow}>
       {onToggle && <CheckBox checked={checked} color={color} onToggle={onToggle} />}
-      <div style={{ ...S.itemText(color), flex: 1, textDecoration: checked ? "line-through" : "none", opacity: checked ? 0.5 : 1 }} onClick={() => setEditing(true)}>{nom}</div>
+      <div style={{ ...S.itemText(color), flex: 1, textDecoration: checked ? "line-through" : "none", opacity: checked ? 0.5 : 1 }} onClick={() => (onOpen ? onOpen() : setEditing(true))}>
+        {nom}{detail && <span style={{ fontSize: 11, color: "#78716C", fontWeight: 500 }}> · {detail}</span>}
+      </div>
+      {extra}
       <button onClick={onDelete} style={S.deleteBtn}>×</button>
     </div>
   );

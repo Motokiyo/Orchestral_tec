@@ -2437,7 +2437,7 @@ function splitWrittenItems(text) {
 /**
  * Categorize an instrument name into one of the standard categories.
  */
-function categorizeInstrument(nom) {
+export function categorizeInstrument(nom) {
   const n = nom.toLowerCase().trim();
   if (/timbale|grosse caisse|caisse claire|tom|bongo|conga|djemb[ée]|tambour|caj[óo]n|batterie|peau/i.test(n)) {
     return "Timbales & Peaux";

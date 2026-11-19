@@ -125,9 +125,16 @@ function groupItemsByCategory(items) {
   return byCat;
 }
 
+// Support d'un instrument de percussion (retour du plateau, 19/11/2026) : sur pied, grande ou petite tablette.
+export const SUPPORTS = { pied: "sur pied", grande: "sur grande tablette", petite: "sur petite tablette" };
+export function libelleSupport(item) {
+  return item && typeof item === "object" && SUPPORTS[item.support] ? SUPPORTS[item.support] : "";
+}
+
 function formatItemLines(items) {
   return items.map((it) => {
     let line = "    - " + it.nom;
+    if (libelleSupport(it)) line += " (" + libelleSupport(it) + ")";
     if (it.notes) line += "  [" + it.notes + "]";
     return line;
   });
@@ -142,7 +149,8 @@ export function generatePercusGlobalText(percus) {
     if (pole.items && pole.items.length > 0) {
       pole.items.forEach(item => {
         const nom = typeof item === "string" ? item : item.nom || "";
-        text += `  • ${nom}\n`;
+        const sup = libelleSupport(item);
+        text += `  • ${nom}${sup ? ` (${sup})` : ""}\n`;
       });
     } else {
       text += "  (aucun instrument)\n";
