@@ -10,13 +10,15 @@
 - **Le dossier d'origine** (`1 Projets/Orchestral-tec`, dans le vault) est resté à `e6892c8` avec des modifications non commitées qui ne sont pas de cette session (INDEX.md, README.md, docs/EXTRACTION_IA_REFERENCE.md, docs/PLAN_remise-a-plat.md, test-infra/CHANGELOG.md). Ne pas l'écraser : demander à Alexandre avant de le resynchroniser (`git pull` de `feature/omr-family-access`).
 - **Prochaine action** : retours d'Alexandre sur son téléphone (ouverture plus rapide, bouton « Partager » du dossier pour la salle, jamais testé sur un vrai téléphone). Puis, au choix d'Alexandre : écran « À vérifier » après import, photos rangées pièce par pièce, prévention de la pause Supabase, découpage d'`App.jsx`.
 
-## Lot 9 (19/11/2026, retours du plateau du 18/11) : écrit, testé, PAS ENCORE EN LIGNE
+## Lot 9 (19/11/2026, retours du plateau du 18/11) : EN LIGNE le 19/11 (orkmap.eiffelai.io, `index-DqIznqO4.js`, commit `e5c8c09`, accord d'Alexandre)
 
 - Commits `1439201` à `HEAD` sur `chantier/fiabilite`. 416 tests, build, essai Playwright 412x915 sur le vrai concert « atelier de compo Nov 2026 » (réseau coupé), relecture hostile Sonnet faite et corrigée.
 - 9a : cartouche CNSM sur deux lignes décodé (`Pno[Prép] - Sax[S+Bar] - Ondes - Acc - Cordes[…] - soit 23 mus`) ; consigne IA : recopier les deux lignes, ondes/piano/harpe jamais en percussion. Cas réel : « Quand ma langue aura fondu » sortait en cuivres 0.1.1.1 et 2 timbaliers inventés.
 - 9b : alertes de synchro en pastille ronde (coin bas droit, cachée pendant la caméra) ; remarques de lecture IA en accordéon replié. Le message gênant devant le déclencheur était « Mémoire du téléphone lente » (mode dégradé : IndexedDB > 4 s à l'ouverture, rien n'est envoyé au compte). La sauvegarde en ligne s'arrête au 18/11 15 h 07.
 - 9c : volet par instrument (`src/percuEdit.js`, `src/PercuItemSheet.jsx`) : poste, catégorie, support (pied, grande ou petite tablette), vers « Autres » et retour (« → percu ») ; ⇄ échange les postes (noms et place, photos suivent) ; supports tout prêts ; résumé « À prévoir ». Les supports ne sont PAS encore comptés dans le mobilier.
 - 9d : « Importer des plans » accepte plusieurs fichiers (une pièce par fichier, ordre des noms).
+- 9e : support attaché d'office à l'instrument (`SUPPORTS_OBLIGES` dans `src/utils.js` : cymbale suspendue → pied de cymbale, caisse claire, glock valise, cymbales frappées, grosse caisse, tam-tam/gong → cadre, temple-blocks, bongos/congas, toms, mark tree), il suit l'instrument, retirable (support « aucun »), pas de support si le nom dit « posé sur / sur … ». « À prévoir » compte les supports par nom. Noms anglais remis en français à l'import (`franciserNom`) + consigne IA.
+- Non poussé sur GitHub : SSH vers github.com refusé le 19/11 depuis le Mac (port 22). Pousser `chantier/fiabilite` vers `feature/omr-family-access` quand le réseau le permet.
 - Restes connus : un instrument envoyé vers « Autres » perd notes et support (la liste « Autres » ne garde que du texte) ; un instrument « sur pied » plus un « Pied de … » ajouté comptent 2 pieds.
 
 ## P0 ouverts
