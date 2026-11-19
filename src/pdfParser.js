@@ -1308,6 +1308,7 @@ function parseLabelledElements(text, acc) {
     } else if (/^perc/.test(w)) acc.percussion += n;
     else if (/^(?:hp|harpes?)$/.test(w)) acc.harpe += n;
     else if (/^(?:cel|celesta|orgue|piano|pno|clavecin|cembalo)$/.test(w) || /^clav/.test(w)) { acc.clavier += n; acc.clavierNoms.push(raw); }
+    else if (/^ondes?$/.test(w) || /^martenot$/.test(w)) acc.autres["Ondes Martenot"] = (acc.autres["Ondes Martenot"] || 0) + n;
     else if (/^acc/.test(w)) acc.autres["Accordéon"] = (acc.autres["Accordéon"] || 0) + n;
     else if (/^sax/.test(w)) { const l = saxLabel(w.length === raw.length ? w : raw.toLowerCase()); acc.saxes[l] = (acc.saxes[l] || 0) + n; }
     else if (/^guit/.test(w)) { const l = /bass/.test(w) ? "Guitare basse" : "Guitare"; acc.autres[l] = (acc.autres[l] || 0) + n; }
@@ -1436,6 +1437,7 @@ export function decodeEffectif(notation) {
   let s = notation.trim()
     .replace(/^(?:effectif|nomenclature|daniels)\s*:?\s*/i, "")        // étiquette recopiée du cartouche
     .replace(/\s*\((?:daniels|nomenclature)[^)]*\)\s*$/i, "")          // remarque finale « (Daniels) »
+    .replace(/[\s\-\u2013\u2014]*soit\s+\d+\s*mus\w*\.?\s*$/i, "")      // total CNSM « - soit 23 mus » (le total n'est pas un groupe)
     .replace(/\.(?=\s*[\/\-\u2013\u2014])/g, "")                         // points traînants avant un séparateur
     .replace(/[\s.]+$/, "");                                              // et en fin de ligne
   if (!s) return null;
@@ -1466,6 +1468,14 @@ export function decodeEffectif(notation) {
   s = s.replace(/(?:cordes?|strings?)\s*$/i, "").replace(/(?:^|[\s\/\-\u2013\u2014])[\s\/\-\u2013\u2014]+$/, " ");
   // Doublures écrites contre un chiffre : « 1[pic et sol] », « 3[III+Pic] » (information gardée en remarque)
   s = s.replace(/(\d)\[([^\]]*)\]/g, (_, d, inner) => { remarques.push(`${d}[${inner}]`); return d; });
+  // Précision écrite contre un nom (CNSM) : « Pno[Prép] », « Hp[Prép] », « Sax[S+Bar] », « Pno[Droit] » : gardée en remarque,
+  // le nom seul compte le musicien. (« Cordes[…] » est déjà retiré plus haut ; « [Cel/Pno] » seul, précédé d'un espace, reste un extra.)
+  s = s.replace(/([A-Za-zÀ-ÿ]+)\[([^\]]*)\]/g, (_, w, inner) => {
+    remarques.push(`${w}[${inner}]`);
+    // « Sax[A] » = un saxophone alto : la précision donne le type (une seule lettre ou un seul mot connu).
+    if (/^sax$/i.test(w) && /^\s*(?:a|alto|t|t[ée]nor|b|bar|baryton|s|sop|soprano)\s*$/i.test(inner)) return `Sax${inner.trim()}`;
+    return w;
+  });
   // Crochets restants (« [Cel/Pno] ») : mis de côté, leur « / » n'est pas un séparateur de groupe
   const brackets = [];
   s = s.replace(/\[([^\]]*)\]/g, (_, inner) => { brackets.push(inner.trim()); return `\u0001${brackets.length - 1}\u0002`; });
@@ -1740,7 +1750,7 @@ export function formatEffectifDaniels(source, options = {}) {
   const autres = [];
   for (const [k, n] of Object.entries(d.autres || {})) {
     if (!(n > 0)) continue;
-    autres.push(k === "Guitare basse" ? `${n}guitbasse` : k === "Guitare" ? `${n}guit` : k === "Accordéon" ? `${n}acc` : k === "Soprano" ? `${n}sop` : null);
+    autres.push(k === "Guitare basse" ? `${n}guitbasse` : k === "Guitare" ? `${n}guit` : k === "Accordéon" ? `${n}acc` : k === "Soprano" ? `${n}sop` : k === "Ondes Martenot" ? `${n}ondes` : null);
   }
   const autresOk = autres.filter(Boolean);
   if (autresOk.length) sections.push(autresOk.join("+"));

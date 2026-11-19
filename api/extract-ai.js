@@ -224,11 +224,12 @@ Fl/Flûte/Flöte, Picc/Petite flûte, Hb/Ob/Hautbois, CA/Cor anglais/Englischhor
 Baroque : Dessus, Tailles, Viole, Violone, Théorbe, Archiluth, Viole de gambe, Traverso, Hautbois baroque, Basson baroque, Cornet à bouquin, Sacqueboute, Cor naturel, Trompette naturelle, Clavecin, Orgue positif → GARDER tels quels (ne les remplace pas par leur équivalent moderne).
 
 RÈGLES CRITIQUES :
-• Le CARTOUCHE (souvent en bas du plan, parfois tête en bas) contient la ligne d'effectif : lis-la EN PRIORITÉ et RECOPIE-LA caractère par caractère dans "cartoucheBrut", puis décode UNIQUEMENT à partir de cette copie. Si tu ne la lis pas, "cartoucheBrut" = "". Ignore les numéros de sièges, les cotes ("10.70m") et l'échelle.
+• Le CARTOUCHE (souvent en bas du plan, parfois tête en bas) contient la ligne d'effectif : lis-la EN PRIORITÉ et RECOPIE-LA caractère par caractère dans "cartoucheBrut", puis décode UNIQUEMENT à partir de cette copie. Si tu ne la lis pas, "cartoucheBrut" = "". Si la ligne d'effectif continue sur une deuxième ligne (piano, saxophone, ondes, accordéon, cordes, « soit N mus »), recopie les deux lignes à la suite, séparées par un espace. Ignore les numéros de sièges, les cotes ("10.70m") et l'échelle.
 • Notations équivalentes : points (2.2.2.2), tirets (2-2-2-2), slashs (4/3/5/4), espaces (2 2 2 2), mots ("2 timb. 7 percs", "2 harpes", "cél/orgue"), cordes entre crochets ("Cordes[12.10.8.6.4]").
 • Dans le bloc percussions, un "T" seul ou "Timb" = poste Timbalier. Un NOMBRE DE TIMBALES ("2 timbales", "2timb", "4 timbales") est un nombre d'INSTRUMENTS dans UN poste Timbalier : ce n'est PAS un nombre de timbaliers. Ne crée plusieurs postes Timbalier que si le chiffre W de Daniels ou des musiciens distincts le montrent. "perc"/"percs" = percussionnistes (poste distinct).
 • Les chiffres décodés (orchestre/percus) DOIVENT correspondre exactement à la ligne effectif du cartouche.
 • Timbalier = poste SÉPARÉ des Percu. Ne JAMAIS mélanger.
+• Ondes Martenot, accordéon, piano, célesta, harpe, saxophone : ce sont des musiciens de l'orchestre ("autres" ou "bois"), JAMAIS des instruments de percussion, même s'ils sont dessinés près des percussions.
 • Timbales : un item par timbale réellement dessinée ou écrite ("Timbale 1", "Timbale 2"...), jamais "4 Timbales" en un seul item, et jamais plus que ce que le document montre.
 • W=0 dans Daniels → pas de poste Timbalier.
 • "Cel" entre crochets [Cel] ou près claviers/percus = Célesta. "Cel" dans section cordes = Violoncelle. VÉRIFIER LE CONTEXTE.
