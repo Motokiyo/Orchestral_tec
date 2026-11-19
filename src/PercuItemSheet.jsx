@@ -53,7 +53,7 @@ export function PercuItemSheet({ mode, color, poles, poleId, initial, onValider,
                 <div style={titreBloc}>Tout prêt</div>
                 <div style={rangee}>
                   {SUPPORTS_RAPIDES.map((s) => (
-                    <button key={s} onClick={() => onValider({ nom: s, cat: "Stands & supports", support: "", vers: poleId })} style={puce(false, color)}>+ {s}</button>
+                    <button key={s} onClick={() => onValider({ nom: s, cat: "Stands & supports", support: "", vers })} style={puce(false, color)}>+ {s}</button>
                   ))}
                 </div>
               </>

@@ -11,7 +11,7 @@ import { bannerInfo, reloadReportText, exportReportText, noteStockage } from "./
 import { shrinkPlanForStorage } from "./planImages.js";
 import { PlanImage } from "./PlanImage.jsx";
 import { PercuItemSheet } from "./PercuItemSheet.jsx";
-import { ajouterItem, modifierItem, autresVersPoste, echangerPostes, texteSupports } from "./percuEdit.js";
+import { ajouterItem, modifierItem, autresVersPoste, echangerPostes, texteSupports, VERS_AUTRES } from "./percuEdit.js";
 import { SavePhotosButton, ArchiveModal } from "./ArchiveUi.jsx";
 import { bakeWatermark, downloadPiecePhotosZip, downloadConcertPhotosZip } from "./photoExport.js";
 
@@ -214,6 +214,7 @@ export function SyncBanner() {
   const info = bannerInfo(status);
   const camera = useCameraOuverte();
   const [ouvert, setOuvert] = useState(false);
+  if (!info && ouvert) setOuvert(false); // la prochaine alerte arrive repliée
   if (!info || camera) return null;
   const alarm = info.tone === "alarm";
   const color = alarm ? "#991B1B" : info.tone === "warn" ? "#92400E" : "#57534E";
@@ -1288,8 +1289,8 @@ export default function App() {
   function goStart() { setScreen("start"); setConcertId(null); setPieceId(null); setPercuId(null); setOmrScoreId(null); }
   function goConcerts() { setScreen("concerts"); setConcertId(null); setPieceId(null); setPercuId(null); }
   function goConcert(id) { setConcertId(id); setPieceId(null); setPercuId(null); setScreen("home"); }
-  function goHome() { setScreen("home"); setPieceId(null); setPercuId(null); }
-  function goPiece(id) { setPieceId(id); setPercuId(null); setScreen("piece"); }
+  function goHome() { setScreen("home"); setPieceId(null); setPercuId(null); setItemSheet(null); }
+  function goPiece(id) { setPieceId(id); setPercuId(null); setScreen("piece"); setItemSheet(null); }
   function goTxt(id) { if (id) setPieceId(id); setScreen("txt"); }
   function goGallery(id) { if (id !== undefined) setPieceId(id); setScreen("gallery"); }
 
@@ -1870,6 +1871,7 @@ export default function App() {
         setImportProgres("");
       }
       if (files.length === 1 && derniere) { setPieceId(derniere); setScreen("piece"); }
+      if (files.length > 1 && isOffline()) alert("Pas de réseau : plans importés avec la lecture locale seulement. Relance « Extraire les données par IA » sur chaque pièce quand le réseau reviendra.");
       if (echecs.length) alert(`Import : ${files.length - echecs.length} fichier(s) importé(s), ${echecs.length} en échec.\n\n${echecs.join("\n")}`);
     };
     input.click();
@@ -1878,7 +1880,7 @@ export default function App() {
   // Importe un fichier comme nouvelle pièce ; renvoie l'id de la pièce (créée ou complétée), ou null.
   async function importerUnPlan(file, interactif) {
     const localData = await extractFromFile(file);
-    const data = await enrichWithAi(localData);
+    const data = await enrichWithAi(localData, { silencieux: !interactif });
     // Plan de détail percussion seul : on propose de l'ajouter à une pièce existante plutôt que de créer une pièce vide.
     // (Seulement pour un fichier seul : pendant un import groupé, aucune question, chaque fichier fait sa pièce.)
     if (interactif && data.detailPercussion && pieces.length > 0 && data.percus.length > 0) {
@@ -2053,7 +2055,7 @@ export default function App() {
     input.click();
   }
 
-  async function enrichWithAi(localData) {
+  async function enrichWithAi(localData, { silencieux = false } = {}) {
     // Send ALL rendered pages so multi-page production sheets (Radio France / CNSM)
     // are read in full, not just their first page.
     const images = (localData.planDataUrls && localData.planDataUrls.length)
@@ -2064,7 +2066,7 @@ export default function App() {
     // Offline: keep the local reading and say so (état « skipped » + bandeau); the AI button on the
     // piece can be used later, once the network is back.
     if (isOffline()) {
-      alert("Pas de réseau : import fait avec la lecture locale seulement. Tu pourras relancer « Extraire les données par IA » sur la pièce quand le réseau reviendra.");
+      if (!silencieux) alert("Pas de réseau : import fait avec la lecture locale seulement. Tu pourras relancer « Extraire les données par IA » sur la pièce quand le réseau reviendra.");
       return offlineAiLocal(localData);
     }
     // Plans / photos: the AI vision reads the cartouche and IS the source of
@@ -3332,16 +3334,25 @@ export default function App() {
               poleId={itemSheet.poleId}
               initial={itemSheet.initial}
               onFermer={() => setItemSheet(null)}
-              onSupprimer={itemSheet.mode === "item" ? () => { deleteItem(piece.id, itemSheet.poleId, itemSheet.idx); setItemSheet(null); } : null}
+              onSupprimer={itemSheet.mode === "item" ? () => {
+                const sh = itemSheet; setItemSheet(null);
+                const pole = piece.percus.find((r) => r.id === sh.poleId);
+                if (pole && pole.items[sh.idx] && pole.items[sh.idx].nom === sh.initial.nom) deleteItem(piece.id, sh.poleId, sh.idx);
+              } : null}
               onValider={(champs) => {
                 const sh = itemSheet;
                 setItemSheet(null);
                 updatePiece(piece.id, (p) => {
-                  if (sh.mode === "ajout") { const u = ajouterItem(p, sh.poleId, champs); return { ...u, percusGlobalText: generatePercusGlobalText(u.percus) }; }
-                  if (sh.mode === "autres") return recalcDaniels(autresVersPoste(p, sh.idx, champs.vers));
+                  const texte = (u) => ({ ...u, percusGlobalText: generatePercusGlobalText(u.percus) });
+                  if (sh.mode === "ajout") return texte(ajouterItem(p, champs.vers || sh.poleId, champs));
+                  // Le volet garde l'index de la ligne : si la liste a changé entre-temps (synchro), on ne touche à rien.
+                  if (sh.mode === "autres") return (p.orchestre?.autres || [])[sh.idx] === sh.initial.nom ? recalcDaniels(autresVersPoste(p, sh.idx, champs.vers)) : p;
+                  const pole = (p.percus || []).find((r) => r.id === sh.poleId);
+                  if (!pole || !pole.items[sh.idx] || pole.items[sh.idx].nom !== sh.initial.nom) return p;
                   const u = modifierItem(p, sh.poleId, sh.idx, champs);
-                  // Changement de poste ou passage dans l'orchestre : nomenclature et mobilier recalculés.
-                  return champs.vers !== sh.poleId ? recalcDaniels(u) : { ...u, percusGlobalText: generatePercusGlobalText(u.percus) };
+                  // Vers « Autres » : l'orchestre change, nomenclature et mobilier recalculés. D'un poste à l'autre :
+                  // le nombre de musiciens ne change pas, l'effectif lu sur le plan est gardé tel quel.
+                  return champs.vers === VERS_AUTRES ? recalcDaniels(u) : texte(u);
                 });
               }}
             />

@@ -250,7 +250,7 @@ export const S = {
   syncDot: (color, background) => ({
     position: "fixed", right: "max(12px, calc(50vw - 203px))",
     bottom: "calc(80px + env(safe-area-inset-bottom))", zIndex: 150,
-    width: 36, height: 36, borderRadius: "50%", padding: 0,
+    width: 44, height: 44, borderRadius: "50%", padding: 0,
     background, color, border: `1.5px solid ${color}`, boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
     fontSize: 17, fontWeight: 800, lineHeight: 1, cursor: "pointer",
     display: "flex", alignItems: "center", justifyContent: "center",
