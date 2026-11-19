@@ -246,6 +246,15 @@ export const S = {
     fontFamily: "'DM Sans', sans-serif",
     ...(card ? {} : { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer" }),
   }),
+  // Pastille ronde des alertes de synchro : coin bas droit, au-dessus de la barre d'onglets, jamais au centre.
+  syncDot: (color, background) => ({
+    position: "fixed", right: "max(12px, calc(50vw - 203px))",
+    bottom: "calc(80px + env(safe-area-inset-bottom))", zIndex: 150,
+    width: 36, height: 36, borderRadius: "50%", padding: 0,
+    background, color, border: `1.5px solid ${color}`, boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+    fontSize: 17, fontWeight: 800, lineHeight: 1, cursor: "pointer",
+    display: "flex", alignItems: "center", justifyContent: "center",
+  }),
   syncBannerBtn: (color) => ({
     marginTop: 8, width: "100%", minHeight: 44, padding: "10px 12px", borderRadius: 10,
     border: `1px solid ${color}`, background: "#fff", color, fontSize: 14, fontWeight: 700, cursor: "pointer",

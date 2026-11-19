@@ -159,55 +159,96 @@ function NoteStockage() {
   return texte ? <div style={{ ...S.exportNote, color: "#92400E" }}>{texte}</div> : null;
 }
 
+// Caméra ouverte : aucune alerte ne s'affiche par-dessus (retour du plateau, 19/11/2026 : le bandeau
+// « Mémoire du téléphone lente » cachait le déclencheur). Compteur partagé entre les vues caméra.
+let camerasOuvertes = 0;
+const ecouteursCamera = new Set();
+function useMarqueCamera() {
+  useEffect(() => {
+    camerasOuvertes += 1; ecouteursCamera.forEach((f) => f());
+    return () => { camerasOuvertes -= 1; ecouteursCamera.forEach((f) => f()); };
+  }, []);
+}
+function useCameraOuverte() {
+  const [, rafraichir] = useState(0);
+  useEffect(() => {
+    const f = () => rafraichir((x) => x + 1);
+    ecouteursCamera.add(f);
+    return () => { ecouteursCamera.delete(f); };
+  }, []);
+  return camerasOuvertes > 0;
+}
+
+// État de la synchro et alertes de stockage : une PASTILLE ronde dans le coin (comme la roue des réglages
+// d'une app), jamais un bandeau sur l'écran. On la touche pour lire le message et agir ; on referme.
+// Cachée pendant la prise de photo.
+// Remarques de la lecture IA d'une pièce : sur le plateau on n'a pas le temps de les lire, donc une seule
+// ligne repliée par défaut ; on la touche pour dérouler la liste ; « Ne plus afficher » la ferme pour de bon.
+function AlertesLecture({ banner, onFermer }) {
+  const [ouvert, setOuvert] = useState(false);
+  if (!banner) return null;
+  const n = banner.lines.length;
+  return (
+    <div role="status" style={{ ...S.aiBanner(banner.tone), flexDirection: "column", gap: 0, padding: 0 }}>
+      <button onClick={() => setOuvert((o) => !o)} aria-expanded={ouvert}
+        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minHeight: 40, padding: "6px 12px", border: "none", background: "transparent", cursor: "pointer", textAlign: "left" }}>
+        <span style={{ ...S.aiBannerTitle(banner.tone), marginBottom: 0, flex: 1, minWidth: 0 }}>⚠ {banner.title}{n > 0 ? ` · ${n} remarque${n > 1 ? "s" : ""}` : ""}</span>
+        <span style={{ ...S.aiBannerTitle(banner.tone), marginBottom: 0 }}>{ouvert ? "▾" : "▸"}</span>
+      </button>
+      {ouvert && (
+        <div style={{ padding: "0 12px 10px" }}>
+          {banner.lines.map((line, i) => <div key={i} style={S.aiBannerLine}>• {line}</div>)}
+          <button onClick={onFermer} style={{ marginTop: 8, minHeight: 40, padding: "8px 12px", borderRadius: 8, border: "1px solid #D6D3D1", background: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            Lu, ne plus afficher
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SyncBanner() {
   const status = useSyncStatus();
   const info = bannerInfo(status);
-  // Un encart d'alerte ne doit jamais cacher les plans : il s'affiche replié en pastille,
-  // se déploie au toucher et se referme (choix gardé pour la session).
+  const camera = useCameraOuverte();
   const [ouvert, setOuvert] = useState(false);
-  if (!info) return null;
+  if (!info || camera) return null;
   const alarm = info.tone === "alarm";
   const color = alarm ? "#991B1B" : info.tone === "warn" ? "#92400E" : "#57534E";
   const background = alarm ? "#FEF2F2" : info.tone === "warn" ? "#FFFBEB" : "#F5F5F4";
-  if (info.card && !ouvert) {
-    const court = info.kind === "oversize" ? "Trop lourd pour le compte · gardé sur le téléphone"
-      : info.kind === "degraded" ? "Mémoire du téléphone lente · modifications gardées"
-      : info.kind === "backupFailed" ? "Copie de secours impossible · données gardées"
-      : info.text;
+  if (!ouvert) {
+    const icone = info.kind === "pending" ? "⟳" : info.kind === "offline" ? "☁" : "!";
     return (
-      <div onClick={() => setOuvert(true)} role="status" data-testid={`sync-${info.kind}`} style={S.syncBanner(color, background, false)}>
-        {court} · détails ▸
-      </div>
+      <button onClick={() => setOuvert(true)} aria-label={info.text} title={info.text} data-testid={`sync-${info.kind}`} style={S.syncDot(color, background)}>
+        {icone}
+      </button>
     );
   }
-  if (info.card) {
-    return (
-      <div role="alert" data-testid={`sync-${info.kind}`} style={S.syncBanner(color, background, true)}>
-        <button onClick={() => setOuvert(false)} aria-label="Fermer" style={{ float: "right", marginLeft: 8, border: "none", background: "transparent", color, fontSize: 18, fontWeight: 700, lineHeight: 1, cursor: "pointer", minWidth: 32, minHeight: 32 }}>×</button>
-        <div>{info.text}</div>
-        {info.action === "export" && (
-          <ExportAllButton style={S.syncBannerBtn(color)} label="Exporter toutes mes données" noteStyle={{ ...S.exportNote, color }} />
-        )}
-        {info.also && (
-          info.also.action === "reconnect" && status.online ? (
-            <button onClick={() => window.dispatchEvent(new Event("orkmap-reconnect"))} data-testid={`sync-${info.also.kind}`} style={S.syncBannerBtn("#991B1B")}>
-              {info.also.text}
-            </button>
-          ) : (
-            <div onClick={() => requestSyncRetry()} data-testid={`sync-${info.also.kind}`} style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: "#92400E", cursor: "pointer" }}>
-              {info.also.text}
-            </div>
-          )
-        )}
-      </div>
-    );
-  }
-  const onClick = info.action === "reconnect" && status.online
-    ? () => window.dispatchEvent(new Event("orkmap-reconnect"))
-    : () => requestSyncRetry();
+  const reconnecter = () => window.dispatchEvent(new Event("orkmap-reconnect"));
   return (
-    <div onClick={onClick} role="status" data-testid={`sync-${info.kind}`} style={S.syncBanner(color, background, false)}>
-      {info.text}
+    <div role="alert" data-testid={`sync-${info.kind}-detail`} style={S.syncBanner(color, background, true)}>
+      <button onClick={() => setOuvert(false)} aria-label="Fermer" style={{ float: "right", marginLeft: 8, border: "none", background: "transparent", color, fontSize: 18, fontWeight: 700, lineHeight: 1, cursor: "pointer", minWidth: 32, minHeight: 32 }}>×</button>
+      <div>{info.text}</div>
+      {info.action === "export" && (
+        <ExportAllButton style={S.syncBannerBtn(color)} label="Exporter toutes mes données" noteStyle={{ ...S.exportNote, color }} />
+      )}
+      {info.action === "reconnect" && status.online && (
+        <button onClick={reconnecter} style={S.syncBannerBtn(color)}>Me reconnecter</button>
+      )}
+      {info.action === "retry" && (
+        <button onClick={() => { requestSyncRetry(); setOuvert(false); }} style={S.syncBannerBtn(color)}>Réessayer l'envoi maintenant</button>
+      )}
+      {info.also && (
+        info.also.action === "reconnect" && status.online ? (
+          <button onClick={reconnecter} data-testid={`sync-${info.also.kind}`} style={S.syncBannerBtn("#991B1B")}>
+            {info.also.text}
+          </button>
+        ) : (
+          <div onClick={() => requestSyncRetry()} data-testid={`sync-${info.also.kind}`} style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: "#92400E", cursor: "pointer" }}>
+            {info.also.text}
+          </div>
+        )
+      )}
     </div>
   );
 }
@@ -3018,21 +3059,8 @@ export default function App() {
           </div>
         </div>
         <div style={S.body}>
-          {/* Bandeau de la lecture IA : échec, liste vide/illisible, pages non analysées, avertissements.
-              Conservé tant que l'utilisateur ne l'a pas fermé. */}
-          {(() => {
-            const banner = aiBannerInfo(piece);
-            if (!banner) return null;
-            return (
-              <div role="alert" style={S.aiBanner(banner.tone)}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={S.aiBannerTitle(banner.tone)}>⚠ {banner.title}</div>
-                  {banner.lines.map((line, i) => <div key={i} style={S.aiBannerLine}>{line}</div>)}
-                </div>
-                <button onClick={() => dismissAiBanner(piece.id)} style={S.aiBannerClose} aria-label="Fermer le bandeau" title="Fermer">✕</button>
-              </div>
-            );
-          })()}
+          {/* Remarques de la lecture IA : une ligne repliée, dépliée au toucher (accordéon), fermée par l'utilisateur. */}
+          <AlertesLecture banner={aiBannerInfo(piece)} onFermer={() => dismissAiBanner(piece.id)} />
           {/* Barnier color picker */}
           <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
             {Object.entries(BARNIER).map(([key, b]) => (
@@ -4541,6 +4569,7 @@ function ZoneSelectView({ piece, percu, col, onSelect, onImport, onCancel }) {
 }
 
 function StandaloneCamera({ onCapture, onCancel, couleur, watermark }) {
+  useMarqueCamera();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -4861,6 +4890,7 @@ function PhotoSetupView({ piece, percu, col, onStart, onBack, existingPhotos, on
 }
 
 function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
+  useMarqueCamera();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -5020,9 +5050,6 @@ function CaptureView({ capture, pieces, onPhoto, onNext, onDone, onCancel }) {
       </div>
       <div style={{ flex: 1, position: "relative", minHeight: 0, overflow: "hidden" }}>
         <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: col.hex + "55", padding: "8px", textAlign: "center" }}>
-          <span style={{ color: captureLiveTextColor, fontSize: 14, fontWeight: 600 }}>📸 Photo {capture.currentZone + 1}/{capture.zones.length} — {zone}</span>
-        </div>
       </div>
       <div style={{ padding: 16, display: "flex", justifyContent: "center", alignItems: "center", gap: 24, flexShrink: 0 }}>
         <button onClick={handleCancel} style={{ background: "none", border: "1px solid #555", color: "#888", borderRadius: 10, padding: "10px 20px", fontSize: 14, cursor: "pointer" }}>Annuler</button>
