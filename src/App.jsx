@@ -1174,6 +1174,7 @@ export default function App() {
   const [concertId, setConcertId] = useState(null);
   const [pieceId, setPieceId] = useState(null);
   const [percuId, setPercuId] = useState(null);
+  const [importProgres, setImportProgres] = useState(""); // « 2/5 » pendant un import groupé de plans
   const [itemSheet, setItemSheet] = useState(null); // volet d'édition d'un instrument de percussion (PercuItemSheet)
   const [photos, setPhotos, photosLoaded] = usePhotos(authEmail);
   const [omrScores, setOmrScores, omrLoaded] = useOmrScores(authEmail);
@@ -1839,74 +1840,93 @@ export default function App() {
   }
 
   // ── File Import: new piece (from home screen) — supports PDF, JPEG, PNG, TXT ──
+  // Import de plans : un ou PLUSIEURS fichiers d'un coup (retour du plateau, 19/11/2026 : chercher chaque plan
+  // sur le téléphone est trop long). Une pièce par fichier, dans l'ordre des noms de fichiers ; l'ordre se
+  // change ensuite avec les poignées. Un fichier en échec n'arrête pas les autres.
   async function handlePdfImportNew() {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".pdf,.jpg,.jpeg,.png,.txt";
+    input.multiple = true;
     input.onchange = async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
+      const files = Array.from(e.target.files || [])
+        .sort((a, b) => a.name.localeCompare(b.name, "fr", { numeric: true, sensitivity: "base" }));
+      if (files.length === 0) return;
       setPdfLoading(true);
+      const echecs = [];
+      let derniere = null;
       try {
-        const localData = await extractFromFile(file);
-        const data = await enrichWithAi(localData);
-        // Plan de détail percussion seul : on propose de l'ajouter à une pièce existante plutôt que de créer une pièce vide.
-        if (data.detailPercussion && pieces.length > 0 && data.percus.length > 0) {
-          const liste = pieces.map((p, i) => `${i + 1}. ${p.titre || "Sans titre"}`).join("\n");
-          const rep = prompt(`Ce document est un plan de percussions seul.\nÀ quelle pièce l'ajouter ?\n\n${liste}\n\nTape son numéro, ou laisse vide pour créer une pièce à part.`);
-          const n = parseInt(rep, 10);
-          if (n >= 1 && n <= pieces.length) {
-            ajouterPercusAPiece(pieces[n - 1].id, data, file.name);
-            setPieceId(pieces[n - 1].id);
-            setScreen("piece");
-            return;
+        for (let i = 0; i < files.length; i++) {
+          setImportProgres(files.length > 1 ? `${i + 1}/${files.length}` : "");
+          try {
+            const id = await importerUnPlan(files[i], files.length === 1);
+            if (id) derniere = id;
+          } catch (err) {
+            echecs.push(`${files[i].name} : ${err.message}`);
           }
         }
-        const percusList = data.percus.length > 0
-            ? data.percus.map((p, i) => ({
-                id: `p${i + 1}`,
-                nom: p.nom,
-                items: p.items,
-                ...(p.nonVerifie ? { nonVerifie: true } : {}),
-              }))
-            : [];
-        const newPiece = {
-          id: uid(),
-          titre: data.titre || file.name.replace(/\.(pdf|jpe?g|png|txt)$/i, ""),
-          compositeur: data.compositeur || "",
-          duree: data.duree || "",
-          salle: data.salle || "",
-          chef: data.chef || "",
-          date: data.date || "",
-          effectif: data.effectif || "",
-          effectifDetail: data.effectifDetail || null,
-          // Ligne écrite sur le plan (si remise en ordre Daniels) et percussionnistes lus (« T+2 »)
-          ...(data.effectifBrut ? { effectifBrut: data.effectifBrut } : {}),
-          ...(data.effectifPercus ? { effectifPercus: data.effectifPercus } : {}),
-          orchestre: data.orchestre || null,
-          // sansChef à trois états : true / false lus, null = inconnu (jamais déduit d'une absence)
-          sansChef: typeof data.sansChef === "boolean" ? data.sansChef : null,
-          mobilier: data.orchestre ? calculateMobilier(data.orchestre, percusList, optionsMobilier({ sansChef: data.sansChef, effectifPercus: data.effectifPercus }, concert)) : null,
-          // Mobilier lu sur le plan par l'IA : champ séparé, jamais mélangé au mobilier calculé ci-dessus
-          mobilierObserve: Array.isArray(data.mobilierObserve) ? data.mobilierObserve : [],
-          // État de la lecture IA (bandeau « à vérifier » tant que l'utilisateur ne l'a pas fermé)
-          aiStatus: data.aiStatus || null,
-          planDataUrl: data.planDataUrl || null,
-          plans: data.planDataUrls?.length > 0 ? data.planDataUrls : (data.planDataUrl ? [data.planDataUrl] : []),
-          couleur: "blanc",
-          percus: percusList,
-          percusGlobalText: generatePercusGlobalText(percusList),
-        };
-        setPieces((prev) => [...prev, newPiece]);
-        setPieceId(newPiece.id);
-        setScreen("piece");
-      } catch (err) {
-        alert("Erreur lors de l'import : " + err.message);
       } finally {
         setPdfLoading(false);
+        setImportProgres("");
       }
+      if (files.length === 1 && derniere) { setPieceId(derniere); setScreen("piece"); }
+      if (echecs.length) alert(`Import : ${files.length - echecs.length} fichier(s) importé(s), ${echecs.length} en échec.\n\n${echecs.join("\n")}`);
     };
     input.click();
+  }
+
+  // Importe un fichier comme nouvelle pièce ; renvoie l'id de la pièce (créée ou complétée), ou null.
+  async function importerUnPlan(file, interactif) {
+    const localData = await extractFromFile(file);
+    const data = await enrichWithAi(localData);
+    // Plan de détail percussion seul : on propose de l'ajouter à une pièce existante plutôt que de créer une pièce vide.
+    // (Seulement pour un fichier seul : pendant un import groupé, aucune question, chaque fichier fait sa pièce.)
+    if (interactif && data.detailPercussion && pieces.length > 0 && data.percus.length > 0) {
+      const liste = pieces.map((p, i) => `${i + 1}. ${p.titre || "Sans titre"}`).join("\n");
+      const rep = prompt(`Ce document est un plan de percussions seul.\nÀ quelle pièce l'ajouter ?\n\n${liste}\n\nTape son numéro, ou laisse vide pour créer une pièce à part.`);
+      const n = parseInt(rep, 10);
+      if (n >= 1 && n <= pieces.length) {
+        ajouterPercusAPiece(pieces[n - 1].id, data, file.name);
+        return pieces[n - 1].id;
+      }
+    }
+    const percusList = data.percus.length > 0
+        ? data.percus.map((p, i) => ({
+            id: `p${i + 1}`,
+            nom: p.nom,
+            items: p.items,
+            ...(p.nonVerifie ? { nonVerifie: true } : {}),
+          }))
+        : [];
+    const newPiece = {
+      id: uid(),
+      titre: data.titre || file.name.replace(/\.(pdf|jpe?g|png|txt)$/i, ""),
+      compositeur: data.compositeur || "",
+      duree: data.duree || "",
+      salle: data.salle || "",
+      chef: data.chef || "",
+      date: data.date || "",
+      effectif: data.effectif || "",
+      effectifDetail: data.effectifDetail || null,
+      // Ligne écrite sur le plan (si remise en ordre Daniels) et percussionnistes lus (« T+2 »)
+      ...(data.effectifBrut ? { effectifBrut: data.effectifBrut } : {}),
+      ...(data.effectifPercus ? { effectifPercus: data.effectifPercus } : {}),
+      orchestre: data.orchestre || null,
+      // sansChef à trois états : true / false lus, null = inconnu (jamais déduit d'une absence)
+      sansChef: typeof data.sansChef === "boolean" ? data.sansChef : null,
+      mobilier: data.orchestre ? calculateMobilier(data.orchestre, percusList, optionsMobilier({ sansChef: data.sansChef, effectifPercus: data.effectifPercus }, concert)) : null,
+      // Mobilier lu sur le plan par l'IA : champ séparé, jamais mélangé au mobilier calculé ci-dessus
+      mobilierObserve: Array.isArray(data.mobilierObserve) ? data.mobilierObserve : [],
+      // État de la lecture IA (bandeau « à vérifier » tant que l'utilisateur ne l'a pas fermé)
+      aiStatus: data.aiStatus || null,
+      planDataUrl: data.planDataUrl || null,
+      plans: data.planDataUrls?.length > 0 ? data.planDataUrls : (data.planDataUrl ? [data.planDataUrl] : []),
+      couleur: "blanc",
+      percus: percusList,
+      percusGlobalText: generatePercusGlobalText(percusList),
+    };
+    setPieces((prev) => [...prev, newPiece]);
+    return newPiece.id;
   }
 
   // ── Add plan to piece (PDF, image, or TXT) ──
@@ -2942,7 +2962,7 @@ export default function App() {
               disabled={pdfLoading}
               style={{ ...S.btnSecondary, flex: 1, fontSize: 13, padding: "10px 12px", opacity: pdfLoading ? 0.6 : 1 }}
             >
-              {pdfLoading ? "⏳ Import..." : "📄 Importer fichier"}
+              {pdfLoading ? `⏳ Import${importProgres ? ` ${importProgres}` : ""}...` : "📄 Importer des plans"}
             </button>
             <button
               onClick={() => {
