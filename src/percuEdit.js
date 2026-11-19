@@ -3,6 +3,7 @@
 // échanger Percu 1 et Percu 2, noter pied et tablettes. Fonctions pures, testées dans tests/lot9-percus.mjs.
 // Les fonctions renvoient une NOUVELLE pièce ; App.jsx recalcule ensuite le texte global et la nomenclature.
 import { categorizeInstrument } from "./pdfParser.js";
+import { supportEffectif, supportOblige, standDe } from "./utils.js";
 
 export const VERS_AUTRES = "autres";
 
@@ -25,7 +26,13 @@ const sansQuantiteUn = (nom) => clean(nom).replace(/^1\s+(?=\D)/, "");
 
 function nettoyerItem({ nom, cat, support, notes, checked }) {
   const it = { cat: cat || devinerCategorie(nom), nom: clean(nom), notes: notes || "" };
-  if (support === "pied" || support === "grande" || support === "petite") it.support = support;
+  if (support === "pied" || support === "support" || support === "grande" || support === "petite") {
+    // Le support obligé reste implicite (il suit le nom) ; un autre choix est enregistré.
+    if (support !== supportOblige(it.nom)) it.support = support;
+  }
+  // « Rien » choisi sur un instrument qui a d'office son support : on retient le retrait (sinon il reviendrait).
+  // (support non fourni = rien choisi : le support obligé reste implicite.)
+  else if (support !== undefined && supportOblige(it.nom)) it.support = "aucun";
   if (checked) it.checked = true;
   return it;
 }
@@ -88,27 +95,24 @@ export function echangerPostes(piece, idA, idB) {
   return { ...piece, percus: arr };
 }
 
-/** Pieds et tablettes à prévoir sur l'ensemble des postes (instruments marqués + éléments ajoutés tels quels). */
+/**
+ * Supports à sortir pour l'ensemble des postes, par nom : ceux attachés aux instruments (d'office ou choisis)
+ * et les éléments ajoutés tels quels (« Grande tablette », « Pied de crotales »). Ex. { "Pied de cymbale": 2 }.
+ */
 export function supportsAPrevoir(percus) {
-  const c = { pied: 0, grande: 0, petite: 0 };
+  const c = {};
+  const add = (k) => { c[k] = (c[k] || 0) + 1; };
   for (const r of percus || []) {
     for (const it of (r && r.items) || []) {
       if (!it || typeof it !== "object") continue;
-      if (c[it.support] !== undefined) c[it.support] += 1;
-      const n = clean(it.nom).toLowerCase();
-      if (/^grande tablette\b/.test(n)) c.grande += 1;
-      else if (/^petite tablette\b/.test(n)) c.petite += 1;
-      else if (/^pied\b/.test(n)) c.pied += 1;
+      const st = standDe(it);
+      if (st) add(st);
+      else if (it.cat === "Stands & supports" && /^(?:grande |petite )?tablette|^pied\b|^support|^cadre|^pupitre|^table\b/i.test(clean(it.nom))) add(clean(it.nom).charAt(0).toUpperCase() + clean(it.nom).slice(1));
     }
   }
   return c;
 }
 
 export function texteSupports(percus) {
-  const c = supportsAPrevoir(percus);
-  const parts = [];
-  if (c.pied) parts.push(`${c.pied} pied${c.pied > 1 ? "s" : ""}`);
-  if (c.grande) parts.push(`${c.grande} grande${c.grande > 1 ? "s" : ""} tablette${c.grande > 1 ? "s" : ""}`);
-  if (c.petite) parts.push(`${c.petite} petite${c.petite > 1 ? "s" : ""} tablette${c.petite > 1 ? "s" : ""}`);
-  return parts.join(", ");
+  return Object.entries(supportsAPrevoir(percus)).map(([k, n]) => `${n} × ${k.toLowerCase()}`).join(", ");
 }

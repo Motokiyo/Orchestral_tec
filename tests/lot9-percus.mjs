@@ -66,9 +66,55 @@ test('pieds et tablettes à prévoir, et dans le texte des percus', () => {
   let p = E.ajouterItem(piece(), 'p1', { nom: 'Grande tablette' });
   p = E.ajouterItem(p, 'p2', { nom: 'Crotales', support: 'pied' });
   p = E.ajouterItem(p, 'p2', { nom: 'Guiro', support: 'petite' });
-  assert.deepEqual(E.supportsAPrevoir(p.percus), { pied: 1, grande: 1, petite: 1 });
-  assert.equal(E.texteSupports(p.percus), '1 pied, 1 grande tablette, 1 petite tablette');
+  assert.deepEqual(E.supportsAPrevoir(p.percus), { 'Grande tablette': 1, 'Cadre de tam-tam': 1, Pied: 1, 'Petite tablette': 1 });
+  assert.equal(E.texteSupports(p.percus), '1 × grande tablette, 1 × cadre de tam-tam, 1 × pied, 1 × petite tablette');
   const txt = U.generatePercusGlobalText(p.percus);
-  assert.match(txt, /Crotales \(sur pied\)/);
+  assert.match(txt, /Crotales \(\+ pied\)/);
   assert.match(txt, /Guiro \(sur petite tablette\)/);
+});
+
+test('supports obligés : cymbale suspendue, glock valise, caisse claire (pied), cymbales frappées (support)', () => {
+  assert.equal(U.supportEffectif({ nom: 'Cymbale suspendue' }), 'pied');
+  assert.equal(U.supportEffectif({ nom: 'cymbale ride 22 istanbul' }), 'pied');
+  assert.equal(U.supportEffectif({ nom: 'Glockenspiel valise' }), 'pied');
+  assert.equal(U.supportEffectif({ nom: 'Caisse claire + clés' }), 'pied');
+  assert.equal(U.supportEffectif({ nom: 'Cymbales frappées' }), 'support');
+  assert.equal(U.supportEffectif({ nom: 'Glockenspiel' }), '');
+  assert.equal(U.supportEffectif({ nom: 'Cymbale (grand)' }), '');
+  assert.equal(U.supportEffectif({ nom: 'Cymbale suspendue (posée sur la timbale)' }), '');
+  assert.equal(U.supportEffectif({ nom: 'Cymbale suspendue', support: 'grande' }), 'grande');
+});
+
+test('le support obligé suit l\'instrument quand on le déplace, et on peut le retirer', () => {
+  let p = E.ajouterItem(piece(), 'p1', { nom: 'Cymbale suspendue' });
+  const idx = p.percus[0].items.length - 1;
+  assert.equal(p.percus[0].items[idx].support, undefined);
+  p = E.modifierItem(p, 'p1', idx, { nom: 'Cymbale suspendue', cat: 'Grosses pièces', support: 'pied', vers: 'p2' });
+  const j = p.percus[1].items.length - 1;
+  assert.equal(U.supportEffectif(p.percus[1].items[j]), 'pied');
+  assert.equal(E.supportsAPrevoir(p.percus)['Pied de cymbale'], 1);
+  p = E.modifierItem(p, 'p2', j, { nom: 'Cymbale suspendue', cat: 'Grosses pièces', support: '', vers: 'p2' });
+  assert.equal(p.percus[1].items[j].support, 'aucun');
+  assert.equal(E.supportsAPrevoir(p.percus)['Pied de cymbale'], undefined);
+});
+
+test('noms anglais remis en français à l\'import', () => {
+  assert.equal(U.franciserNom('Snare drum (prepared with metallic keys)'), 'Caisse claire (préparée avec des clés métalliques)');
+  assert.equal(U.franciserNom('2 singing glasses (D#5, D#6)'), '2 verres chantants (D#5, D#6)');
+  assert.equal(U.franciserNom('Contrabass bow'), 'Archet de contrebasse');
+  assert.equal(U.franciserNom('bass drum'), 'Grosse caisse');
+  assert.equal(U.franciserNom('very large tam-tam'), 'Très grand tam-tam');
+  assert.equal(U.franciserNom('Marimba 5 octaves'), 'Marimba 5 octaves');
+  assert.equal(U.franciserNom('Tam-tam (grand)'), 'Tam-tam (grand)');
+});
+
+test('les instruments du 18/11 sortent leurs supports par nom', () => {
+  const percus = [
+    { id: 'p1', nom: 'Percu 1', items: [{ nom: 'Cymbale suspendue' }, { nom: 'Grosse-caisse' }, { nom: 'Caisse claire + clés' }, { nom: 'Vibraphone' }, { nom: 'Crotale (D4) sur caisse claire' }] },
+    { id: 'p2', nom: 'Percu 2', items: [{ nom: 'Tam-tam (grand)' }, { nom: 'Cymbale suspendue (posée sur la timbale)' }, { nom: 'cymbale ride 22 istanbul' }, { nom: 'Glockenspiel valise' }] },
+  ];
+  assert.deepEqual(E.supportsAPrevoir(percus), {
+    'Pied de cymbale': 2, 'Support de grosse caisse': 1, 'Pied de caisse claire': 1, 'Cadre de tam-tam': 1, 'Pied de glockenspiel': 1,
+  });
+  assert.match(U.generatePercusGlobalText(percus), /Cymbale suspendue \(\+ pied de cymbale\)/);
 });

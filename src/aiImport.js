@@ -1,3 +1,4 @@
+import { franciserNom } from "./utils.js";
 // Lecture IA d'un plan : tout ce qui décide ce qu'on garde, ce qu'on rejette et ce qu'on montre.
 //
 // Principe (LOT 2, « OrkMap arrête d'inventer ») : on ne complète jamais la scène avec ce qui n'a pas
@@ -204,7 +205,8 @@ export function mergeAiIntoLocal(local, ai, deps = {}) {
   const localPercusCount = Array.isArray(local.percus) ? local.percus.length : 0;
 
   let percus; let percusState;
-  if (aiPercus.length > 0) { percus = aiPercus; percusState = "lues"; }
+  // Noms d'instruments remis en français (les plans sont parfois écrits en anglais).
+  if (aiPercus.length > 0) { percus = aiPercus.map((r) => (r && Array.isArray(r.items) ? { ...r, items: r.items.map((it) => (it && typeof it === "object" && typeof it.nom === "string" ? { ...it, nom: franciserNom(it.nom) } : it)) } : r)); percusState = "lues"; }
   else if (meta.percusStatut === "aucune") { percus = []; percusState = "absence_confirmee"; }
   else { percus = []; percusState = "vide_ou_illisible"; }
 

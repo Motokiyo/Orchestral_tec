@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { BARNIER, CATEGORIES, DEMO_PIECES, DEMO_CONCERT } from "./data.js";
-import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, libelleSupport, extractNumberFromItem, countOrchestreMusicians, calculateMobilier, chefOptions, isAnnotationItem, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
+import { uid, generateTxt, generatePercuTxt, downloadTxt, applyWatermark, copyToClipboard, getContrastColor, generatePieceText, generatePercusGlobalText, libelleSupport, supportEffectif, extractNumberFromItem, countOrchestreMusicians, calculateMobilier, chefOptions, isAnnotationItem, DEFAULT_MOBILIER, ensureMobilierStructure, downloadMobilierTxt, generateMobilierStandaloneText } from "./utils.js";
 import { extractFromPdf, extractFromFile, decodeEffectif, orchestreFromEffectif, formatEffectifDaniels, memeDetail, extractWithGemini, extractOmrWithAudiveris } from "./pdfParser.js";
 import { mergeAiIntoLocal, failedAiLocal, offlineAiLocal, aiFailedStatus, aiStatusFromResult, dismissAiStatus, aiBannerInfo } from "./aiImport.js";
 import { exportLocalDataForRecovery, exportLocalDataToFile, useConcerts, usePhotos, useOmrScores, useSyncStatus, setSessionExpired, requestSyncRetry, requestPersistentStorage, loadPlanImages } from "./useStorage.js";
@@ -3264,7 +3264,7 @@ export default function App() {
                               onToggle={() => toggleItemCheck(piece.id, r.id, it._i)}
                               onRename={(v) => renameItem(piece.id, r.id, it._i, v)}
                               onDelete={() => deleteItem(piece.id, r.id, it._i)}
-                              onOpen={() => setItemSheet({ mode: "item", pieceId: piece.id, poleId: r.id, idx: it._i, initial: { nom: it.nom, cat: it.cat, support: it.support || "" } })}
+                              onOpen={() => setItemSheet({ mode: "item", pieceId: piece.id, poleId: r.id, idx: it._i, initial: { nom: it.nom, cat: it.cat, support: supportEffectif(it) } })}
                               detail={libelleSupport(it)}
                             />
                           ))}

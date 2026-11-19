@@ -229,6 +229,7 @@ RÈGLES CRITIQUES :
 • Dans le bloc percussions, un "T" seul ou "Timb" = poste Timbalier. Un NOMBRE DE TIMBALES ("2 timbales", "2timb", "4 timbales") est un nombre d'INSTRUMENTS dans UN poste Timbalier : ce n'est PAS un nombre de timbaliers. Ne crée plusieurs postes Timbalier que si le chiffre W de Daniels ou des musiciens distincts le montrent. "perc"/"percs" = percussionnistes (poste distinct).
 • Les chiffres décodés (orchestre/percus) DOIVENT correspondre exactement à la ligne effectif du cartouche.
 • Timbalier = poste SÉPARÉ des Percu. Ne JAMAIS mélanger.
+• Noms des instruments de percussion TOUJOURS EN FRANÇAIS : traduis-les s'ils sont écrits en anglais ou dans une autre langue (snare drum = caisse claire, bass drum = grosse caisse, suspended cymbal = cymbale suspendue, bow = archet…). Garde les hauteurs, notes et dimensions telles qu'écrites.
 • Ondes Martenot, accordéon, piano, célesta, harpe, saxophone : ce sont des musiciens de l'orchestre ("autres" ou "bois"), JAMAIS des instruments de percussion, même s'ils sont dessinés près des percussions.
 • Timbales : un item par timbale réellement dessinée ou écrite ("Timbale 1", "Timbale 2"...), jamais "4 Timbales" en un seul item, et jamais plus que ce que le document montre.
 • W=0 dans Daniels → pas de poste Timbalier.

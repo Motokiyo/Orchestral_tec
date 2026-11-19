@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CATEGORIES } from "./data.js";
 import { getContrastColor } from "./utils.js";
 import { VERS_AUTRES, SUPPORTS_RAPIDES, devinerCategorie } from "./percuEdit.js";
+import { supportOblige, standDe } from "./utils.js";
 
 const puce = (actif, color) => ({
   minHeight: 40, padding: "8px 12px", borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: "pointer",
@@ -21,7 +22,10 @@ export function PercuItemSheet({ mode, color, poles, poleId, initial, onValider,
   const [nom, setNom] = useState(initial?.nom || "");
   const [cat, setCat] = useState(initial?.cat || "");
   const [catTouchee, setCatTouchee] = useState(!!initial?.cat);
-  const [support, setSupport] = useState(initial?.support || "");
+  // Support : choisi par le régisseur, sinon celui que l'instrument a d'office (cymbale suspendue → pied…).
+  const [support, setSupportChoisi] = useState(initial ? (initial.support || "") : null);
+  const setSupport = (v) => setSupportChoisi(v);
+  const supportAffiche = support === null ? supportOblige(nom) : support;
   const [vers, setVers] = useState(mode === "autres" ? (poles[0]?.id || "") : poleId);
   const catAffichee = catTouchee ? cat : devinerCategorie(nom);
   const versAutres = vers === VERS_AUTRES;
@@ -29,7 +33,7 @@ export function PercuItemSheet({ mode, color, poles, poleId, initial, onValider,
 
   const valider = () => {
     if (!ok) return;
-    onValider({ nom: nom.trim(), cat: catAffichee, support, vers });
+    onValider({ nom: nom.trim(), cat: catAffichee, support: supportAffiche, vers });
   };
 
   return (
@@ -74,9 +78,12 @@ export function PercuItemSheet({ mode, color, poles, poleId, initial, onValider,
               {CATEGORIES.map((c) => <button key={c} onClick={() => { setCat(c); setCatTouchee(true); }} style={puce(catAffichee === c, color)}>{c}</button>)}
             </div>
             <div style={titreBloc}>Posé sur</div>
+            {supportOblige(nom) && (
+              <div style={{ fontSize: 12, color: "#57534E", marginBottom: 6 }}>D'office avec cet instrument : <b>{standDe({ nom }).toLowerCase()}</b> (il le suit si tu le déplaces ; « Rien de spécial » le retire).</div>
+            )}
             <div style={rangee}>
-              {[["", "Rien de spécial"], ["pied", "Pied"], ["grande", "Grande tablette"], ["petite", "Petite tablette"]].map(([v, l]) => (
-                <button key={v || "rien"} onClick={() => setSupport(v)} style={puce(support === v, color)}>{l}</button>
+              {[["", "Rien de spécial"], ["pied", "Pied"], ["support", "Support"], ["grande", "Grande tablette"], ["petite", "Petite tablette"]].map(([v, l]) => (
+                <button key={v || "rien"} onClick={() => setSupport(v)} style={puce(supportAffiche === v, color)}>{l}</button>
               ))}
             </div>
           </>

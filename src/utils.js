@@ -125,10 +125,76 @@ function groupItemsByCategory(items) {
   return byCat;
 }
 
-// Support d'un instrument de percussion (retour du plateau, 19/11/2026) : sur pied, grande ou petite tablette.
-export const SUPPORTS = { pied: "sur pied", grande: "sur grande tablette", petite: "sur petite tablette" };
+// Support d'un instrument de percussion (retours du plateau, 19/11/2026) : pied, support, grande ou petite tablette.
+export const SUPPORTS = { pied: "sur pied", support: "sur son support", grande: "sur grande tablette", petite: "sur petite tablette" };
+
+// Instruments qui ont FORCÉMENT leur support (« stand ») : il leur est attaché d'office, porte son vrai nom
+// (pied de cymbale, cadre de tam-tam…) et suit l'instrument quand on le déplace. Le régisseur peut le retirer
+// (support « aucun » enregistré) ; un nom qui dit « posé sur … » n'en reçoit pas.
+// L'ordre compte : cymbales frappées avant cymbales suspendues, glock valise avant le reste.
+const SUPPORTS_OBLIGES = [
+  { re: /cymbales?\s+frapp[ée]es?|clash\s+cymbals?|paire\s+de\s+cymbales|cymbales?\s+[àa]\s*2\b|hand\s+cymbals?/, support: "support", stand: "Support de cymbales frappées" },
+  { re: /cymbales?\s+suspendues?|suspended\s+cymbals?|\b(?:ride|crash|splash|china)\b|cymbale\s+chinoise/, support: "pied", stand: "Pied de cymbale" },
+  { re: /glock\w*.*valise|valise.*glock/, support: "pied", stand: "Pied de glockenspiel" },
+  { re: /caisse\s+claire|snare/, support: "pied", stand: "Pied de caisse claire" },
+  { re: /\btam-?tam\b|\bgong\b/, support: "support", stand: "Cadre de tam-tam" },
+  { re: /grosse[-\s]+caisse|bass\s+drum/, support: "support", stand: "Support de grosse caisse" },
+  { re: /cloches?\s+tub|tubular\s+bells/, support: "support", stand: "Cadre de cloches tubulaires" },
+  { re: /temple[-\s]*blocks?/, support: "pied", stand: "Pied de temple-blocks" },
+  { re: /\b(?:bongos?|congas?|tumbas?|timbales?\s+cubaines?)\b/, support: "pied", stand: "Pied de bongos/congas" },
+  { re: /\btoms?\b|tom-?toms?/, support: "pied", stand: "Pied de tom" },
+  { re: /mark\s*tree|wind\s*chimes|chimes?\b/, support: "pied", stand: "Pied de mark tree" },
+];
+const STAND_GENERIQUE = { pied: "Pied", support: "Support", grande: "Grande tablette", petite: "Petite tablette" };
+function regleObligee(nom) {
+  const n = String(nom || "").toLowerCase();
+  // « posé(e) sur … », « … sur caisse claire » : l'instrument repose sur autre chose, pas de support à lui.
+  if (/pos[ée]e?s?\b|\bsur\s+\S|\bon\s+(?:the\s+)?(?:snare|timpani|table)/.test(n)) return null;
+  return SUPPORTS_OBLIGES.find((x) => x.re.test(n)) || null;
+}
+export function supportOblige(nom) {
+  const r = regleObligee(nom);
+  return r ? r.support : "";
+}
+/** Support réellement retenu : celui choisi par le régisseur, sinon le support obligé, sinon rien. */
+export function supportEffectif(item) {
+  if (!item || typeof item !== "object") return "";
+  if (item.support === "aucun") return "";
+  if (SUPPORTS[item.support]) return item.support;
+  return supportOblige(item.nom);
+}
+/** Nom du support à sortir pour cet instrument (« Pied de cymbale », « Grande tablette »…), ou "". */
+export function standDe(item) {
+  const s = supportEffectif(item);
+  if (!s) return "";
+  const r = regleObligee(item.nom);
+  return r && r.support === s ? r.stand : STAND_GENERIQUE[s];
+}
 export function libelleSupport(item) {
-  return item && typeof item === "object" && SUPPORTS[item.support] ? SUPPORTS[item.support] : "";
+  const s = supportEffectif(item);
+  if (!s) return "";
+  if (s === "grande" || s === "petite") return SUPPORTS[s];
+  return `+ ${standDe(item).toLowerCase()}`;
+}
+
+// Noms anglais courants des plans (retour du 19/11/2026) remis en français. Filet de sécurité :
+// la consigne de l'IA demande déjà le français. Hauteurs et dimensions gardées telles quelles.
+const EN_FR = [
+  [/\bprepared with metallic keys\b/gi, "préparée avec des clés métalliques"],
+  [/\bsnare\s*drum\b/gi, "Caisse claire"], [/\bbass\s*drum\b/gi, "Grosse caisse"],
+  [/\bsuspended\s+cymbals?\b/gi, "Cymbale suspendue"], [/\b(?:clash|crash|hand)\s+cymbals\b/gi, "Cymbales frappées"],
+  [/\bsinging\s+glass(?:es)?\b/gi, "verres chantants"], [/\b(?:contrabass|double\s*bass)\s+bow\b/gi, "Archet de contrebasse"],
+  [/\bbow\b/gi, "Archet"], [/\btubular\s+bells\b/gi, "Cloches tubulaires"], [/\btemple\s+blocks?\b/gi, "Temple-blocks"],
+  [/\bwood\s*blocks?\b/gi, "Wood-block"], [/\btambourine\b/gi, "Tambour de basque"], [/\bwhip\b/gi, "Fouet"],
+  [/\bthunder\s*sheet\b/gi, "Plaque à tonnerre"], [/\bsleigh\s*bells\b/gi, "Grelots"], [/\bwind\s*chimes\b/gi, "Mark tree"],
+  [/\btimpani\b/gi, "Timbales"], [/\bvery\s+large\s+(cymbal|tam-?tam)\b/gi, (_, w) => (/cymbal/i.test(w) ? "Très grande cymbale" : "Très grand tam-tam")],
+  [/\bcymbal\b/gi, "Cymbale"], [/\bstand\b/gi, "Pied"], [/\bmallets?\b/gi, "Baguettes"], [/\bsticks?\b/gi, "Baguettes"],
+  [/\bbrushes\b/gi, "Balais"], [/\bcrotale\b/gi, "Crotale"], [/\boctaves?\b/gi, "octaves"],
+];
+export function franciserNom(nom) {
+  let n = String(nom || "");
+  for (const [re, fr] of EN_FR) n = n.replace(re, fr);
+  return n.charAt(0).toUpperCase() + n.slice(1);
 }
 
 function formatItemLines(items) {
